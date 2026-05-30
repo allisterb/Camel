@@ -15,8 +15,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{C17BDA0E
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Camel.Tests.Environments", "..\tests\Camel.Tests.Environments\Camel.Tests.Environments.csproj", "{8314B069-537E-48B8-A075-2E92A2D4D8C0}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Renci.SshNet", "..\ext\Renci.SshNet\Renci.SshNet.csproj", "{2F5F8C90-0BD1-424F-997C-7BC6280919D1}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -39,10 +37,6 @@ Global
 		{8314B069-537E-48B8-A075-2E92A2D4D8C0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8314B069-537E-48B8-A075-2E92A2D4D8C0}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{8314B069-537E-48B8-A075-2E92A2D4D8C0}.Release|Any CPU.Build.0 = Release|Any CPU
-		{2F5F8C90-0BD1-424F-997C-7BC6280919D1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{2F5F8C90-0BD1-424F-997C-7BC6280919D1}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{2F5F8C90-0BD1-424F-997C-7BC6280919D1}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{2F5F8C90-0BD1-424F-997C-7BC6280919D1}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -50,7 +44,6 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{E20DD857-F9B4-E249-D8BE-C37EF52FE4C3} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{8314B069-537E-48B8-A075-2E92A2D4D8C0} = {C17BDA0E-EB4C-44D5-B32E-19A2CE189AAA}
-		{2F5F8C90-0BD1-424F-997C-7BC6280919D1} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {97AB5048-4498-43FE-8CB8-B2FC147FCDE7}
