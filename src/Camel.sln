@@ -1,9 +1,17 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.14.37314.3 d17.14
+VisualStudioVersion = 17.14.37314.3
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Camel.Runtime", "Camel.Runtime\Camel.Runtime.csproj", "{AB539ADB-C99A-4B5C-861E-B949031510BB}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Camel.Environments", "Camel.Environments\Camel.Environments.csproj", "{3B939B4E-179C-4A03-A0DC-E0098597B6AE}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "External", "External", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Expect.NETStandard", "..\ext\Expect.NET\Expect.NET\Expect.NETStandard.csproj", "{E20DD857-F9B4-E249-D8BE-C37EF52FE4C3}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Renci.SshNet", "..\ext\Renci.SshNet\Renci.SshNet.csproj", "{2F5F8C90-0BD1-424F-997C-7BC6280919D1}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -15,9 +23,25 @@ Global
 		{AB539ADB-C99A-4B5C-861E-B949031510BB}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{AB539ADB-C99A-4B5C-861E-B949031510BB}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{AB539ADB-C99A-4B5C-861E-B949031510BB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3B939B4E-179C-4A03-A0DC-E0098597B6AE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3B939B4E-179C-4A03-A0DC-E0098597B6AE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3B939B4E-179C-4A03-A0DC-E0098597B6AE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3B939B4E-179C-4A03-A0DC-E0098597B6AE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E20DD857-F9B4-E249-D8BE-C37EF52FE4C3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E20DD857-F9B4-E249-D8BE-C37EF52FE4C3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E20DD857-F9B4-E249-D8BE-C37EF52FE4C3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E20DD857-F9B4-E249-D8BE-C37EF52FE4C3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2F5F8C90-0BD1-424F-997C-7BC6280919D1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2F5F8C90-0BD1-424F-997C-7BC6280919D1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2F5F8C90-0BD1-424F-997C-7BC6280919D1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2F5F8C90-0BD1-424F-997C-7BC6280919D1}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{E20DD857-F9B4-E249-D8BE-C37EF52FE4C3} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{2F5F8C90-0BD1-424F-997C-7BC6280919D1} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {97AB5048-4498-43FE-8CB8-B2FC147FCDE7}
