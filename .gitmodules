@@ -1,0 +1,3 @@
+[submodule "ext/Expect.NET"]
+	path = ext/Expect.NET
+	url = https://github.com/allisterb/Expect.NET.git
