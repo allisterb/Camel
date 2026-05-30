@@ -21,33 +21,41 @@ using SharpCompress.Readers;
 public class SshAuditEnvironment : AuditEnvironment
 {
     #region Constructors
-    public SshAuditEnvironment(EventHandler<EnvironmentEventArgs> message_handler, string client, string host_name, int port, string user, object pass, string keyfile, OperatingSystem os, LocalEnvironment host_environment) 
+    public SshAuditEnvironment(EventHandler<EnvironmentEventArgs> message_handler, string client, string host_name, int port, string user, string pass, OperatingSystem os, LocalEnvironment host_environment) 
         : base(message_handler, os, host_environment)
     {
-        ConnectionInfo ci;
-        Info("Connecting to {0}:{1}...", host_name, port);
-        if (string.IsNullOrEmpty(keyfile))
-        {
-            ci = new ConnectionInfo(host_name, port, user, new PasswordAuthenticationMethod(user, ToInsecureString(pass)));
-        }
-        else if (!string.IsNullOrEmpty(keyfile) && pass != null)
-        {
-            ci = new ConnectionInfo(host_name, port, user, new PrivateKeyAuthenticationMethod(user, 
-                new PrivateKeyFile[] { new PrivateKeyFile(keyfile, ToInsecureString(pass)) }));
-        }
-        else 
-        {
-            ci = new ConnectionInfo(host_name, port, user, new PrivateKeyAuthenticationMethod(user));
-        }
+        ConnectionInfo ci;        
+        ci = new ConnectionInfo(host_name, port, user, new PasswordAuthenticationMethod(user, pass));
         SshClient = new SshClient(ci);
         SshClient.ErrorOccurred += SshClient_ErrorOccurred;
         SshClient.HostKeyReceived += SshClient_HostKeyReceived;
         SshClient.ConnectionInfo.AuthenticationBanner += Ci_AuthenticationBanner;
-        Stopwatch sw = new Stopwatch();
-        sw.Start();
+        using var op = Begin("Connecting to {0}:{1}...", host_name, port);
         try
         {
             SshClient.Connect();
+            this.IsConnected = true;
+            this.User = user;
+            this.HostName = host_name;
+            this.ssh_client_pass = pass;
+            op.Complete();
+            string tmp_dir = Environment.OSVersion.Platform == PlatformID.Win32NT ? Environment.GetEnvironmentVariable("TEMP", EnvironmentVariableTarget.User) : "/tmp";
+            if (!string.IsNullOrEmpty(tmp_dir) && Directory.Exists(tmp_dir))
+            {
+                this.WorkDirectory = new DirectoryInfo(Path.Combine(tmp_dir, "devaudit-work", this.GetTimestamp()));
+            }
+            else
+            {
+                Warning("Could not get value of temporary directory from environment. The work directory wll be created in the DevAudit root directory.");
+                this.WorkDirectory = new DirectoryInfo(Path.Combine("work", this.GetTimestamp()));
+            }
+            if (!this.WorkDirectory.Exists)
+            {
+                this.WorkDirectory.Create();
+                this.WorkDirectory.Refresh();
+                Debug("Created work directory {0}.", this.WorkDirectory.FullName);
+            }
+            Info("Using work directory: {0}.", this.WorkDirectory.FullName);
         }
         catch (SshConnectionException ce)
         {
@@ -66,36 +74,11 @@ public class SshAuditEnvironment : AuditEnvironment
         }
         finally
         {
-            sw.Stop();
-        }
-        if (!SshClient.IsConnected || !SshClient.ConnectionInfo.IsAuthenticated)
-        {
-            Error("Failed to connect or authenticate to {0}", host_name);
-            return;
-        }
-        this.IsConnected = true;
-        this.User = user;
-        this.HostName = host_name;
-        this.ssh_client_pass = pass;
-        Success("Connected to {0} in {1} ms.", host_name, sw.ElapsedMilliseconds);
-        string tmp_dir = Environment.OSVersion.Platform == PlatformID.Win32NT ? Environment.GetEnvironmentVariable("TEMP", EnvironmentVariableTarget.User) : "/tmp";
-        if (!string.IsNullOrEmpty(tmp_dir) && Directory.Exists(tmp_dir))
-        {
-            this.WorkDirectory = new DirectoryInfo(Path.Combine(tmp_dir, "devaudit-work", this.GetTimestamp()));
-        }
-        else
-        {
-            Warning("Could not get value of temporary directory from environment. The work directory wll be created in the DevAudit root directory.");
-            this.WorkDirectory = new DirectoryInfo(Path.Combine("work",  this.GetTimestamp()));
-        }
-        if (!this.WorkDirectory.Exists)
-        {
-            this.WorkDirectory.Create();
-            this.WorkDirectory.Refresh();
-            Debug("Created work directory {0}.", this.WorkDirectory.FullName);
-        }
-        Info("Using work directory: {0}.", this.WorkDirectory.FullName);
-        
+            if (!SshClient.IsConnected || !SshClient.ConnectionInfo.IsAuthenticated)
+            {
+                Error("Failed to connect or authenticate to {0}", host_name);             
+            }
+        }                       
     }
     #endregion
 
@@ -153,9 +136,8 @@ public class SshAuditEnvironment : AuditEnvironment
     }
 
     public override bool Execute(string command, string arguments, out ProcessExecuteStatus process_status, out string process_output, out string process_error, Dictionary<string, string> env = null,
-        Action<string> OutputDataReceived = null, Action<string> OutputErrorReceived = null, [CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
+        Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
     {
-        CallerInformation caller = new CallerInformation(memberName, fileName, lineNumber);
         if (!this.IsConnected) throw new InvalidOperationException("The SSH session is not connected.");
         process_status = ProcessExecuteStatus.Unknown;
         process_output = "";
@@ -181,22 +163,22 @@ public class SshAuditEnvironment : AuditEnvironment
         }
         catch (SshConnectionException sce)
         {
-            Error(caller, sce, "SSH connection error attempting to execute {0} {1}.", command, arguments);
+            Error(sce, "SSH connection error attempting to execute {0} {1}.", command, arguments);
             return false;
         }
         catch (SshOperationTimeoutException te)
         {
-            Error(caller, te, "SSH connection timeout attempting to execute {0} {1}.", command, arguments);
+            Error(te, "SSH connection timeout attempting to execute {0} {1}.", command, arguments);
             return false;
         }
         catch (SshException se)
         {
-            Error(caller, se, "SSH error attempting to execute {0} {1}.", command, arguments);
+            Error(se, "SSH error attempting to execute {0} {1}.", command, arguments);
             return false;
         }
         catch (Exception e)
         {
-            Error(caller, e, "Error attempting to execute over SSH {0} {1}.", command, arguments);
+            Error(e, "Error attempting to execute over SSH {0} {1}.", command, arguments);
             return false;
         }
         KeyValuePair<SshCommand, Stopwatch> s = (KeyValuePair<SshCommand, Stopwatch>) result.AsyncState;
@@ -207,7 +189,7 @@ public class SshAuditEnvironment : AuditEnvironment
         process_error = process_output + cmd.Error.Trim();
         if (cmd.ExitStatus == 0)
         {
-            Debug(caller, "Execute {0} returned zero exit code. Output: {1}.", command + " " + arguments, process_output);
+            Debug("Execute {0} returned zero exit code. Output: {1}.", command + " " + arguments, process_output);
             process_status = ProcessExecuteStatus.Completed;
             cmd.Dispose();
             return true;
@@ -215,7 +197,7 @@ public class SshAuditEnvironment : AuditEnvironment
         else
         {
             process_status = ProcessExecuteStatus.Error;
-            Debug(caller, "Execute {0} returned non-zero exit code {2}. Error: {1}.", command + " " + arguments, process_error, cmd.ExitStatus);
+            Debug("Execute {0} returned non-zero exit code {2}. Error: {1}.", command + " " + arguments, process_error, cmd.ExitStatus);
             cmd.Dispose();
             return false;
         }

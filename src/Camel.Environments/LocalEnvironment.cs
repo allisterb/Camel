@@ -53,9 +53,8 @@ public class LocalEnvironment : AuditEnvironment
 
     public override bool Execute(string command, string arguments, 
         out ProcessExecuteStatus process_status, out string process_output, out string process_error, Dictionary<string, string> env = null,
-        Action<string> OutputDataReceived = null, Action<string> OutputErrorReceived = null, [CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
-    {
-        CallerInformation caller = new CallerInformation(memberName, fileName, lineNumber);
+        Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
+    {  
         FileInfo cf = new FileInfo(command);
         int? process_exit_code = null;
         StringBuilder process_out_sb = new StringBuilder();
@@ -117,7 +116,7 @@ public class LocalEnvironment : AuditEnvironment
             }
             else
             {
-                Debug(caller, "Execute {0} {1} threw exception {2}.", command, arguments, e.Message);
+                Debug("Execute {0} {1} threw exception {2}.", command, arguments, e.Message);
                 process_status = ProcessExecuteStatus.Error;
                 process_error = e.Message;
                 return false;
@@ -132,13 +131,13 @@ public class LocalEnvironment : AuditEnvironment
 
         if ((process_exit_code.HasValue && process_exit_code.Value != 0))
         {
-            Debug(caller, "Execute {0} {1} returned exit code {2}.", command, arguments, process_exit_code.Value);
+            Debug("Execute {0} {1} returned exit code {2}.", command, arguments, process_exit_code.Value);
             process_status = ProcessExecuteStatus.Error;
             return false;
         }
         else if ((process_exit_code.HasValue && process_exit_code.Value == 0))
         {
-            Debug(caller, "Execute {0} {1} returned exit code {2}.", command, arguments, process_exit_code.Value);
+            Debug("Execute {0} {1} returned exit code {2}.", command, arguments, process_exit_code.Value);
             process_status = ProcessExecuteStatus.Completed;
             return true;
         }

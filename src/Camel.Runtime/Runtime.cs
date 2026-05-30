@@ -22,8 +22,7 @@ public abstract class Runtime
     {
         AppDomain.CurrentDomain.UnhandledException += AppDomain_UnhandledException;
         EntryAssembly = Assembly.GetEntryAssembly();
-        IsUnitTestRun = EntryAssembly?.FullName?.StartsWith("testhost") ?? false;
-        SessionId = Rng.Next(0, 99999);            
+        IsUnitTestRun = EntryAssembly?.FullName?.StartsWith("testhost") ?? false;           
     }
 
     public Runtime(CancellationToken ct)
@@ -43,7 +42,7 @@ public abstract class Runtime
 
     public static string PathSeparator { get; } = Environment.OSVersion.Platform == PlatformID.Win32NT ? "\\" : "/";
 
-    public static string ToolName { get; set; } = "OnlyHumans";
+    public static string ToolName { get; set; } = "Camel";
         
     public static string LogName { get; set; } = "BASE";
 
@@ -51,11 +50,9 @@ public abstract class Runtime
 
     public static string AppDataDir => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
-    public static string OnlyHumansDir => Path.Combine(AppDataDir, "OnlyHumans");
+    public static string CamelDir => Path.Combine(AppDataDir, "Camel");
 
     public static Random Rng { get; } = new Random();
-
-    public static int SessionId { get; protected set; }
 
     public static CancellationTokenSource Cts { get; } = new CancellationTokenSource();
 
@@ -70,8 +67,6 @@ public abstract class Runtime
     public static string CurentDirectory => Directory.GetCurrentDirectory();
 
     public static bool IsUnitTestRun { get; set; }
-
-    public static string RunFile => Path.Combine(OnlyHumansDir, ToolName + ".run");
 
     public virtual bool Initialized { get; protected set; }
 
@@ -320,7 +315,8 @@ public abstract class Runtime
     #region Fields
     public static Microsoft.Extensions.Logging.ILogger logger = NullLogger.Instance;   
     public static ILoggerFactory loggerFactory = NullLoggerFactory.Instance;
-    public static ILoggerProvider loggerProvider = NullLoggerProvider.Instance; 
+    public static ILoggerProvider loggerProvider = NullLoggerProvider.Instance;
+    static protected IConfigurationRoot? config;
     protected static object __lock = new object();
     #endregion
 }

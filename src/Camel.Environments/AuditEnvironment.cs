@@ -126,7 +126,7 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     public abstract bool DirectoryExists(string dir_path);
     public abstract bool Execute(string command, string arguments,
         out ProcessExecuteStatus process_status, out string process_output, out string process_error, Dictionary<string, string> EnvironmentVariables = null,
-        Action<string> OutputDataReceived = null, Action<string> OutputErrorReceived = null, [CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0);
+        Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null);
     public abstract bool ExecuteAsUser(string command, string arguments,
         out ProcessExecuteStatus process_status, out string process_output, out string process_error, string user, SecureString password, Action<string> OutputDataReceived = null, Action<string> OutputErrorReceived = null, [CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0);
     public abstract AuditFileInfo ConstructFile(string file_path);
