@@ -16,7 +16,7 @@ namespace Renci.SshNet
     public class SshCommandSpawanble : ISpawnable, IDisposable
     {
         private SshCommand command;
-        private CommandAsyncResult command_result;
+        private IAsyncResult? command_result;
         /// <summary>
         /// Initializes new Ssh Command spawnable.
         /// </summary>
@@ -31,7 +31,7 @@ namespace Renci.SshNet
         /// </summary>
         public void Init()
         {
-            this.command_result = this.command.BeginExecute() as CommandAsyncResult;
+            this.command_result = this.command.BeginExecute();
         }
 
         /// <summary>
@@ -49,7 +49,7 @@ namespace Renci.SshNet
         /// <returns>text read from streams</returns>
         public async Task<string> ReadAsync()
         {
-            return await Task.Factory.FromAsync(command_result, command.EndExecute);
+            return await Task.Factory.FromAsync(command_result!, command.EndExecute);
         }
 
         
@@ -59,8 +59,8 @@ namespace Renci.SshNet
         /// <returns>text read from streams</returns>
         public string Read(out bool completed)
         {
-            string r = this.command.EndExecute(command_result);
-            completed = this.command_result.IsCompleted;
+            string r = this.command.EndExecute(command_result!);
+            completed = this.command_result!.IsCompleted;
             return r;
         }
 
@@ -110,7 +110,7 @@ namespace Renci.SshNet
                         if (this.command != null)
                         {
                             this.command.Dispose();
-                            this.command = null;
+                            //this.command = null;
                         }
                     }
                 }

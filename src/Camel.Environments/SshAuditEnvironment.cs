@@ -151,15 +151,29 @@ public class SshAuditEnvironment : AuditEnvironment
             }
             command = vars.ToString() + command;
         }
-        SshCommand cmd = this.SshClient.CreateCommand(command + " " + arguments);
-        Debug("Executing command {0} {1}.", command, arguments);
-        Stopwatch cs = new Stopwatch();
-        cs.Start();
+        SshCommand cmd = this.SshClient.CreateCommand(command + " " + arguments);        
+        using var op = Begin("Executing command {0} {1}...", command, arguments);   
         IAsyncResult result;
         try
         {
-            result = cmd.BeginExecute(new AsyncCallback(SshCommandAsyncCallback), new KeyValuePair<SshCommand, Stopwatch>(cmd, cs));
+            result = cmd.BeginExecute(new AsyncCallback(SshCommandAsyncCallback));
             cmd.EndExecute(result);
+            process_output = cmd.Result.Trim();
+            process_error = cmd.Error.Trim();             
+            if (cmd.ExitStatus == 0)
+            {
+                Debug("Execute {0} returned zero exit code. Output: {1}.", command + " " + arguments, process_output);
+                process_status = ProcessExecuteStatus.Completed;
+                cmd.Dispose();
+                return true;
+            }
+            else
+            {
+                process_status = ProcessExecuteStatus.Error;
+                Debug("Execute {0} returned non-zero exit code {2}. stdout: {1}. error: {3}", command + " " + arguments, process_output, cmd.ExitStatus ?? -1, process_error);
+                cmd.Dispose();
+                return false;
+            }
         }
         catch (SshConnectionException sce)
         {
@@ -180,27 +194,8 @@ public class SshAuditEnvironment : AuditEnvironment
         {
             Error(e, "Error attempting to execute over SSH {0} {1}.", command, arguments);
             return false;
-        }
-        KeyValuePair<SshCommand, Stopwatch> s = (KeyValuePair<SshCommand, Stopwatch>) result.AsyncState;
-        process_output = s.Key.Result.Trim();
-        process_error = s.Key.Error.Trim();
-        if (s.Value.IsRunning) s.Value.Stop();
-        process_output = cmd.Result.Trim();
-        process_error = process_output + cmd.Error.Trim();
-        if (cmd.ExitStatus == 0)
-        {
-            Debug("Execute {0} returned zero exit code. Output: {1}.", command + " " + arguments, process_output);
-            process_status = ProcessExecuteStatus.Completed;
-            cmd.Dispose();
-            return true;
-        }
-        else
-        {
-            process_status = ProcessExecuteStatus.Error;
-            Debug("Execute {0} returned non-zero exit code {2}. Error: {1}.", command + " " + arguments, process_error, cmd.ExitStatus);
-            cmd.Dispose();
-            return false;
-        }
+        }       
+        
     }
 
     public override bool ExecuteAsUser(string command, string arguments, out ProcessExecuteStatus process_status, out string process_output, out string process_error, string user, SecureString password, Action<string> OutputDataReceived = null, Action<string> OutputErrorReceived = null, [CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
@@ -330,7 +325,7 @@ public class SshAuditEnvironment : AuditEnvironment
             SshCommand cmd = this.SshClient.CreateCommand("cat " + _f.FullName);
             Stopwatch cs = new Stopwatch();
             cs.Start();
-            CommandAsyncResult result = cmd.BeginExecute(new AsyncCallback(SshCommandAsyncCallback), new KeyValuePair<SshCommand, Stopwatch>(cmd, cs)) as CommandAsyncResult;
+            var result = cmd.BeginExecute(new AsyncCallback(SshCommandAsyncCallback), new KeyValuePair<SshCommand, Stopwatch>(cmd, cs));
             cmd.EndExecute(result); 
             KeyValuePair<SshCommand, Stopwatch> s = (KeyValuePair<SshCommand, Stopwatch>) result.AsyncState;
             if (s.Key.Result != string.Empty)
@@ -359,13 +354,13 @@ public class SshAuditEnvironment : AuditEnvironment
     #endregion
 
     #region Properties
-    public string HostName { get; private set; }
-    public string User { get; private set; }
+    public string HostName { get; private set; } = "";
+    public string User { get; private set; } = "";
     public bool UsePageant { get; private set; }
     public bool UseSshAgent { get; private set; }
-    public string HostKey { get; private set; }
+    public string HostKey { get; private set; } = "";
     public bool IsConnected { get; private set; }
-    public string LastEvent { get; set; }
+    public string LastEvent { get; set; } = "";
     public TimeSpan NetworkConnectTimeout { get; private set; } = new TimeSpan(0, 0, 5);
     #endregion
 
@@ -578,13 +573,10 @@ public class SshAuditEnvironment : AuditEnvironment
     }
 
     private void SshCommandAsyncCallback(IAsyncResult r)
-    {
-        CommandAsyncResult car = r as CommandAsyncResult;
-        KeyValuePair<SshCommand, Stopwatch> cas = (KeyValuePair<SshCommand, Stopwatch>)car.AsyncState;
-        if (car.IsCompleted)
+    {                        
+        if (r.IsCompleted)
         {
-            cas.Value.Stop();
-            Debug("Completed execution of {0} with {1} bytes received in {2} ms.", cas.Key.CommandText, car.BytesReceived, cas.Value.ElapsedMilliseconds);
+            //Debug("Completed execution of {0} w");
         }
     }
 
