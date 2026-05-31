@@ -13,50 +13,6 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
-
-#region Types
-public enum EventMessageType
-{
-    SUCCESS = 0,
-    ERROR = 1,
-    INFO = 2,
-    WARNING = 3,
-    STATUS = 4,
-    PROGRESS = 5,
-    DEBUG = 6,
-}
-
-public struct CallerInformation
-{
-    public string Name;
-    public string File;
-    public int LineNumber;
-
-    public CallerInformation(string name, string file, int line_number)
-    {
-        this.Name = name;
-        this.File = file;
-        this.LineNumber = line_number;
-    }
-}
-
-public struct OperationProgress
-{
-    public string Operation;
-    public int Total;
-    public int Complete;
-    public TimeSpan? Time;
-
-    public OperationProgress(string op, int total, int complete, TimeSpan? time)
-    {
-        this.Operation = op;
-        this.Total = total;
-        this.Complete = complete;
-        this.Time = time;
-    }
-}
-#endregion
-
 public abstract class AuditEnvironment : Runtime, IDisposable
 {
     #region Types
@@ -222,7 +178,7 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         }
         else
         {
-            output = process_output + process_error;
+            output = process_output + process_error.Trim();
             if (report_errors && !string.IsNullOrEmpty(output))
             {
                 Error(caller, "The command {0} {1} did not execute successfully. Error: {2}", command, arguments, output);

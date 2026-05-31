@@ -28,8 +28,10 @@ public class SshEnvironmentTests : TestsRuntime
     {
         SshAuditEnvironment env = new SshAuditEnvironment(EnvironmentMessageHandler, "camel", host, port, user, password, new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), le);
         var result = env.ExecuteCommand("echo", "hello", out string output);
-
+        Assert.True(result);
         Assert.Equal("hello", output.Trim());
+        result = env.ExecuteCommand("foo", "bar", out output);
+        Assert.False(result);
     }
     LocalEnvironment le;
     string host, user, password;

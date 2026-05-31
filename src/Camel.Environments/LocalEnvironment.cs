@@ -52,7 +52,7 @@ public class LocalEnvironment : AuditEnvironment
     }
 
     public override bool Execute(string command, string arguments, 
-        out ProcessExecuteStatus process_status, out string process_output, out string process_error, Dictionary<string, string> env = null,
+        out ProcessExecuteStatus process_status, out string process_output, out string process_error, Dictionary<string, string>? env = null,
         Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
     {  
         FileInfo cf = new FileInfo(command);
@@ -149,7 +149,7 @@ public class LocalEnvironment : AuditEnvironment
         }
     }
 
-    public override bool ExecuteAsUser(string command, string arguments, out ProcessExecuteStatus process_status, out string process_output, out string process_error, string user, SecureString password, Action<string> OutputDataReceived = null, Action<string> OutputErrorReceived = null, [CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
+    public override bool ExecuteAsUser(string command, string arguments, out ProcessExecuteStatus process_status, out string process_output, out string process_error, string user, SecureString password, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null, [CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
     {
         CallerInformation caller = new CallerInformation(memberName, fileName, lineNumber);
         if (this.OS.Platform == PlatformID.Win32NT)

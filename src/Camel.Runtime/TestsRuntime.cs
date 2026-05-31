@@ -1,4 +1,4 @@
-﻿namespace Camel.Tests.Environments;
+﻿namespace Camel.Tests;
 
 using System;
 
@@ -14,7 +14,7 @@ public class TestsRuntime : Runtime
         config = LoadConfigFile("testappsettings.json");
     }
 
-    internal static void EnvironmentMessageHandler(object? sender, EnvironmentEventArgs e)
+    public static void EnvironmentMessageHandler(object? sender, EnvironmentEventArgs e)
     {
 
         if (e.MessageType == EventMessageType.DEBUG)

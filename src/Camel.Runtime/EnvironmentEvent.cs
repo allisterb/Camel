@@ -3,6 +3,46 @@
 using System;
 using System.Threading;
 
+public struct CallerInformation
+{
+    public string Name;
+    public string File;
+    public int LineNumber;
+
+    public CallerInformation(string name, string file, int line_number)
+    {
+        this.Name = name;
+        this.File = file;
+        this.LineNumber = line_number;
+    }
+}
+
+public struct OperationProgress
+{
+    public string Operation;
+    public int Total;
+    public int Complete;
+    public TimeSpan? Time;
+
+    public OperationProgress(string op, int total, int complete, TimeSpan? time)
+    {
+        this.Operation = op;
+        this.Total = total;
+        this.Complete = complete;
+        this.Time = time;
+    }
+}
+public enum EventMessageType
+{
+    SUCCESS = 0,
+    ERROR = 1,
+    INFO = 2,
+    WARNING = 3,
+    STATUS = 4,
+    PROGRESS = 5,
+    DEBUG = 6,
+}
+
 public class EnvironmentEventArgs
 {
     #region Properties

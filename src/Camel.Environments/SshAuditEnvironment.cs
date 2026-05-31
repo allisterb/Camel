@@ -26,20 +26,20 @@ public class SshAuditEnvironment : AuditEnvironment
     {
         ConnectionInfo ci;        
         ci = new ConnectionInfo(host_name, port, user, new PasswordAuthenticationMethod(user, pass));
-        SshClient = new SshClient(ci);
-        SshClient.ErrorOccurred += SshClient_ErrorOccurred;
-        SshClient.HostKeyReceived += SshClient_HostKeyReceived;
-        SshClient.ConnectionInfo.AuthenticationBanner += Ci_AuthenticationBanner;
+        sshClient = new SshClient(ci);
+        sshClient.ErrorOccurred += SshClient_ErrorOccurred;
+        sshClient.HostKeyReceived += SshClient_HostKeyReceived;
+        sshClient.ConnectionInfo.AuthenticationBanner += Ci_AuthenticationBanner;
         using var op = Begin("Connecting to {0}:{1}...", host_name, port);
         try
         {
-            SshClient.Connect();
+            sshClient.Connect();
             this.IsConnected = true;
             this.User = user;
             this.HostName = host_name;
             this.ssh_client_pass = pass;
             op.Complete();
-            string tmp_dir = Environment.OSVersion.Platform == PlatformID.Win32NT ? Environment.GetEnvironmentVariable("TEMP", EnvironmentVariableTarget.User) : "/tmp";
+            string tmp_dir = Environment.OSVersion.Platform == PlatformID.Win32NT ? Environment.GetEnvironmentVariable("TEMP", EnvironmentVariableTarget.User)! : "/tmp";
             if (!string.IsNullOrEmpty(tmp_dir) && Directory.Exists(tmp_dir))
             {
                 this.WorkDirectory = new DirectoryInfo(Path.Combine(tmp_dir, "devaudit-work", this.GetTimestamp()));
@@ -74,7 +74,7 @@ public class SshAuditEnvironment : AuditEnvironment
         }
         finally
         {
-            if (!SshClient.IsConnected || !SshClient.ConnectionInfo.IsAuthenticated)
+            if (!sshClient.IsConnected || !sshClient.ConnectionInfo.IsAuthenticated)
             {
                 Error("Failed to connect or authenticate to {0}", host_name);             
             }
@@ -85,6 +85,17 @@ public class SshAuditEnvironment : AuditEnvironment
     #region Overriden properties
     protected override TraceSource TraceSource { get; set; } = new TraceSource("SshAuditEnvironment");
     public override int MaxConcurrentExecutions { get; } = 0;
+    #endregion
+
+    #region Properties
+    public string HostName { get; private set; } = "";
+    public string User { get; private set; } = "";
+    public bool UsePageant { get; private set; }
+    public bool UseSshAgent { get; private set; }
+    public string HostKey { get; private set; } = "";
+    public bool IsConnected { get; private set; }
+    public string LastEvent { get; set; } = "";
+    public TimeSpan NetworkConnectTimeout { get; private set; } = new TimeSpan(0, 0, 5);
     #endregion
 
     #region Overriden methods
@@ -103,7 +114,7 @@ public class SshAuditEnvironment : AuditEnvironment
         System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
         sw.Start();
         if (!this.IsConnected) throw new InvalidOperationException("The SSH session is not connected.");
-        SshCommand ls_cmd = SshClient.RunCommand("stat " + file_path);
+        SshCommand ls_cmd = sshClient.RunCommand("stat " + file_path);
         sw.Stop();
         if (!string.IsNullOrEmpty(ls_cmd.Result))
         {
@@ -122,7 +133,7 @@ public class SshAuditEnvironment : AuditEnvironment
     public override bool DirectoryExists(string dir_path)
     {
         if (!this.IsConnected) throw new InvalidOperationException("The SSH session is not connected.");
-        SshCommand stat_cmd = SshClient.RunCommand("stat " + dir_path);
+        SshCommand stat_cmd = sshClient.RunCommand("stat " + dir_path);
         if (!string.IsNullOrEmpty(stat_cmd.Result))
         {
             Debug("stat {0} returned {1}.", dir_path, stat_cmd.Result);
@@ -135,7 +146,7 @@ public class SshAuditEnvironment : AuditEnvironment
         }            
     }
 
-    public override bool Execute(string command, string arguments, out ProcessExecuteStatus process_status, out string process_output, out string process_error, Dictionary<string, string> env = null,
+    public override bool Execute(string command, string arguments, out ProcessExecuteStatus process_status, out string process_output, out string process_error, Dictionary<string, string>? env = null,
         Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
     {
         if (!this.IsConnected) throw new InvalidOperationException("The SSH session is not connected.");
@@ -151,7 +162,7 @@ public class SshAuditEnvironment : AuditEnvironment
             }
             command = vars.ToString() + command;
         }
-        SshCommand cmd = this.SshClient.CreateCommand(command + " " + arguments);        
+        SshCommand cmd = this.sshClient.CreateCommand(command + " " + arguments);        
         using var op = Begin("Executing command {0} {1}...", command, arguments);   
         IAsyncResult result;
         try
@@ -198,7 +209,7 @@ public class SshAuditEnvironment : AuditEnvironment
         
     }
 
-    public override bool ExecuteAsUser(string command, string arguments, out ProcessExecuteStatus process_status, out string process_output, out string process_error, string user, SecureString password, Action<string> OutputDataReceived = null, Action<string> OutputErrorReceived = null, [CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
+    public override bool ExecuteAsUser(string command, string arguments, out ProcessExecuteStatus process_status, out string process_output, out string process_error, string user, SecureString password, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null, [CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
     {
         CallerInformation caller = new CallerInformation(memberName, fileName, lineNumber);
         if (!this.IsConnected) throw new InvalidOperationException("The SSH session is not connected.");
@@ -212,7 +223,7 @@ public class SshAuditEnvironment : AuditEnvironment
             return this.Execute("sudo", c, out process_status, out process_output, out process_error);
         }
         StringBuilder shell_data = new StringBuilder();
-        ShellStream stream = this.SshClient.CreateShellStream("dumb", 0, 0, 800, 600, 1024, new Dictionary<TerminalModes, uint> { { TerminalModes.ECHO, 0 } });
+        ShellStream stream = this.sshClient.CreateShellStream("dumb", 0, 0, 800, 600, 1024, new Dictionary<TerminalModes, uint> { { TerminalModes.ECHO, 0 } });
         stream.DataReceived += (s, d) => shell_data.Append(Encoding.UTF8.GetString(d.Data));
         c = string.Format("PAGER=cat su -c \"echo CMD_START && {0} {1} && echo CMD_SUCCESS || echo CMD_ERROR\" {2} || echo CMD_ERROR", command, arguments, user);
         byte[] b = Encoding.UTF8.GetBytes(c + this.LineTerminator);
@@ -284,7 +295,7 @@ public class SshAuditEnvironment : AuditEnvironment
         {
             string process_output = string.Empty;
             string process_error = string.Empty;
-            SshCommand cmd = this.SshClient.CreateCommand(_c.Item1 + " " + _c.Item2);
+            SshCommand cmd = this.sshClient.CreateCommand(_c.Item1 + " " + _c.Item2);
             Stopwatch cs = new Stopwatch();
             cs.Start();
             IAsyncResult result = cmd.BeginExecute(new AsyncCallback(SshCommandAsyncCallback), new KeyValuePair<SshCommand, Stopwatch>(cmd, cs));
@@ -322,7 +333,7 @@ public class SshAuditEnvironment : AuditEnvironment
         sw.Start();
         Parallel.ForEach(files, new ParallelOptions() { MaxDegreeOfParallelism = 20 }, (_f, state) => 
         {
-            SshCommand cmd = this.SshClient.CreateCommand("cat " + _f.FullName);
+            SshCommand cmd = this.sshClient.CreateCommand("cat " + _f.FullName);
             Stopwatch cs = new Stopwatch();
             cs.Start();
             var result = cmd.BeginExecute(new AsyncCallback(SshCommandAsyncCallback), new KeyValuePair<SshCommand, Stopwatch>(cmd, cs));
@@ -353,26 +364,15 @@ public class SshAuditEnvironment : AuditEnvironment
 
     #endregion
 
-    #region Properties
-    public string HostName { get; private set; } = "";
-    public string User { get; private set; } = "";
-    public bool UsePageant { get; private set; }
-    public bool UseSshAgent { get; private set; }
-    public string HostKey { get; private set; } = "";
-    public bool IsConnected { get; private set; }
-    public string LastEvent { get; set; } = "";
-    public TimeSpan NetworkConnectTimeout { get; private set; } = new TimeSpan(0, 0, 5);
-    #endregion
-
     #region Methods
-    public FileInfo GetFileAsLocal(string remote_path, string local_path)
+    public FileInfo? GetFileAsLocal(string remote_path, string local_path)
     {
         CallerInformation here = this.Here();
         Stopwatch sw = new Stopwatch();
         sw.Start();
-        ScpClient c = this.CreateScpClient();
-        c.BufferSize = 16 * 16384;
+        ScpClient? c = this.CreateScpClient();
         if (c == null) return null;
+        c.BufferSize = 16 * 16384;        
         try
         {
             FileInfo f = new FileInfo(local_path);
@@ -400,8 +400,7 @@ public class SshAuditEnvironment : AuditEnvironment
         CallerInformation here = this.Here();
         Stopwatch sw = new Stopwatch();
         string dir_archive_filename = string.Format("_devaudit_{0}.tgz", this.GetTimestamp());
-       //Renci.SshNet.Common.
-        SshCommandSpawanble cs = new SshCommandSpawanble(this.SshClient.CreateCommand(string.Format("tar -czf {0} -C {1} . && stat {0} || echo Failed", dir_archive_filename, remote_path)));
+        SshCommandSpawanble cs = new SshCommandSpawanble(this.sshClient.CreateCommand(string.Format("tar -czf {0} -C {1} . && stat {0} || echo Failed", dir_archive_filename, remote_path)));
         sw.Start();
         ExpectNet.Session cmd_session = Expect.Spawn(cs, this.LineTerminator);
         List<IResult> r = cmd_session.Expect.RegexEither("Size:\\s+([0-9]+)", null, "Failed", null);
@@ -429,7 +428,7 @@ public class SshAuditEnvironment : AuditEnvironment
             return null;
         }
         Info("Downloaded archive file {0} in to local file {1} in {2} ms.", dir_archive_file.FullName, lf.FullName, sw.ElapsedMilliseconds);
-        cs = new SshCommandSpawanble(this.SshClient.CreateCommand(string.Format("rm {0} && echo Succeded || echo Failed", dir_archive_filename)));
+        cs = new SshCommandSpawanble(this.sshClient.CreateCommand(string.Format("rm {0} && echo Succeded || echo Failed", dir_archive_filename)));
         cmd_session = Expect.Spawn(cs, this.LineTerminator);
         r = cmd_session.Expect.RegexEither("Succeded", null, "Failed", null);
         if (r[0].IsMatch)
@@ -473,7 +472,7 @@ public class SshAuditEnvironment : AuditEnvironment
         }
     }
    
-    internal ScpClient CreateScpClient([CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
+    internal ScpClient? CreateScpClient([CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
     {
         CallerInformation caller = new CallerInformation(memberName, fileName, lineNumber);
         ScpClient c = new ScpClient(this.HostName, this.User, ToInsecureString(this.ssh_client_pass));
@@ -522,7 +521,7 @@ public class SshAuditEnvironment : AuditEnvironment
         Debug(caller, "Destroyed SCP connection to {0}.", this.HostName);
     }
 
-    private void ScpClient_Downloading(object sender, ScpDownloadEventArgs e)
+    private void ScpClient_Downloading(object? sender, ScpDownloadEventArgs e)
     {
         Debug("Scp client downloaded {0} of {1} bytes for file {2}.", e.Downloaded, e.Size, e.Filename);
     }
@@ -547,7 +546,7 @@ public class SshAuditEnvironment : AuditEnvironment
         Info("Host key fingerprint is: {0} {1}.", e.HostKeyName, BitConverter.ToString(e.FingerPrint).Replace('-', ':').ToLower());
     }
 
-    private void Ci_AuthenticationBanner(object sender, AuthenticationBannerEventArgs e)
+    private void Ci_AuthenticationBanner(object? sender, AuthenticationBannerEventArgs e)
     {
         if (e.BannerMessage.ToLower().Contains("ubuntu"))
         {
@@ -603,10 +602,9 @@ public class SshAuditEnvironment : AuditEnvironment
     }
     #endregion
 
-    #region Fields
-    ExpectNet.Session SshSession { get; set; }
-    SshClient SshClient;
-    object? ssh_client_pass;
+    #region Fields    
+    SshClient sshClient;
+    string? ssh_client_pass;
     List<ScpClient> scp_clients = new List<ScpClient>();
     private bool IsDisposed = false;
     #endregion
@@ -634,12 +632,11 @@ public class SshAuditEnvironment : AuditEnvironment
                     //someDisposableObjectWithAnEventHandler = null; } 
                     // If this is a WinForm/UI control, uncomment this code 
                     //if (components != null) //{ // components.Dispose(); //} } 
-                    if (!ReferenceEquals(this.SshClient, null))
+                    if (!ReferenceEquals(this.sshClient, null))
                     {
-                        this.SshClient.HostKeyReceived -= SshClient_HostKeyReceived;
-                        this.SshClient.ErrorOccurred -= SshClient_ErrorOccurred;
-                        this.SshClient.Dispose();
-                        this.SshClient = null;
+                        this.sshClient.HostKeyReceived -= SshClient_HostKeyReceived;
+                        this.sshClient.ErrorOccurred -= SshClient_ErrorOccurred;
+                        this.sshClient.Dispose();   
                     }
                 }
                 // Release all unmanaged resources here 

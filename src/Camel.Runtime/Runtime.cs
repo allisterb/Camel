@@ -310,6 +310,8 @@ public abstract class Runtime
 
     public static string GetRequiredValue(IConfigurationRoot config, string key) => config[key] ?? throw new Exception($"Configuration key {key} not found.");
 
+    public static string GetRequiredValue(IConfigurationSection config, string key) => config[key] ?? throw new Exception($"Configuration key {key} not found.");
+
     #endregion
 
     #region Fields
