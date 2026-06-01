@@ -1,7 +1,7 @@
 ﻿using Camel.Environments;
 using Microsoft.Extensions.Configuration;
 
-namespace Camel.Toolkit;
+namespace Camel.Toolkits;
 
 public record Tool
 {     
@@ -42,8 +42,21 @@ public abstract class Toolkit : Runtime
     #region Methods
     
 
-    public Tool GetTool(string name) => new Tool(name, GetRequiredValue(toolConfig, $"{name}"));        
-  
+    public Tool GetTool(string name) => new Tool(name, GetRequiredValue(toolConfig, $"{name}"));
+
+    public T? ExecuteTool<T>(string name, string args) where T : class     
+    {
+        if (auditEnvironment.ExecuteCommand(tools[name].Command, args, out string output))
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<T>(output);
+        }
+        else
+        {
+            Error($"Failed to execute Volatility3 with arguments: {args}");
+            return null;
+        }
+    }
+
     #endregion
 
     #region Fields

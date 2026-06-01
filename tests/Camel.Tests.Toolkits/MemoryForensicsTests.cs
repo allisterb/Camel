@@ -1,5 +1,5 @@
 ﻿using Camel.Environments;
-using Camel.Toolkit;
+using Camel.Toolkits;
 
 namespace Camel.Tests.Toolkits;
 
@@ -20,13 +20,14 @@ public class MemoryForensicsTests : TestsRuntime
         toolkit = new MemoryForensicsToolkit(lenv);
     }   
 
-    [Fact]
-    public void CanRunVolatility3Tool()
-    {
-        toolkit.Volatility3("-f D:\\Downloads\\Rocba-Memory\\Rocba-Memory.raw -r json windows.pslist", out string output);
-        Assert.NotNull(output);
-    }
+   
 
+    [Fact]
+    public void CanRunWindowsPsList()
+    {
+        var r = toolkit.WindowsPsList("D:\\Downloads\\Rocba-Memory\\Rocba-Memory.raw");
+        Assert.NotNull(r);
+    }
     LocalEnvironment lenv;
     SshAuditEnvironment env;
     MemoryForensicsToolkit toolkit;
