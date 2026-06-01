@@ -34,21 +34,18 @@ public abstract class AuditFileSystemInfo : IFileSystemInfo
         if (this.AuditEnvironment is null)
         {
             throw new InvalidOperationException("The AuditEnvironment property must be set to execute environment commands.");
-        }
-        CallerInformation caller = new CallerInformation(memberName, fileName, lineNumber);
-        AuditEnvironment.ProcessExecuteStatus process_status;
-        string process_output = "";
-        string process_error = "";
-        if (this.AuditEnvironment.Execute(command, args, out process_status, out process_output, out process_error))
+        }                        
+        var r = this.AuditEnvironment.Execute(command, args);
+        if (r.Status == ProcessExecuteStatus.Completed)
         {
-            this.AuditEnvironment.Debug(caller, "The command {0} {1} executed successfully. Output: {1}", command, args, process_output);
-            return process_output;
+            this.AuditEnvironment.Debug("The command {0} {1} executed successfully. Output: {1}", command, args, r.StdOut);
+            return r.StdOut;
         }
 
         else
         {
 
-            this.AuditEnvironment.Debug(caller, "The command {0} {1} did not execute successfully. Output: {1}", command, args, process_output + process_error);
+            this.AuditEnvironment.Debug("The command {0} {1} did not execute successfully. Output: {1}", command, args, r.StdOut + r.StdErr);
             return string.Empty;
         }
 

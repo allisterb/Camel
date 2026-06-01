@@ -11,9 +11,7 @@ using System.Security;
 using System.Text;
 using System.Threading.Tasks;
 
-
-using ExpectNet;
-
+using static Result;
 
 public class LocalEnvironment : AuditEnvironment
 {
@@ -51,12 +49,93 @@ public class LocalEnvironment : AuditEnvironment
         return Directory.Exists(dir_path);
     }
 
-    public override bool Execute(string command, string arguments, 
-        out ProcessExecuteStatus process_status, out string process_output, out string process_error, Dictionary<string, string>? env = null,
-        Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
+    public override CommandResult Execute(string command, string arguments, Dictionary<string, string>? env = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
     {  
         FileInfo cf = new FileInfo(command);
+        ProcessExecuteStatus process_status = ProcessExecuteStatus.Unknown; 
         int? process_exit_code = null;
+        StringBuilder process_out_sb = new StringBuilder();
+        StringBuilder process_err_sb = new StringBuilder();        
+        ProcessStartInfo psi = new ProcessStartInfo(command);
+        psi.Arguments = arguments;
+        psi.CreateNoWindow = true;
+        psi.RedirectStandardError = true;
+        psi.RedirectStandardOutput = true;
+        psi.UseShellExecute = false;
+        if (env != null && env.Count > 0)
+        {
+            foreach(KeyValuePair<string, string> kv in env)
+            {
+                psi.EnvironmentVariables.Add(kv.Key, kv.Value);
+            }
+        }
+        if (cf.Exists)
+        {
+            psi.WorkingDirectory = cf.Directory!.FullName;
+        }
+        Process p = new Process();
+        p.EnableRaisingEvents = true;
+        p.StartInfo = psi;
+        p.OutputDataReceived += (object sender, DataReceivedEventArgs e) =>
+        {
+            if (!String.IsNullOrEmpty(e.Data))
+            {
+                process_out_sb.AppendLine(e.Data);
+                OutputDataReceived?.Invoke(e.Data);
+            }
+        };
+        p.ErrorDataReceived += (object sender, DataReceivedEventArgs e) =>
+        {
+            if (!String.IsNullOrEmpty(e.Data))
+            {
+                process_err_sb.AppendLine(e.Data);
+                OutputErrorReceived?.Invoke(e.Data);
+            }
+
+        };
+        try
+        {
+            using var op = Begin("Executing {0} {1}...", command, arguments);
+            p.Start();
+            p.BeginErrorReadLine();
+            p.BeginOutputReadLine();
+            p.WaitForExit();
+            process_exit_code = p.ExitCode;
+            p.Close();
+            op.Complete();
+            if ((process_exit_code.HasValue && process_exit_code.Value != 0))
+            {
+                Debug("Execute {0} {1} returned exit code {2}.", command, arguments, process_exit_code.Value);
+                process_status = ProcessExecuteStatus.Error;                
+            }
+            else if ((process_exit_code.HasValue && process_exit_code.Value == 0))
+            {
+                Debug("Execute {0} {1} returned exit code {2}.", command, arguments, process_exit_code.Value);
+                process_status = ProcessExecuteStatus.Completed;                
+            }          
+            return new CommandResult(process_status, process_out_sb.ToString(), process_err_sb.ToString(), process_exit_code);
+        }
+        catch (Exception e)
+        {
+            if (e.Message == "The system cannot find the file specified")
+            {
+                process_status = ProcessExecuteStatus.FileNotFound;           
+                return new CommandResult(process_status, string.Empty, e.Message, process_exit_code);
+            }
+            else
+            {
+                Debug("Execute {0} {1} threw exception {2}.", command, arguments, e.Message);
+                process_status = ProcessExecuteStatus.Error;
+                return new CommandResult(process_status, string.Empty, e.Message, process_exit_code);
+            }
+        }                
+    }
+
+    public override async Task<CommandResult> ExecuteAsync(string command, string arguments, Dictionary<string, string>? env = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
+    {
+        FileInfo cf = new FileInfo(command);
+        int? process_exit_code = null;
+        ProcessExecuteStatus process_status = ProcessExecuteStatus.Unknown;
         StringBuilder process_out_sb = new StringBuilder();
         StringBuilder process_err_sb = new StringBuilder();
         ProcessStartInfo psi = new ProcessStartInfo(command);
@@ -67,7 +146,7 @@ public class LocalEnvironment : AuditEnvironment
         psi.UseShellExecute = false;
         if (env != null && env.Count > 0)
         {
-            foreach(KeyValuePair<string, string> kv in env)
+            foreach (KeyValuePair<string, string> kv in env)
             {
                 psi.EnvironmentVariables.Add(kv.Key, kv.Value);
             }
@@ -98,60 +177,43 @@ public class LocalEnvironment : AuditEnvironment
         };
         try
         {
-            Debug("Executing {0} {1}...", command, arguments);
+            using var op = Begin("Executing {0} {1}...", command, arguments);
             p.Start();
             p.BeginErrorReadLine();
             p.BeginOutputReadLine();
-            p.WaitForExit();
+            await p.WaitForExitAsync();
             process_exit_code = p.ExitCode;
             p.Close();
+            op.Complete();
+            if ((process_exit_code.HasValue && process_exit_code.Value != 0))
+            {
+                Debug("Execute {0} {1} returned exit code {2}.", command, arguments, process_exit_code.Value);
+                process_status = ProcessExecuteStatus.Error;
+            }
+            else if ((process_exit_code.HasValue && process_exit_code.Value == 0))
+            {
+                Debug("Execute {0} {1} returned exit code {2}.", command, arguments, process_exit_code.Value);
+                process_status = ProcessExecuteStatus.Completed;
+            }
+            return new CommandResult(process_status, process_out_sb.ToString(), process_err_sb.ToString(), process_exit_code);
         }
-        catch (Win32Exception e)
+        catch (Exception e)
         {
             if (e.Message == "The system cannot find the file specified")
             {
                 process_status = ProcessExecuteStatus.FileNotFound;
-                process_err_sb.AppendLine (e.Message);
-                return false;
+                return new CommandResult(process_status, string.Empty, e.Message, process_exit_code);
             }
             else
             {
                 Debug("Execute {0} {1} threw exception {2}.", command, arguments, e.Message);
                 process_status = ProcessExecuteStatus.Error;
-                process_error = e.Message;
-                return false;
+                return new CommandResult(process_status, string.Empty, e.Message, process_exit_code);
             }
         }
-        finally
-        {
-            process_output = process_out_sb.ToString();
-            process_error = process_err_sb.ToString();
-            p.Dispose();
-        }
-
-        if ((process_exit_code.HasValue && process_exit_code.Value != 0))
-        {
-            Debug("Execute {0} {1} returned exit code {2}.", command, arguments, process_exit_code.Value);
-            process_status = ProcessExecuteStatus.Error;
-            return false;
-        }
-        else if ((process_exit_code.HasValue && process_exit_code.Value == 0))
-        {
-            Debug("Execute {0} {1} returned exit code {2}.", command, arguments, process_exit_code.Value);
-            process_status = ProcessExecuteStatus.Completed;
-            return true;
-        }
-        else
-        {
-            process_status = ProcessExecuteStatus.Unknown;
-            return false;
-
-        }
     }
-
-    public override bool ExecuteAsUser(string command, string arguments, out ProcessExecuteStatus process_status, out string process_output, out string process_error, string user, SecureString password, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null, [CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
-    {
-        CallerInformation caller = new CallerInformation(memberName, fileName, lineNumber);
+    public override CommandResult ExecuteAsUser(string command, string arguments, string user, SecureString password, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
+    {        
         if (this.OS.Platform == PlatformID.Win32NT)
         {
             string domain_name = Environment.UserDomainName;
@@ -208,65 +270,36 @@ public class LocalEnvironment : AuditEnvironment
                 p.WaitForExit();
                 process_exit_code = p.ExitCode;
                 p.Close();
+                return new CommandResult(process_exit_code == 0 ? ProcessExecuteStatus.Completed : ProcessExecuteStatus.Error, process_out_sb.ToString(), process_err_sb.ToString(), process_exit_code);
             }
             catch (Win32Exception e)
             {
                 if (e.Message == "The system cannot find the file specified")
                 {
-                    process_status = ProcessExecuteStatus.FileNotFound;
-                    process_err_sb.AppendLine(e.Message);
-                    return false;
+                    return new CommandResult(ProcessExecuteStatus.FileNotFound, process_out_sb.ToString(), process_err_sb.ToString(), process_exit_code);
                 }
                 else
                 {
-                    Debug(caller, "Execute {0} {1} threw exception {2}.", command, arguments, e.Message);
-                    process_status = ProcessExecuteStatus.Error;
-                    process_error = e.Message;
-                    return false;
+                    Debug("Execute {0} {1} threw exception {2}.", command, arguments, e.Message);
+                    return new CommandResult(ProcessExecuteStatus.Error, process_out_sb.ToString(), process_err_sb.ToString(), process_exit_code);
+
                 }
             }
             finally
             {
-                process_output = process_out_sb.ToString();
-                process_error = process_err_sb.ToString();
                 p.Dispose();
             }
-
-            if ((process_exit_code.HasValue && process_exit_code.Value != 0))
-            {
-                Debug(caller, "Execute {0} {1} returned exit code {2}.", command, arguments, process_exit_code.Value);
-                process_status = ProcessExecuteStatus.Error;
-                return false;
-            }
-            else if ((process_exit_code.HasValue && process_exit_code.Value == 0))
-            {
-                Debug(caller, "Execute {0} {1} returned exit code {2}.", command, arguments, process_exit_code.Value);
-                process_status = ProcessExecuteStatus.Completed;
-                return true;
-            }
-            else
-            {
-                process_status = ProcessExecuteStatus.Unknown;
-                return false;
-
-            }
-
         }
         else
         {
             if (password == null)
             {
                 string c = string.Format("-n -u {0} -s {1} {2}", user, command, arguments);
-                return this.Execute("sudo", c, out process_status, out process_output, out process_error);
+                return this.Execute("sudo", c, OutputDataReceived: OutputDataReceived, OutputErrorReceived: OutputErrorReceived);
             }
             else
             {
-                Error("Executing commands as a different operating system user with a required password in the local environment is not suppported on *nix. Use the su or sudo commands to run DevAudit as the required operating system user.");
-                process_error = string.Empty;
-                process_output = string.Empty;
-                process_status = ProcessExecuteStatus.Error;
-                return false;
-
+                throw new Exception("Executing commands as a different operating system user with a required password in the local environment is not suppported on *nix. Use the su or sudo commands to run DevAudit as the required operating system user.");
                 /*
                 string c = string.Format("-n -u {0} -s {1} {2}", user, command, arguments);
                 return this.Execute("sudo", c, out process_status, out process_output, out process_error);

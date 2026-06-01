@@ -14,17 +14,7 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 public abstract class AuditEnvironment : Runtime, IDisposable
-{
-    #region Types
-    public enum ProcessExecuteStatus
-    {
-        Unknown = -99,
-        FileNotFound = -1,
-        Completed = 0,
-        Error = 1
-    }
-    #endregion
-
+{    
     #region Constructors
     public AuditEnvironment(EventHandler<EnvironmentEventArgs> message_handler, OperatingSystem os, LocalEnvironment host_environment)
     {
@@ -44,47 +34,13 @@ public abstract class AuditEnvironment : Runtime, IDisposable
 
     }
     #endregion
-
-    #region Events
-    public event EventHandler<EnvironmentEventArgs>? MessageHandler;
-    public event EventHandler<DataReceivedEventArgs>? OutputDataReceivedHandler;
-    public event EventHandler<DataReceivedEventArgs>? ErrorDataReceivedHandler;
-
-    protected virtual void OnMessage(EnvironmentEventArgs e)
-    {
-        lock (message_lock)
-        {
-            MessageHandler?.Invoke(this, e);
-        }
-    }
-
-    protected virtual void OnOutputDataReceived(object sender, DataReceivedEventArgs e)
-    {
-        if (!String.IsNullOrEmpty(e.Data))
-        {
-            ProcessOutputSB.AppendLine(e.Data);
-            OutputDataReceivedHandler?.Invoke(this, e);
-        }
-    }
-
-    protected virtual void OnErrorDataReceived(object sender, DataReceivedEventArgs e)
-    {
-        if (!String.IsNullOrEmpty(e.Data))
-        {
-            ProcessErrorSB.AppendLine(e.Data);
-            ErrorDataReceivedHandler?.Invoke(this, e);
-        }
-    }
-    #endregion
-
+    
     #region Abstract properties and methods
     public abstract bool FileExists(string file_path);
     public abstract bool DirectoryExists(string dir_path);
-    public abstract bool Execute(string command, string arguments,
-        out ProcessExecuteStatus process_status, out string process_output, out string process_error, Dictionary<string, string> EnvironmentVariables = null,
-        Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null);
-    public abstract bool ExecuteAsUser(string command, string arguments,
-        out ProcessExecuteStatus process_status, out string process_output, out string process_error, string user, SecureString password, Action<string> OutputDataReceived = null, Action<string> OutputErrorReceived = null, [CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0);
+    public abstract CommandResult Execute(string command, string arguments,Dictionary<string, string>? EnvironmentVariables = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null);
+    public abstract Task<CommandResult> ExecuteAsync(string command, string arguments, Dictionary<string, string>? EnvironmentVariables = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null);
+    public abstract CommandResult ExecuteAsUser(string command, string arguments, string user, SecureString password, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null);
     public abstract AuditFileInfo ConstructFile(string file_path);
     public abstract AuditDirectoryInfo ConstructDirectory(string dir_path);
     public abstract Dictionary<AuditFileInfo, string> ReadFilesAsText(List<AuditFileInfo> files);
@@ -164,25 +120,21 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     #endregion
 
     #region Methods
-    public bool ExecuteCommand(string command, string arguments, out string output, bool report_errors = true, [CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
-    {
-        CallerInformation caller = new CallerInformation(memberName, fileName, lineNumber);
-        ProcessExecuteStatus process_status = ProcessExecuteStatus.Unknown;
-        string process_output, process_error;
-        bool r = this.Execute(command, arguments, out process_status, out process_output, out process_error);
-        if (r)
+    public bool ExecuteCommand(string command, string arguments, out string output, bool report_errors = false)
+    {     
+        string process_output = "", process_error = "";
+        var r = this.Execute(command, arguments);
+        process_output = r.StdOut;
+        process_error = r.StdErr;
+        if (r.Status == ProcessExecuteStatus.Completed)
         {
             output = process_output.Trim();
-            Debug(caller, "The command {0} {1} executed successfully. Output: {2}", command, arguments, output);
+            Debug("The command {0} {1} executed successfully. Output: {2}", command, arguments, output);
             return true;
         }
         else
         {
-            output = process_output + process_error.Trim();
-            if (report_errors && !string.IsNullOrEmpty(output))
-            {
-                Error(caller, "The command {0} {1} did not execute successfully. Error: {2}", command, arguments, output);
-            }
+            output = process_output + process_error.Trim();            
             return false;
         }
     }
@@ -835,6 +787,38 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         c.File = fileName;
         c.LineNumber = lineNumber;
         return c;
+    }
+    #endregion
+
+    #region Events
+    public event EventHandler<EnvironmentEventArgs>? MessageHandler;
+    public event EventHandler<DataReceivedEventArgs>? OutputDataReceivedHandler;
+    public event EventHandler<DataReceivedEventArgs>? ErrorDataReceivedHandler;
+
+    protected virtual void OnMessage(EnvironmentEventArgs e)
+    {
+        lock (message_lock)
+        {
+            MessageHandler?.Invoke(this, e);
+        }
+    }
+
+    protected virtual void OnOutputDataReceived(object sender, DataReceivedEventArgs e)
+    {
+        if (!String.IsNullOrEmpty(e.Data))
+        {
+            ProcessOutputSB.AppendLine(e.Data);
+            OutputDataReceivedHandler?.Invoke(this, e);
+        }
+    }
+
+    protected virtual void OnErrorDataReceived(object sender, DataReceivedEventArgs e)
+    {
+        if (!String.IsNullOrEmpty(e.Data))
+        {
+            ProcessErrorSB.AppendLine(e.Data);
+            ErrorDataReceivedHandler?.Invoke(this, e);
+        }
     }
     #endregion
 

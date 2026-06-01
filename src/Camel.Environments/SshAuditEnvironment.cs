@@ -146,13 +146,12 @@ public class SshAuditEnvironment : AuditEnvironment
         }            
     }
 
-    public override bool Execute(string command, string arguments, out ProcessExecuteStatus process_status, out string process_output, out string process_error, Dictionary<string, string>? env = null,
-        Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
+    public override CommandResult Execute(string command, string arguments, Dictionary<string, string>? env = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
     {
         if (!this.IsConnected) throw new InvalidOperationException("The SSH session is not connected.");
-        process_status = ProcessExecuteStatus.Unknown;
-        process_output = "";
-        process_error = ""; 
+        var process_status = ProcessExecuteStatus.Unknown;
+        var process_output = "";
+        var process_error = ""; 
         if (env != null && env.Count > 0)
         {
             StringBuilder vars = new StringBuilder();
@@ -176,51 +175,118 @@ public class SshAuditEnvironment : AuditEnvironment
                 Debug("Execute {0} returned zero exit code. Output: {1}.", command + " " + arguments, process_output);
                 process_status = ProcessExecuteStatus.Completed;
                 cmd.Dispose();
-                return true;
+                return new CommandResult(process_status, process_output, process_error, cmd.ExitStatus);
             }
             else
             {
                 process_status = ProcessExecuteStatus.Error;
                 Debug("Execute {0} returned non-zero exit code {2}. stdout: {1}. error: {3}", command + " " + arguments, process_output, cmd.ExitStatus ?? -1, process_error);
                 cmd.Dispose();
-                return false;
+                return new CommandResult(process_status, process_output, process_error, cmd.ExitStatus); 
             }
         }
         catch (SshConnectionException sce)
         {
             Error(sce, "SSH connection error attempting to execute {0} {1}.", command, arguments);
-            return false;
+            process_status = ProcessExecuteStatus.Error;
+            return new CommandResult(process_status, process_output, process_error, cmd.ExitStatus); 
         }
         catch (SshOperationTimeoutException te)
         {
             Error(te, "SSH connection timeout attempting to execute {0} {1}.", command, arguments);
-            return false;
+            process_status = ProcessExecuteStatus.Error;
+            return new CommandResult(process_status, process_output, process_error, cmd.ExitStatus);
         }
         catch (SshException se)
         {
             Error(se, "SSH error attempting to execute {0} {1}.", command, arguments);
-            return false;
+            process_status = ProcessExecuteStatus.Error;
+            return new CommandResult(process_status, process_output, process_error, cmd.ExitStatus);
         }
         catch (Exception e)
         {
-            Error(e, "Error attempting to execute over SSH {0} {1}.", command, arguments);
-            return false;
+            Error(e, "Unknown error attempting to execute {0} {1} over SSH.", command, arguments);
+            process_status = ProcessExecuteStatus.Error;
+            return new CommandResult(process_status, process_output, process_error, cmd.ExitStatus);
         }       
         
     }
 
-    public override bool ExecuteAsUser(string command, string arguments, out ProcessExecuteStatus process_status, out string process_output, out string process_error, string user, SecureString password, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null, [CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
+    public override async Task<CommandResult> ExecuteAsync(string command, string arguments, Dictionary<string, string>? env = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
     {
-        CallerInformation caller = new CallerInformation(memberName, fileName, lineNumber);
         if (!this.IsConnected) throw new InvalidOperationException("The SSH session is not connected.");
-        process_status = ProcessExecuteStatus.Unknown;
-        process_output = "";
-        process_error = "";
+        var process_status = ProcessExecuteStatus.Unknown;
+        var process_output = "";
+        var process_error = "";
+        if (env != null && env.Count > 0)
+        {
+            StringBuilder vars = new StringBuilder();
+            foreach (KeyValuePair<string, string> kv in env)
+            {
+                vars.AppendFormat("{0}={1} ", kv.Key, kv.Value);
+            }
+            command = vars.ToString() + command;
+        }
+        SshCommand cmd = this.sshClient.CreateCommand(command + " " + arguments);
+        using var op = Begin("Executing command {0} {1}...", command, arguments);
+        try
+        {
+            await cmd.ExecuteAsync(CancellationToken);            
+            process_output = cmd.Result.Trim();
+            process_error = cmd.Error.Trim();
+            if (cmd.ExitStatus == 0)
+            {
+                Debug("Execute {0} returned zero exit code. Output: {1}.", command + " " + arguments, process_output);
+                process_status = ProcessExecuteStatus.Completed;
+                cmd.Dispose();
+                return new CommandResult(process_status, process_output, process_error, cmd.ExitStatus);
+            }
+            else
+            {
+                process_status = ProcessExecuteStatus.Error;
+                Debug("Execute {0} returned non-zero exit code {2}. stdout: {1}. error: {3}", command + " " + arguments, process_output, cmd.ExitStatus ?? -1, process_error);
+                cmd.Dispose();
+                return new CommandResult(process_status, process_output, process_error, cmd.ExitStatus);
+            }
+        }
+        catch (SshConnectionException sce)
+        {
+            Error(sce, "SSH connection error attempting to execute {0} {1}.", command, arguments);
+            process_status = ProcessExecuteStatus.Error;
+            return new CommandResult(process_status, process_output, process_error, cmd.ExitStatus);
+        }
+        catch (SshOperationTimeoutException te)
+        {
+            Error(te, "SSH connection timeout attempting to execute {0} {1}.", command, arguments);
+            process_status = ProcessExecuteStatus.Error;
+            return new CommandResult(process_status, process_output, process_error, cmd.ExitStatus);
+        }
+        catch (SshException se)
+        {
+            Error(se, "SSH error attempting to execute {0} {1}.", command, arguments);
+            process_status = ProcessExecuteStatus.Error;
+            return new CommandResult(process_status, process_output, process_error, cmd.ExitStatus);
+        }
+        catch (Exception e)
+        {
+            Error(e, "Unknown error attempting to execute {0} {1} over SSH.", command, arguments);
+            process_status = ProcessExecuteStatus.Error;
+            return new CommandResult(process_status, process_output, process_error, cmd.ExitStatus);
+        }
+
+    }
+
+    public override CommandResult ExecuteAsUser(string command, string arguments, string user, SecureString password, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
+    {        
+        if (!this.IsConnected) throw new InvalidOperationException("The SSH session is not connected.");
+        var process_status = ProcessExecuteStatus.Unknown;
+        var process_output = "";
+        var process_error = "";
         string c;
         if (password == null)
         {
             c = string.Format("-n -u {0} -s {1} {2}", user, command, arguments);
-            return this.Execute("sudo", c, out process_status, out process_output, out process_error);
+            return this.Execute("sudo", c);
         }
         StringBuilder shell_data = new StringBuilder();
         ShellStream stream = this.sshClient.CreateShellStream("dumb", 0, 0, 800, 600, 1024, new Dictionary<TerminalModes, uint> { { TerminalModes.ECHO, 0 } });
@@ -247,8 +313,8 @@ public class SshAuditEnvironment : AuditEnvironment
         if (!got_password_prompt)
         {
             process_status = ProcessExecuteStatus.Error;
-            Error(caller, "Unexpected response from server attempting to execute {0}: {1}", c, shell_data);
-            return false;
+            Error("Unexpected response from server attempting to execute {0}: {1}", c, shell_data);
+            return new CommandResult(process_status, process_output, process_error, null);
         }
         stream.EndWrite(wr);
         bool cmd_success = false;
@@ -271,15 +337,15 @@ public class SshAuditEnvironment : AuditEnvironment
         if (!cmd_success)
         {
             process_status = ProcessExecuteStatus.Error;
-            Debug(caller, "Execute {0} {1} returned non-zero exit code. Output: {2}.", command, arguments, cmd_output);
-            return false;
+            Debug("Execute {0} {1} returned non-zero exit code. Output: {2}.", command, arguments, cmd_output);
+            return new CommandResult(process_status, process_output, process_error, null);
         }
         else
         {
-            Debug(caller, "Execute {0} {1} returned zero exit code. Output: {2}.", command, arguments, cmd_output);
+            Debug("Execute {0} {1} returned zero exit code. Output: {2}.", command, arguments, cmd_output);
             process_status = ProcessExecuteStatus.Completed;
             process_output = cmd_output.Trim('\r', '\n');
-            return true;
+            return new CommandResult(process_status, process_output, process_error, 0); 
         }
     }
 
@@ -592,10 +658,10 @@ public class SshAuditEnvironment : AuditEnvironment
 
     private void SshExpectAsyncCallback(IAsyncResult r)
     {
-        ExpectAsyncResult ear  = r as ExpectAsyncResult;
+        ExpectAsyncResult ear  = r as ExpectAsyncResult;   
         KeyValuePair<string, Stopwatch> cas = (KeyValuePair<string, Stopwatch>)r.AsyncState;
         if (r.IsCompleted)
-        {
+        {            
             cas.Value.Stop();
             Debug("Completed expect operation {0} in {1} ms.", cas.Key, cas.Value.ElapsedMilliseconds);
         }

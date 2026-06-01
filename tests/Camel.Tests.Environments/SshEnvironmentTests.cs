@@ -33,6 +33,16 @@ public class SshEnvironmentTests : TestsRuntime
         result = env.ExecuteCommand("foo", "bar", out output);
         Assert.False(result);
     }
+
+    [Fact]
+    public async Task CanExecuteAsync()
+    {
+        SshAuditEnvironment env = new SshAuditEnvironment(EnvironmentMessageHandler, "camel", host, port, user, password, new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), le);
+        var r = await env.ExecuteAsync("echo", "hello");        
+        Assert.True(r.ExitCode == 0);
+        Assert.Equal("hello", r.StdOut);        
+    }
+
     LocalEnvironment le;
     string host, user, password;
     int port; 
