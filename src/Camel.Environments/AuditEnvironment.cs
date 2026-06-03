@@ -13,6 +13,12 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
+public enum EnvironmentType
+{
+    Local,
+    Ssh
+}   
+
 public abstract class AuditEnvironment : Runtime, IDisposable
 {    
     #region Constructors
@@ -747,37 +753,37 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     internal void Success(string message_format, params object[] message)
     {
         TraceSource.TraceEvent(TraceEventType.Information, 0, message_format, message);
-        OnMessage(new EnvironmentEventArgs(EventMessageType.SUCCESS, message_format, message));
+        //OnMessage(new EnvironmentEventArgs(EventMessageType.SUCCESS, message_format, message));
     }
 
     [DebuggerStepThrough]
     internal void Warning(string message_format, params object[] message)
     {
-        OnMessage(new EnvironmentEventArgs(EventMessageType.WARNING, message_format, message));
+        //OnMessage(new EnvironmentEventArgs(EventMessageType.WARNING, message_format, message));
     }
 
     [DebuggerStepThrough]
     internal void Status(string message_format, params object[] message)
     {
-        OnMessage(new EnvironmentEventArgs(EventMessageType.STATUS, message_format, message));
+        //OnMessage(new EnvironmentEventArgs(EventMessageType.STATUS, message_format, message));
     }
 
     [DebuggerStepThrough]
     internal void Progress(string operation, int total, int complete, TimeSpan? time = null)
     {
-        OnMessage(new EnvironmentEventArgs(new OperationProgress(operation, total, complete, time)));
+        //OnMessage(new EnvironmentEventArgs(new OperationProgress(operation, total, complete, time)));
     }
 
     [DebuggerStepThrough]
     internal void Debug(CallerInformation caller, string message_format, params object[] message)
     {
-        OnMessage(new EnvironmentEventArgs(caller, EventMessageType.DEBUG, message_format, message));
+        //OnMessage(new EnvironmentEventArgs(caller, EventMessageType.DEBUG, message_format, message));
     }
 
     [DebuggerStepThrough]
     internal void Debug(string message_format, params object[] message)
     {
-        OnMessage(new EnvironmentEventArgs(EventMessageType.DEBUG, message_format, message));
+        //OnMessage(new EnvironmentEventArgs(EventMessageType.DEBUG, message_format, message));
     }
 
     internal CallerInformation Here([CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
@@ -788,6 +794,34 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         c.LineNumber = lineNumber;
         return c;
     }
+
+    public static void DefaultEnvironmentMessageHandler(object? sender, EnvironmentEventArgs e)
+    {
+
+        if (e.MessageType == EventMessageType.DEBUG)
+        {
+            Runtime.Debug(e.Message);
+        }
+        else if (e.MessageType == EventMessageType.ERROR)
+        {
+            if (e.Exception != null)
+            {
+                Runtime.Error(e.Exception, e.Message);
+            }
+            else
+            {
+
+                Runtime.Error(e.Message);
+
+            }
+        }
+        else
+        {
+            Runtime.Info(e.Message);
+        }
+
+
+    }
     #endregion
 
     #region Events
@@ -795,14 +829,8 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     public event EventHandler<DataReceivedEventArgs>? OutputDataReceivedHandler;
     public event EventHandler<DataReceivedEventArgs>? ErrorDataReceivedHandler;
 
-    protected virtual void OnMessage(EnvironmentEventArgs e)
-    {
-        lock (message_lock)
-        {
-            MessageHandler?.Invoke(this, e);
-        }
-    }
-
+    protected virtual void OnMessage(EnvironmentEventArgs e) => MessageHandler?.Invoke(this, e);
+            
     protected virtual void OnOutputDataReceived(object sender, DataReceivedEventArgs e)
     {
         if (!String.IsNullOrEmpty(e.Data))
@@ -823,7 +851,7 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     #endregion
 
     #region Fields
-    protected object message_lock = new object();
+    
     #endregion
 
     #region Disposer and Finalizer

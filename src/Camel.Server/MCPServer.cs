@@ -50,7 +50,7 @@ public class CamelMCPTools
 
 public class CamelMCPServer : Runtime
 {
-    public static async Task Run(AuditEnvironment auditEnvironment)
+    public static async Task RunAsync(AuditEnvironment auditEnvironment)
     {        
         var builder = Host.CreateEmptyApplicationBuilder(null);
         var s = new CamelMCPTools(auditEnvironment);

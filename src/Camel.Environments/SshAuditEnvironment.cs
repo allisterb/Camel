@@ -27,10 +27,11 @@ public class SshAuditEnvironment : AuditEnvironment
         ConnectionInfo ci;        
         ci = new ConnectionInfo(host_name, port, user, new PasswordAuthenticationMethod(user, pass));
         sshClient = new SshClient(ci);
+       
         sshClient.ErrorOccurred += SshClient_ErrorOccurred;
         sshClient.HostKeyReceived += SshClient_HostKeyReceived;
         sshClient.ConnectionInfo.AuthenticationBanner += Ci_AuthenticationBanner;
-        using var op = Begin("Connecting to {0}:{1}...", host_name, port);
+        using var op = Begin("Connecting to {0}:{1}", host_name, port);
         try
         {
             sshClient.Connect();
@@ -79,6 +80,11 @@ public class SshAuditEnvironment : AuditEnvironment
                 Error("Failed to connect or authenticate to {0}", host_name);             
             }
         }                       
+    }
+    
+    public SshAuditEnvironment(string client, string host_name, int port, string user, string pass, OperatingSystem os, LocalEnvironment host_environment)
+        : this(DefaultEnvironmentMessageHandler, client, host_name, port, user, pass, os, host_environment)
+    {
     }
     #endregion
 

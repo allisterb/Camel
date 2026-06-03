@@ -20,7 +20,7 @@ public class LocalEnvironment : AuditEnvironment
     {
         this.ScriptEnvironment = new ScriptEnvironment(this);
     }
-    public LocalEnvironment() : base(null, Environment.OSVersion, null) { }
+    public LocalEnvironment() : this(DefaultEnvironmentMessageHandler) { }
     #endregion
 
     #region Overriden properties
