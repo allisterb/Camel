@@ -9,6 +9,13 @@
   <ItemGroup>
     <PackageReference Include="Jint" Version="4.9.2" />
     <PackageReference Include="ModelContextProtocol" Version="1.3.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Camel.Environments\Camel.Environments.csproj" />
+    <ProjectReference Include="..\Camel.Runtime\Camel.Runtime.csproj" />
+    <ProjectReference Include="..\Camel.Toolkits\Camel.Toolkits.csproj" />
   </ItemGroup>
 
 </Project>
