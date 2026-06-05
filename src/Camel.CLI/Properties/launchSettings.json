@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Camel.CLI": {
+      "commandName": "Project",
+      "commandLineArgs": "server --http"
+    }
+  }
+}

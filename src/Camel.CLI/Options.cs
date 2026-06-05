@@ -44,7 +44,8 @@ public class Options
 [Verb("server", HelpText = "Start the Camel MCP server.")]
 public class ServerOptions : Options
 {
-    
+    [Option("http", Required = false, HelpText = "Enable the HTTP transport.")]
+    public bool Http { get; set; }
 }
 
 

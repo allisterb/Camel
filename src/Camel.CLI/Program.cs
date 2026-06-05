@@ -18,7 +18,7 @@ internal class Program : Runtime
     static Program()
     {
         Runtime.WithFileAndConsoleLogging("Camel", "CLI", true);
-        config = LoadConfigFile("appsettings.json");
+        config = LoadConfigFile(Path.Combine(AssemblyLocation, "appsettings.json"));
         environmentType = Enum.Parse<EnvironmentType>(GetRequiredValue(config, "Sift:Environment"));
         if (environmentType == EnvironmentType.Local)
         {
@@ -62,7 +62,16 @@ internal class Program : Runtime
 
     static async Task HandleServerArgs(ServerOptions opts)
     {
-        await CamelMCPServer.RunAsync(auditEnvironment);
+        if (opts.Http)
+        {
+            AnsiConsole.MarkupLine("[green]Starting Camel MCP Server in HTTP mode...[/]");
+            await CamelMCPServer.RunHttpAsync(auditEnvironment);
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("[green]Starting Camel MCP Server in stdio mode...[/]");
+            await CamelMCPServer.RunStdioAsync(auditEnvironment);
+        }       
     }
 
     static async Task HandleTestArgs(TestOptions options)

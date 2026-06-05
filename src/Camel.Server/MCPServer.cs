@@ -10,10 +10,20 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Server;
+using ModelContextProtocol.AspNetCore;
 
 using Jint;
 using Camel.Environments;
 using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+
+public enum TransportType
+{
+    Stdio = 0,
+    Http = 1,
+}
 
 public class CamelMCPTools 
 {   
@@ -50,7 +60,9 @@ public class CamelMCPTools
 
 public class CamelMCPServer : Runtime
 {
-    public static async Task RunAsync(AuditEnvironment auditEnvironment)
+    const string CorsPolicyName = "CamelMcpCors";
+
+    public static async Task RunStdioAsync(AuditEnvironment auditEnvironment)
     {        
         var builder = Host.CreateEmptyApplicationBuilder(null);
         var s = new CamelMCPTools(auditEnvironment);
@@ -60,13 +72,90 @@ public class CamelMCPServer : Runtime
             .Logging.AddProvider(loggerProvider)
             .SetMinimumLevel(LogLevel.Trace);
 
-        builder
+        var mcpServices = builder
             .Services
-            .AddMcpServer()            
-            .WithStdioServerTransport()
-            .WithTools(tool);
+            .AddMcpServer()
+            .WithTools(tool)
+            .WithStdioServerTransport();
+        
+        var app = builder.Build();
+        
+        await app.RunAsync();
+    }
+
+    public static async Task RunHttpAsync(AuditEnvironment auditEnvironment)
+    {
+        var builder = WebApplication.CreateBuilder();
+        var s = new CamelMCPTools(auditEnvironment);
+        var tool = McpServerTool.Create(s.ExecuteJavaScript);
+
+        builder
+            .Logging.AddProvider(loggerProvider)
+            .SetMinimumLevel(LogLevel.Trace);
+
+        // Allow browser-based MCP clients (served from a different origin) to call
+        // the HTTP/SSE endpoints. AllowAnyOrigin is convenient for local/trusted use;
+        // restrict it with WithOrigins(...) if Camel is exposed beyond a trusted host.
+        // Mcp-Session-Id must be exposed so clients can read the session id the server
+        // assigns on initialize and echo it back on subsequent requests.
+        builder.Services.AddCors(options =>
+        {
+            options.AddPolicy(CorsPolicyName, policy =>
+            {
+                policy
+                    .AllowAnyOrigin()
+                    .AllowAnyHeader()
+                    .AllowAnyMethod()
+                    .WithExposedHeaders("Mcp-Session-Id");
+            });
+        });
+
+        var mcpServices = builder
+            .Services
+            .AddMcpServer()
+            .WithTools(tool)
+            .WithHttpTransport(options =>
+            {
+                // Use stateful sessions so the Streamable HTTP transport can
+                // stream responses and push server-initiated messages back to
+                // the client over its SSE (GET) channel. In stateless mode each
+                // request gets a fresh context, which disables both of those and
+                // is incompatible with the legacy SSE transport below.
+                options.Stateless = false;
+
+                // Also map the legacy HTTP+SSE endpoints (GET /sse, POST /message)
+                // for older clients that don't support Streamable HTTP yet.
+                options.EnableLegacySse = true;
+            });
 
         var app = builder.Build();
+
+        app.UseCors(CorsPolicyName);
+
+        // Maps the Streamable HTTP endpoints at the root path and, because
+        // EnableLegacySse is set above, the legacy "/sse" and "/message" endpoints.
+        app.MapMcp();
+
+        app.Lifetime.ApplicationStarted.Register(() =>
+        {
+            var addresses = app.Services
+                .GetRequiredService<IServer>()
+                .Features
+                .Get<IServerAddressesFeature>()?
+                .Addresses;
+
+            if (addresses is null || addresses.Count == 0)
+            {
+                Info("Camel MCP server (HTTP transport) started, but no listening address was reported.");
+            }
+            else
+            {
+                foreach (var address in addresses)
+                {
+                    Info("Camel MCP server listening on {Address} (Streamable HTTP at '/', legacy SSE at '/sse' and '/message').", address);
+                }
+            }
+        });
 
         await app.RunAsync();
     }
