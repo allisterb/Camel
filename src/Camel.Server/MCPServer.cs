@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Server;
 using ModelContextProtocol.AspNetCore;
+using ModelContextProtocol.Protocol;
 
 using Jint;
 using Camel.Environments;
@@ -26,8 +27,7 @@ public enum TransportType
 }
 
 public class CamelMCPTools 
-{   
-    
+{       
    public CamelMCPTools(AuditEnvironment auditEnvironment)
    {
         this.auditEnvironment = auditEnvironment;        
@@ -36,11 +36,11 @@ public class CamelMCPTools
         api = new CamelApi(auditEnvironment);   
     }
 
-    [McpServerTool, Description("Execute JavaScript code against the Camel API.")]
-    public async Task<string> ExecuteJavaScript(string script)
+    [McpServerTool(Name = "ExecuteJavaScript"), Description("Execute JavaScript code against the Camel API.")]
+    public async Task<CallToolResult> ExecuteJavaScript(string script)
     {
         StringBuilder output = new StringBuilder();
-        var jsinterp = new Engine(jsoptions)            
+        var jsinterp = new Engine(jsoptions)
           .SetValue("log", new Action<string>((s) => output.AppendLine(s)))
           .SetValue("error", new Action<string>((s) => output.AppendLine(s)))
           .SetValue("table", new Action<string[], object[][]>((headers, dataRows) =>
@@ -49,8 +49,37 @@ public class CamelMCPTools
 
           }))
           .SetValue("api", api);
-        await jsinterp.ExecuteAsync(script);
-        return output.ToString();
+        try
+        {
+            await jsinterp.ExecuteAsync(script);
+        }
+        catch (Exception ex)
+        {
+            // Jint surfaces script errors as JavaScriptException, sometimes wrapped
+            // (e.g. when thrown from an async/awaited call). Prefer that message.
+            var jsex = ex as Jint.Runtime.JavaScriptException
+                       ?? ex.InnerException as Jint.Runtime.JavaScriptException;
+            var message = jsex is not null
+                ? $"JavaScript error: {jsex.Message}"
+                : $"Error executing script: {ex.Message}";
+
+            // Include anything written via log()/error() before the failure for context.
+            if (output.Length > 0)
+            {
+                message = output.ToString() + Environment.NewLine + message;
+            }
+
+            return new CallToolResult
+            {
+                IsError = true,
+                Content = [new TextContentBlock { Text = message }],
+            };
+        }
+
+        return new CallToolResult
+        {
+            Content = [new TextContentBlock { Text = output.ToString() }],
+        };
     }
     
     readonly AuditEnvironment auditEnvironment;
@@ -61,13 +90,11 @@ public class CamelMCPTools
 public class CamelMCPServer : Runtime
 {
     const string CorsPolicyName = "CamelMcpCors";
-
+   
     public static async Task RunStdioAsync(AuditEnvironment auditEnvironment)
     {        
         var builder = Host.CreateEmptyApplicationBuilder(null);
-        var s = new CamelMCPTools(auditEnvironment);
-        var tool = McpServerTool.Create(s.ExecuteJavaScript);
-
+        var tool = new CamelMCPTools(auditEnvironment);        
         builder
             .Logging.AddProvider(loggerProvider)
             .SetMinimumLevel(LogLevel.Trace);
@@ -86,9 +113,7 @@ public class CamelMCPServer : Runtime
     public static async Task RunHttpAsync(AuditEnvironment auditEnvironment)
     {
         var builder = WebApplication.CreateBuilder();
-        var s = new CamelMCPTools(auditEnvironment);
-        var tool = McpServerTool.Create(s.ExecuteJavaScript);
-
+        var tool = new CamelMCPTools(auditEnvironment);       
         builder
             .Logging.AddProvider(loggerProvider)
             .SetMinimumLevel(LogLevel.Trace);
