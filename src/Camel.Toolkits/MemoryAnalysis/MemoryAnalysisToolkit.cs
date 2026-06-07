@@ -7,7 +7,7 @@ using Camel.Toolkits.Models;
 
 public class MemoryAnalysisToolkit : Toolkit
 {
-    public MemoryAnalysisToolkit(AuditEnvironment auditEnvironment, IConfigurationRoot? config = null) : base("MemoryForensics", auditEnvironment, config) {}
+    public MemoryAnalysisToolkit(AuditEnvironment auditEnvironment, IConfigurationRoot? config = null) : base("MemoryAnalysis", auditEnvironment, config) {}
 
     public WindowsInfo[]? WindowsInfo(string filename) => ExecuteTool<WindowsInfo[]>("Volatility3", $"-f {filename} -r json windows.info");
 
