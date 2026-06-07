@@ -47,11 +47,29 @@ public abstract class Toolkit : Runtime
     #region Methods
     public Tool GetTool(string name) => new Tool(name, GetRequiredValue(toolConfig, $"{name}:Description"), GetRequiredValue(toolConfig, $"{name}:Command"), bool.Parse(toolConfig[$"{name}:Sudo"] ?? "false"));
 
-    public T? ExecuteTool<T>(string name, string args) where T : class     
+    public T? ExecuteTool<T>(string name, string args) where T : class
     {
         if (auditEnvironment.ExecuteCommand(Tools[name].Command, args, out string output, Tools[name].Sudo))
         {
             return System.Text.Json.JsonSerializer.Deserialize<T>(output);
+        }
+        else
+        {
+            Error($"Failed to execute tool command ${Tools[name].Command} {args}: {output}.");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Execute a tool that emits plain-text (non-JSON) output and return its raw stdout,
+    /// or null if the command failed. Used by tools (e.g. The Sleuth Kit / EWF) that do
+    /// not support structured JSON output.
+    /// </summary>
+    public string? ExecuteToolText(string name, string args)
+    {
+        if (auditEnvironment.ExecuteCommand(Tools[name].Command, args, out string output, Tools[name].Sudo))
+        {
+            return output;
         }
         else
         {

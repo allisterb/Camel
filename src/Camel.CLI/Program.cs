@@ -19,20 +19,8 @@ internal class Program : Runtime
     {
         Runtime.WithFileAndConsoleLogging("Camel", "CLI", true);
         config = LoadConfigFile(Path.Combine(AssemblyLocation, "appsettings.json"));
-        environmentType = Enum.Parse<EnvironmentType>(GetRequiredValue(config, "Sift:Environment"));
-        if (environmentType == EnvironmentType.Local)
-        {
-            auditEnvironment = le;
-        }
-        else if (environmentType == EnvironmentType.Ssh)
-        {
-            host = GetRequiredValue(config, "Sift:Host");
-            port = Int32.Parse(GetRequiredValue(config, "Sift:Port"));
-            user = GetRequiredValue(config, "Sift:User");
-            password = GetRequiredValue(config, "Sift:Password");
-            auditEnvironment = new SshAuditEnvironment("camel", host, port, user, password, new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), le);
-        }
-        else throw new Exception($"Unsupported environment type: {environmentType}");
+        environmentType = Enum.Parse<EnvironmentType>(GetRequiredValue(config, "SIFT:Environment"));
+        auditEnvironment = le;
     }
 
     static async Task Main(string[] args)
@@ -62,6 +50,14 @@ internal class Program : Runtime
 
     static async Task HandleServerArgs(ServerOptions opts)
     {
+        if (environmentType == EnvironmentType.Ssh)
+        {
+            host = GetRequiredValue(config, "Sift:Host");
+            port = Int32.Parse(GetRequiredValue(config, "Sift:Port"));
+            user = GetRequiredValue(config, "Sift:User");
+            password = GetRequiredValue(config, "Sift:Password");
+            auditEnvironment = new SshAuditEnvironment("camel", host, port, user, password, new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), le);
+        }
         if (opts.Http)
         {
             AnsiConsole.MarkupLine("[green]Starting Camel MCP Server in HTTP mode...[/]");
