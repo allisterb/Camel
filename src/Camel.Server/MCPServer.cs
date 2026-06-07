@@ -6,19 +6,17 @@ using System.ComponentModel;
 using System.Text;
 using System.Threading.Tasks;
 
-
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using ModelContextProtocol.Server;
-using ModelContextProtocol.AspNetCore;
-using ModelContextProtocol.Protocol;
-
-using Jint;
-using Camel.Environments;
 using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+
+using ModelContextProtocol.Server;
+using ModelContextProtocol.Protocol;
+using Jint;
+using Camel.Environments;
 
 public enum TransportType
 {
@@ -48,7 +46,7 @@ public class CamelMCPTools
               output.AppendLine(headers.ToString());
 
           }))
-          .SetValue("api", api);
+          .SetValue("memoryForensics", api.MemoryForensics);
         try
         {
             await jsinterp.ExecuteAsync(script);

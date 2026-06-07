@@ -43,11 +43,11 @@ public class SshAuditEnvironment : AuditEnvironment
             string tmp_dir = Environment.OSVersion.Platform == PlatformID.Win32NT ? Environment.GetEnvironmentVariable("TEMP", EnvironmentVariableTarget.User)! : "/tmp";
             if (!string.IsNullOrEmpty(tmp_dir) && Directory.Exists(tmp_dir))
             {
-                this.WorkDirectory = new DirectoryInfo(Path.Combine(tmp_dir, "devaudit-work", this.GetTimestamp()));
+                this.WorkDirectory = new DirectoryInfo(Path.Combine(tmp_dir, "camel-work", this.GetTimestamp()));
             }
             else
             {
-                Warning("Could not get value of temporary directory from environment. The work directory wll be created in the DevAudit root directory.");
+                Warning("Could not get value of temporary directory from environment. The work directory wll be created in the camel root directory.");
                 this.WorkDirectory = new DirectoryInfo(Path.Combine("work", this.GetTimestamp()));
             }
             if (!this.WorkDirectory.Exists)
@@ -433,7 +433,6 @@ public class SshAuditEnvironment : AuditEnvironment
         return results;
     }
 
-
     #endregion
 
     #region Methods
@@ -471,7 +470,7 @@ public class SshAuditEnvironment : AuditEnvironment
     {
         CallerInformation here = this.Here();
         Stopwatch sw = new Stopwatch();
-        string dir_archive_filename = string.Format("_devaudit_{0}.tgz", this.GetTimestamp());
+        string dir_archive_filename = string.Format("_camel_{0}.tgz", this.GetTimestamp());
         SshCommandSpawanble cs = new SshCommandSpawanble(this.sshClient.CreateCommand(string.Format("tar -czf {0} -C {1} . && stat {0} || echo Failed", dir_archive_filename, remote_path)));
         sw.Start();
         ExpectNet.Session cmd_session = Expect.Spawn(cs, this.LineTerminator);

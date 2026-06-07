@@ -1,6 +1,7 @@
 ﻿namespace Camel.Toolkits;
 
 using Camel.Environments;
+using Camel.Toolkits.Models;
 
 public class MemoryForensicsToolkit : Toolkit
 {
@@ -9,5 +10,4 @@ public class MemoryForensicsToolkit : Toolkit
     public WindowsPsList[]? WindowsPsList(string filename) => ExecuteTool<WindowsPsList[]>("Volatility3", $"-f {filename} -r json windows.pstree");
     
     public override string[] ToolList { get; } = ["Volatility3"];
-
 }

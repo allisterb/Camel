@@ -308,6 +308,11 @@ public abstract class Runtime
                 .AddJsonFile(configFilePath, optional: !required, reloadOnChange: true)
                 .Build();
 
+    public static void FailIfNoConfiguration()
+    {
+        if (config is null) throw new Exception("Configuration not loaded.");
+    }
+
     public static string GetRequiredValue(IConfigurationRoot config, string key) => config[key] ?? throw new Exception($"Configuration key {key} not found.");
 
     public static string GetRequiredValue(IConfigurationSection config, string key) => config[key] ?? throw new Exception($"Configuration key {key} not found.");

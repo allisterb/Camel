@@ -299,12 +299,12 @@ public class LocalEnvironment : AuditEnvironment
             }
             else
             {
-                throw new Exception("Executing commands as a different operating system user with a required password in the local environment is not suppported on *nix. Use the su or sudo commands to run DevAudit as the required operating system user.");
+                throw new Exception("Executing commands as a different operating system user with a required password in the local environment is not suppported on *nix. Use the su or sudo commands to run camel as the required operating system user.");
                 /*
                 string c = string.Format("-n -u {0} -s {1} {2}", user, command, arguments);
                 return this.Execute("sudo", c, out process_status, out process_output, out process_error);
                 
-                    Error("Executing commands as a different operating system user with a required password in the local environment is not suppported on *nix. Use the su or sudo commands to run DevAudit as the required operating system user.");
+                    Error("Executing commands as a different operating system user with a required password in the local environment is not suppported on *nix. Use the su or sudo commands to run camel as the required operating system user.");
                 process_error = string.Empty;
                 process_output = string.Empty;
                 process_status = ProcessExecuteStatus.Error;

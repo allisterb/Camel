@@ -12,6 +12,7 @@ using System.Security.AccessControl;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 
 public enum EnvironmentType
 {
@@ -39,8 +40,10 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         this.HostEnvironment = host_environment;
 
     }
+
+    public AuditEnvironment(OperatingSystem os, LocalEnvironment host_environment) : this(DefaultEnvironmentMessageHandler, os, host_environment) {}
     #endregion
-    
+
     #region Abstract properties and methods
     public abstract bool FileExists(string file_path);
     public abstract bool DirectoryExists(string dir_path);
@@ -671,14 +674,14 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     }
 
     [DebuggerStepThrough]
-    internal void Info(string message_format, params object[] message)
+    internal new void Info(string message_format, params object[] message)
     {
         TraceSource.TraceInformation(message_format, message);
         OnMessage(new EnvironmentEventArgs(EventMessageType.INFO, message_format, message));
     }
 
     [DebuggerStepThrough]
-    internal void Error(string message_format, params object[] message)
+    internal new void Error(string message_format, params object[] message)
     {
         TraceSource.TraceEvent(TraceEventType.Error, 0, message_format, message);
         OnMessage(new EnvironmentEventArgs(EventMessageType.ERROR, message_format, message));
@@ -753,37 +756,37 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     internal void Success(string message_format, params object[] message)
     {
         TraceSource.TraceEvent(TraceEventType.Information, 0, message_format, message);
-        //OnMessage(new EnvironmentEventArgs(EventMessageType.SUCCESS, message_format, message));
+        OnMessage(new EnvironmentEventArgs(EventMessageType.SUCCESS, message_format, message));
     }
 
     [DebuggerStepThrough]
     internal void Warning(string message_format, params object[] message)
     {
-        //OnMessage(new EnvironmentEventArgs(EventMessageType.WARNING, message_format, message));
+        OnMessage(new EnvironmentEventArgs(EventMessageType.WARNING, message_format, message));
     }
 
     [DebuggerStepThrough]
     internal void Status(string message_format, params object[] message)
     {
-        //OnMessage(new EnvironmentEventArgs(EventMessageType.STATUS, message_format, message));
+        OnMessage(new EnvironmentEventArgs(EventMessageType.STATUS, message_format, message));
     }
 
     [DebuggerStepThrough]
     internal void Progress(string operation, int total, int complete, TimeSpan? time = null)
     {
-        //OnMessage(new EnvironmentEventArgs(new OperationProgress(operation, total, complete, time)));
+        OnMessage(new EnvironmentEventArgs(new OperationProgress(operation, total, complete, time)));
     }
 
     [DebuggerStepThrough]
     internal void Debug(CallerInformation caller, string message_format, params object[] message)
     {
-        //OnMessage(new EnvironmentEventArgs(caller, EventMessageType.DEBUG, message_format, message));
+        OnMessage(new EnvironmentEventArgs(caller, EventMessageType.DEBUG, message_format, message));
     }
 
     [DebuggerStepThrough]
-    internal void Debug(string message_format, params object[] message)
+    internal new void Debug(string message_format, params object[] message)
     {
-        //OnMessage(new EnvironmentEventArgs(EventMessageType.DEBUG, message_format, message));
+        OnMessage(new EnvironmentEventArgs(EventMessageType.DEBUG, message_format, message));
     }
 
     internal CallerInformation Here([CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
@@ -819,8 +822,24 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         {
             Runtime.Info(e.Message);
         }
+    }
 
-
+    public static AuditEnvironment CreateFromConfig(IConfigurationRoot config)
+    {
+        var environmentType = Enum.Parse<EnvironmentType>(GetRequiredValue(config, "SIFT:Environment"));
+        if (environmentType == EnvironmentType.Local)
+        {
+            return new LocalEnvironment();
+        }
+        else if (environmentType == EnvironmentType.Ssh)
+        {        
+            var host = GetRequiredValue(config, "Sift:Host");
+            var port = Int32.Parse(GetRequiredValue(config, "Sift:Port"));
+            var user = GetRequiredValue(config, "Sift:User");
+            var password = GetRequiredValue(config, "Sift:Password");
+            return new SshAuditEnvironment("camel", host, port, user, password, new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), new LocalEnvironment());            
+        }
+        else throw new Exception($"Invalid environment type specified in configuration: {environmentType.ToString()}");
     }
     #endregion
 
