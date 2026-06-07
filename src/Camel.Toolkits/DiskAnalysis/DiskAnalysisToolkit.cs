@@ -1,5 +1,7 @@
 ﻿namespace Camel.Toolkits;
 
+using System.Text.RegularExpressions;
+
 using Microsoft.Extensions.Configuration;
 
 using Camel.Environments;
@@ -15,6 +17,14 @@ public class DiskAnalysisToolkit : Toolkit
 
     public EwfVerify? EwfVerify(string image) =>
         ExecuteToolText("EwfVerify", Q(image)) is { } o ? Models.EwfVerify.Parse(o) : null;
+
+    /// <summary>
+    /// Mounts <paramref name="image"/> (E01/EWF) read-only at <paramref name="mountDir"/>, exposing
+    /// the raw disk as &lt;mountDir&gt;/ewf1. The mount directory must already exist. Returns true on
+    /// success. The FUSE mount is owned by root; unmount with <c>umount &lt;mountDir&gt;</c> when done.
+    /// </summary>
+    public bool EwfMount(string image, string mountDir) =>
+        ExecuteToolText("EwfMount", Q(image) + " " + Q(mountDir)) is not null;
     #endregion
 
     #region Image and partition tools
@@ -42,6 +52,35 @@ public class DiskAnalysisToolkit : Toolkit
 
     public IlsEntry[]? Ils(string image, int? offset = null) =>
         ExecuteToolText("Ils", Offset(offset) + Q(image)) is { } o ? IlsEntry.ParseAll(o) : null;
+
+    /// <summary>
+    /// Extracts the content of <paramref name="inode"/> from <paramref name="image"/> and writes
+    /// the raw bytes to <paramref name="outputFile"/> on the workstation (icat stdout redirected to
+    /// the file). Returns true on success.
+    /// </summary>
+    public bool Icat(string image, long inode, string outputFile, int? offset = null) =>
+        ExecuteToolText("Icat", Offset(offset) + Q(image) + $" {inode} > {Q(outputFile)}") is not null;
+    #endregion
+
+    #region File recovery
+    /// <summary>
+    /// Bulk-recovers files from <paramref name="image"/> into <paramref name="outputDir"/> on the
+    /// workstation. When <paramref name="all"/> is true (-e) unallocated/deleted files are recovered
+    /// as well; otherwise only allocated files. When <paramref name="dirInode"/> is supplied (-d) only
+    /// that directory's tree is recovered. Returns the number of files recovered, or null on failure.
+    /// </summary>
+    public int? TskRecover(string image, string outputDir, bool all, long? dirInode = null, int? offset = null)
+    {
+        var o = ExecuteToolText("TskRecover",
+            (all ? "-e " : "") + Offset(offset) + (dirInode is not null ? $"-d {dirInode} " : "") +
+            Q(image) + " " + Q(outputDir));
+        if (o is null) return null;
+        // tsk_recover writes the files itself; under sudo they land root-owned, so hand the
+        // recovered tree to the login user ($(id -un) expands before sudo runs).
+        if (Tools["TskRecover"].Sudo)
+            auditEnvironment.ExecuteCommand("chown", $"-R $(id -un):$(id -gn) {Q(outputDir)}", out _, true);
+        return Regex.Match(o, @"Files Recovered:\s*(\d+)") is { Success: true } m ? int.Parse(m.Groups[1].Value) : 0;
+    }
     #endregion
 
     #region Timeline

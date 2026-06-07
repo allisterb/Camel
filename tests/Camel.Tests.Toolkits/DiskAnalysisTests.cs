@@ -115,6 +115,64 @@ public class DiskAnalysisTests : TestsRuntime
     }
 
     [Fact]
+    public void CanRunEwfMount()
+    {
+        const string mountDir = "/tmp/camel_ewf";
+        sshenv.ExecuteCommand("umount", mountDir, out _, true); // ensure not already mounted
+        sshenv.ExecuteCommand("mkdir", $"-p {mountDir}", out _, false);
+
+        var ok = toolkit.EwfMount(Image, mountDir);
+        Assert.True(ok);
+
+        // The raw device ewf1 should be exposed (FUSE mount is root-only, so check via sudo).
+        sshenv.ExecuteCommand("ls", mountDir, out var contents, true);
+        Assert.Contains("ewf1", contents);
+
+        sshenv.ExecuteCommand("umount", mountDir, out _, true);
+    }
+
+    [Fact]
+    public void CanRunIcat()
+    {
+        const string outFile = "/tmp/camel_boot.ini";
+        sshenv.ExecuteCommand("rm", $"-f {outFile}", out _, false);
+
+        var ok = toolkit.Icat(Image, 3664, outFile, NtfsOffset); // boot.ini
+        Assert.True(ok);
+
+        // Confirm the extracted bytes landed in the output file.
+        sshenv.ExecuteCommand("cat", outFile, out var content, false);
+        Assert.Contains("boot loader", content);
+    }
+
+    [Fact]
+    public void CanRunTskRecover()
+    {
+        const string outDir = "/tmp/camel_recover";
+        sshenv.ExecuteCommand("rm", $"-rf {outDir}", out _, true);
+
+        var n = toolkit.TskRecover(Image, outDir, all: false, offset: NtfsOffset);
+        Assert.NotNull(n);
+        Assert.True(n > 0);
+
+        // The recovered tree should be owned by the login user, not root.
+        sshenv.ExecuteCommand("stat", $"-c %U {outDir}", out var owner, false);
+        Assert.NotEqual("root", owner.Trim());
+    }
+
+    [Fact]
+    public void CanRunTskRecoverDirInode()
+    {
+        const string outDir = "/tmp/camel_recover_dir";
+        sshenv.ExecuteCommand("rm", $"-rf {outDir}", out _, true);
+
+        // Recover only the WINDOWS directory subtree (inode 458).
+        var n = toolkit.TskRecover(Image, outDir, all: false, dirInode: 458, offset: NtfsOffset);
+        Assert.NotNull(n);
+        Assert.True(n > 0);
+    }
+
+    [Fact]
     public void CanRunMactime()
     {
         // mactime consumes a bodyfile; generate one on the workstation first (fls -m).

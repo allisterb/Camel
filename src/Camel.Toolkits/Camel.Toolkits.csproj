@@ -15,4 +15,8 @@
     <ProjectReference Include="..\Camel.Runtime\Camel.Runtime.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="WindowsAnalysis\" />
+  </ItemGroup>
+
 </Project>
