@@ -3,7 +3,7 @@
 using System;
 public class WindowsPsList
 {    
-    public DateTime CreateTime { get; set; }
+    public DateTime? CreateTime { get; set; }
     public DateTime? ExitTime { get; set; }
     public string Fileoutput { get; set; } = "";
     public object? Handles { get; set; } = null;
@@ -38,7 +38,7 @@ public class WindowsPsTree
 {
     public string Audit { get; set; } = "";
     public string Cmd { get; set; } = "";
-    public DateTime CreateTime { get; set; }
+    public DateTime? CreateTime { get; set; }
     public DateTime? ExitTime { get; set; }
     public object? Handles { get; set; }
     public string ImageFileName { get; set; } = "";

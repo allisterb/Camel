@@ -10,14 +10,14 @@ Camel is created as an entry into the [SANS Find Evil! AI Hackathon](https://fin
 	
 ## Project design and architecture
 Camel is written in .NET and C#. It is designed to run either installed locally on the SIFT Workstation, or on a separate machine that can access a SIFT workstation over SSH. There are 7 main projects:
-- Camel.Runtime at @src/Camel.Runtime provides global base types and features like logging for all other projects.
-- Camel.Environments at @src/Camel.Runtime provides different **audit environments** that represent the local or remote machine SIFT workstation is running on. An audit environment allows common I/O operations like running commands and reading files to be abstracted so
+- Camel.Runtime at src/Camel.Runtime provides global base types and features like logging for all other projects.
+- Camel.Environments at src/Camel.Runtime provides different **audit environments** that represent the local or remote machine SIFT workstation is running on. An audit environment allows common I/O operations like running commands and reading files to be abstracted so
 the same code works locally or remotely over SSH.
-- Camel.Toolkits at @src/Camel.Runtime provides strongly-typed interfaces to the SIFT tools. 
-- Camel.Server at @src/Camel.Server provides the constrained JavaScript execution engine and MCP server implementation
+- Camel.Toolkits at src/Camel.Runtime provides strongly-typed interfaces to the SIFT tools. 
+- Camel.Server at src/Camel.Server provides the constrained JavaScript execution engine and MCP server implementation
 - Camel.Training (planned) For training and testing machine learning models on forensic tool data, and for generating synthetic data for training and testing.
 - Camel.Inference (planned) For performing inference using trained machine learning models on forensic tool data.
-- Camel.CLI at @src/Camel.CLI provides the main interface for launching the MCP server
+- Camel.CLI at src/Camel.CLI provides the main interface for launching the MCP server
 
 ## Project milestone
 
@@ -30,9 +30,11 @@ Each toolkit implementation in Camel.Toolkits defines a collection of SIFT tools
 Each method should execute a SIFT tool and return a strongly-typed model representing the tool's output. A toolkit takes a single AuditEnvironment as a constructor parameter and uses it to perform any necessary I/O operations 
 locally or remotely to execute the tool and acquire its output. Tools are defined in application settings files like in @tests\Camel.Tests.Toolkits\testappsettings.json.
 
-When adding tools to a toolkit in the Camel.Toolkits project, follow the existing plan of defining a model type for the tool's output, adding the tool to the Toolkiit.ToolList array,
+When adding tools to a toolkit in the Camel.Toolkits project, follow the existing plan of defining a model type for the tool's output, adding the tool to the Toolkit.ToolList array,
 and adding a method to the toolkit class that executes the tool and returns the output model, using the ExecuteTool method and any additional needed AuditEnvironment  I/O methods.
-Add unit tests for the new tool method in the @tests\Camel.Tests.Toolkits project, following the existing tests as examples.
+Add unit tests for the new tool method in the tests\Camel.Tests.Toolkits project, following the existing tests as examples. You can execute commands for tools on the SIFT
+workstation as described in the Common Commands section below, and use the out
+
 
 ## Project coding instructions:
 - When generating new C# code, please follow the existing coding style.
@@ -48,13 +50,13 @@ Add unit tests for the new tool method in the @tests\Camel.Tests.Toolkits projec
 - Use camel-case for method and property names. Method and property names should begin with a capital letter.
 - Use camel-case for class fields. Field names should begin with lower-case letters unless they are backing fields for properties which should begin with an underscore.
 
-## Common Commands
-
-### Configuration and setup
+### Common Commands Setup
 Read @tests\Camel.Tests.Environments\testappsettings.json for the SIFT workstation ssh_host, ssh_user, ssh_pw values to run commands against the remote SIFT workstation over SSH.
+
+## Common Commands
 ```bash
 bin\plink -ssh <sift_user>@<sift_host> -pw <sift_pw> <command> # Run a command on a remote SIFT workstation over SSH using plink
-dotnet build <csproj_file>                                   # Build a project
-dotnet test <csproj_file>                                    # Run unit tests in project.
-dotnet run --project src\Camel.CLI\Camel.CLI.csproj          # Run Camel MCP server using HTTP transport
+dotnet build <csproj_file>                                     # Build a project
+dotnet test <csproj_file>                                      # Run unit tests in project.
+dotnet run --project src\Camel.CLI\Camel.CLI.csproj            # Run Camel MCP server using HTTP transport
 ```

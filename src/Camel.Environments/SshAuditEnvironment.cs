@@ -26,8 +26,7 @@ public class SshAuditEnvironment : AuditEnvironment
     {
         ConnectionInfo ci;        
         ci = new ConnectionInfo(host_name, port, user, new PasswordAuthenticationMethod(user, pass));
-        sshClient = new SshClient(ci);
-       
+        sshClient = new SshClient(ci);       
         sshClient.ErrorOccurred += SshClient_ErrorOccurred;
         sshClient.HostKeyReceived += SshClient_HostKeyReceived;
         sshClient.ConnectionInfo.AuthenticationBanner += Ci_AuthenticationBanner;

@@ -12,6 +12,7 @@ using System.Security.AccessControl;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+
 using Microsoft.Extensions.Configuration;
 
 public enum EnvironmentType
@@ -96,7 +97,7 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         }
     }
 
-    public string PathSeparator { get; protected set; } = string.Empty;
+    public new string PathSeparator { get; protected set; } = string.Empty;
 
     public string ProcessOutput
     {
@@ -129,10 +130,22 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     #endregion
 
     #region Methods
-    public bool ExecuteCommand(string command, string arguments, out string output, bool report_errors = false)
+    public bool ExecuteCommand(string command, string arguments, out string output, bool admin = false)
     {     
         string process_output = "", process_error = "";
-        var r = this.Execute(command, arguments);
+        CommandResult? r;
+        if (admin)
+        {
+            if (this.IsUnix)
+            {
+                r = this.Execute("sudo", command + " " + arguments);
+            }
+            else throw new NotImplementedException("ExecuteCommandAsAdmin is not implemented for Windows environments.");
+        }
+        else
+        {
+            r = this.Execute(command, arguments);
+        }            
         process_output = r.StdOut;
         process_error = r.StdErr;
         if (r.Status == ProcessExecuteStatus.Completed)
@@ -147,7 +160,7 @@ public abstract class AuditEnvironment : Runtime, IDisposable
             return false;
         }
     }
-
+    
     public virtual string GetOSName()
     {
         if (!string.IsNullOrEmpty(this.OSName)) return this.OSName;
@@ -833,10 +846,10 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         }
         else if (environmentType == EnvironmentType.Ssh)
         {        
-            var host = GetRequiredValue(config, "Sift:Host");
-            var port = Int32.Parse(GetRequiredValue(config, "Sift:Port"));
-            var user = GetRequiredValue(config, "Sift:User");
-            var password = GetRequiredValue(config, "Sift:Password");
+            var host = GetRequiredValue(config, "SIFT:Host");
+            var port = Int32.Parse(GetRequiredValue(config, "SIFT:Port"));
+            var user = GetRequiredValue(config, "SIFT:User");
+            var password = GetRequiredValue(config, "SIFT:Password");
             return new SshAuditEnvironment("camel", host, port, user, password, new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), new LocalEnvironment());            
         }
         else throw new Exception($"Invalid environment type specified in configuration: {environmentType.ToString()}");

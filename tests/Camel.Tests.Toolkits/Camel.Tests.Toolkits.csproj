@@ -24,7 +24,7 @@
 
   <ItemGroup>
     <None Update="sshtestappsettings.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="testappsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
