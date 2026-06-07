@@ -11,11 +11,11 @@ public class CamelApi
     #region Constructors
     public CamelApi(AuditEnvironment env)
     {
-        this.MemoryForensics = new MemoryForensicsToolkit(env);
+        this.MemoryAnalysis = new MemoryAnalysisToolkit(env);
     }
     #endregion
 
     #region Properties
-    public MemoryForensicsToolkit MemoryForensics { get; }
+    public MemoryAnalysisToolkit MemoryAnalysis { get; }
     #endregion
 }

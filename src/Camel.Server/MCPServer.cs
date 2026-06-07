@@ -46,7 +46,7 @@ public class CamelMCPTools
               output.AppendLine(headers.ToString());
 
           }))
-          .SetValue("memoryForensics", api.MemoryForensics);
+          .SetValue("memoryAnalysis", api.MemoryAnalysis);
         try
         {
             await jsinterp.ExecuteAsync(script);
