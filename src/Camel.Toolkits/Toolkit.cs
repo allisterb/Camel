@@ -45,8 +45,6 @@ public abstract class Toolkit : Runtime
     #endregion
 
     #region Methods
-
-
     public Tool GetTool(string name) => new Tool(name, GetRequiredValue(toolConfig, $"{name}:Description"), GetRequiredValue(toolConfig, $"{name}:Command"), bool.Parse(toolConfig[$"{name}:Sudo"] ?? "false"));
 
     public T? ExecuteTool<T>(string name, string args) where T : class     
@@ -57,11 +55,10 @@ public abstract class Toolkit : Runtime
         }
         else
         {
-            Error($"Failed to execute Volatility3 with arguments: {args}");
+            Error($"Failed to execute tool command ${Tools[name].Command} {args}: {output}.");
             return null;
         }
     }
-
     #endregion
 
     #region Fields

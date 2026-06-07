@@ -15,13 +15,7 @@ public class CamelApi
     }
     #endregion
 
-    #region Methods
-
-
-
-    #endregion
-
-    #region Fields
+    #region Properties
     public MemoryForensicsToolkit MemoryForensics { get; }
     #endregion
 }

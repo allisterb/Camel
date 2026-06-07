@@ -33,7 +33,7 @@ locally or remotely to execute the tool and acquire its output. Tools are define
 When adding tools to a toolkit in the Camel.Toolkits project, follow the existing plan of defining a model type for the tool's output, adding the tool to the Toolkit.ToolList array,
 and adding a method to the toolkit class that executes the tool and returns the output model, using the ExecuteTool method and any additional needed AuditEnvironment  I/O methods.
 Add unit tests for the new tool method in the tests\Camel.Tests.Toolkits project, following the existing tests as examples. You can execute commands for tools on the SIFT
-workstation as described in the Common Commands section below, and use the out
+workstation as described in the Common Commands section below, and use the output to define the model properties for the tool's output model, and to implement the tool method itself.
 
 
 ## Project coding instructions:
@@ -52,6 +52,8 @@ workstation as described in the Common Commands section below, and use the out
 
 ### Common Commands Setup
 Read @tests\Camel.Tests.Environments\testappsettings.json for the SIFT workstation ssh_host, ssh_user, ssh_pw values to run commands against the remote SIFT workstation over SSH.
+Read @tests\Camel.Tests.Toolkits\testappsettings.json for the SIFT workstation commands to run for each tool, which can be used as examples for running commands on the SIFT workstation to acquire output for implementing new tools.
+Use / as the path-separator for file paths when building projects to avoid issues with escaping \ in file paths on Windows.
 
 ## Common Commands
 ```bash
