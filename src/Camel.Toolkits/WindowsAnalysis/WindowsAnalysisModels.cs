@@ -105,6 +105,149 @@ public class ShimcacheEntry
     };
 }
 
+/// <summary>AmcacheParser: a single unassociated file entry from Amcache.hve (CSV output).</summary>
+public class AmcacheEntry
+{
+    public string? ApplicationName { get; set; }
+    public string? ProgramId { get; set; }
+    public DateTime? FileKeyLastWriteTimestamp { get; set; }
+    public string? SHA1 { get; set; }
+    public bool IsOsComponent { get; set; }
+    public string? FullPath { get; set; }
+    public string? Name { get; set; }
+    public string? FileExtension { get; set; }
+    public DateTime? LinkDate { get; set; }
+    public string? ProductName { get; set; }
+    public long Size { get; set; }
+    public string? Version { get; set; }
+    public string? ProductVersion { get; set; }
+    public string? BinaryType { get; set; }
+    public bool IsPeFile { get; set; }
+    public long Usn { get; set; }
+    public string? Language { get; set; }
+    public string? Description { get; set; }
+
+    public static AmcacheEntry FromRow(IReadOnlyDictionary<string, string> r) => new()
+    {
+        ApplicationName = r.Get("ApplicationName"),
+        ProgramId = r.Get("ProgramId"),
+        FileKeyLastWriteTimestamp = EzParse.ToDate(r.Get("FileKeyLastWriteTimestamp")),
+        SHA1 = r.Get("SHA1"),
+        IsOsComponent = EzParse.ToBool(r.Get("IsOsComponent")),
+        FullPath = r.Get("FullPath"),
+        Name = r.Get("Name"),
+        FileExtension = r.Get("FileExtension"),
+        LinkDate = EzParse.ToDate(r.Get("LinkDate")),
+        ProductName = r.Get("ProductName"),
+        Size = EzParse.ToLong(r.Get("Size")),
+        Version = r.Get("Version"),
+        ProductVersion = r.Get("ProductVersion"),
+        BinaryType = r.Get("BinaryType"),
+        IsPeFile = EzParse.ToBool(r.Get("IsPeFile")),
+        Usn = EzParse.ToLong(r.Get("Usn")),
+        Language = r.Get("Language"),
+        Description = r.Get("Description"),
+    };
+}
+
+/// <summary>EvtxECmd: a single Windows event log record (--json output).</summary>
+public class EventLogEntry
+{
+    public long RecordNumber { get; set; }
+    public string? EventRecordId { get; set; }
+    public DateTime? TimeCreated { get; set; }
+    public int EventId { get; set; }
+    public string? Level { get; set; }
+    public string? Provider { get; set; }
+    public string? Channel { get; set; }
+    public string? Computer { get; set; }
+    public string? UserId { get; set; }
+    public int ProcessId { get; set; }
+    public int ThreadId { get; set; }
+    public string? Keywords { get; set; }
+    public string? MapDescription { get; set; }
+    public string? Payload { get; set; }
+    public string? SourceFile { get; set; }
+}
+
+/// <summary>JLECmd: a single AutomaticDestinations jump-list entry (CSV output).</summary>
+public class JumpListEntry
+{
+    public string? SourceFile { get; set; }
+    public string? AppId { get; set; }
+    public string? AppIdDescription { get; set; }
+    public int EntryNumber { get; set; }
+    public DateTime? CreationTime { get; set; }
+    public DateTime? LastModified { get; set; }
+    public string? Path { get; set; }
+    public int InteractionCount { get; set; }
+    public DateTime? TargetCreated { get; set; }
+    public DateTime? TargetModified { get; set; }
+    public DateTime? TargetAccessed { get; set; }
+    public long FileSize { get; set; }
+    public string? RelativePath { get; set; }
+    public string? WorkingDirectory { get; set; }
+    public string? Arguments { get; set; }
+    public string? MachineID { get; set; }
+    public string? VolumeSerialNumber { get; set; }
+
+    public static JumpListEntry FromRow(IReadOnlyDictionary<string, string> r) => new()
+    {
+        SourceFile = r.Get("SourceFile"),
+        AppId = r.Get("AppId"),
+        AppIdDescription = r.Get("AppIdDescription"),
+        EntryNumber = EzParse.ToInt(r.Get("EntryNumber")),
+        CreationTime = EzParse.ToDate(r.Get("CreationTime")),
+        LastModified = EzParse.ToDate(r.Get("LastModified")),
+        Path = r.Get("Path"),
+        InteractionCount = EzParse.ToInt(r.Get("InteractionCount")),
+        TargetCreated = EzParse.ToDate(r.Get("TargetCreated")),
+        TargetModified = EzParse.ToDate(r.Get("TargetModified")),
+        TargetAccessed = EzParse.ToDate(r.Get("TargetAccessed")),
+        FileSize = EzParse.ToLong(r.Get("FileSize")),
+        RelativePath = r.Get("RelativePath"),
+        WorkingDirectory = r.Get("WorkingDirectory"),
+        Arguments = r.Get("Arguments"),
+        MachineID = r.Get("MachineID"),
+        VolumeSerialNumber = r.Get("VolumeSerialNumber"),
+    };
+}
+
+/// <summary>
+/// WxTCmd: a single Windows 10 Timeline activity (CSV output). NOTE: this image's
+/// ActivitiesCache.db files contain no activities, so the field mapping is schema-derived
+/// and not verified against real data.
+/// </summary>
+public class TimelineActivity
+{
+    public string? Id { get; set; }
+    public string? ActivityType { get; set; }
+    public string? Executable { get; set; }
+    public string? DisplayText { get; set; }
+    public string? ContentInfo { get; set; }
+    public string? Payload { get; set; }
+    public DateTime? StartTime { get; set; }
+    public DateTime? EndTime { get; set; }
+    public string? Duration { get; set; }
+    public DateTime? LastModifiedTime { get; set; }
+    public string? AppId { get; set; }
+
+    public static TimelineActivity FromRow(IReadOnlyDictionary<string, string> r) => new()
+    {
+        Id = r.Get("Id"),
+        ActivityType = r.Get("ActivityType"),
+        Executable = r.Get("Executable"),
+        DisplayText = r.Get("DisplayText"),
+        ContentInfo = r.Get("ContentInfo"),
+        Payload = r.Get("Payload"),
+        StartTime = EzParse.ToDate(r.Get("StartTime")),
+        EndTime = EzParse.ToDate(r.Get("EndTime")),
+        Duration = r.Get("Duration"),
+        LastModifiedTime = EzParse.ToDate(r.Get("LastModifiedTime")),
+        AppId = r.Get("AppId"),
+    };
+}
+
 /// <summary>RBCmd: a single recycle-bin deleted-file record (CSV output).</summary>
 public class RecycleBinEntry
 {

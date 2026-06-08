@@ -23,8 +23,27 @@ public class DiskAnalysisToolkit : Toolkit
     /// the raw disk as &lt;mountDir&gt;/ewf1. The mount directory must already exist. Returns true on
     /// success. The FUSE mount is owned by root; unmount with <c>umount &lt;mountDir&gt;</c> when done.
     /// </summary>
-    public bool EwfMount(string image, string mountDir) =>
-        ExecuteToolText("EwfMount", Q(image) + " " + Q(mountDir)) is not null;
+    public bool EwfMountRaw(string image, string mountDir) =>
+        ExecuteToolText("EwfMountRaw", Q(image) + " " + Q(mountDir)) is not null;
+
+    /// <summary>
+    /// Mounts a raw EWF partition (e.g. the ewf1 device from <see cref="EwfMountRaw"/>) read-only at
+    /// <paramref name="mountDir"/> using the kernel NTFS driver via loopback. <paramref name="offset"/>
+    /// is the partition start in sectors (converted to a byte offset). Returns true on success.
+    /// </summary>
+    public bool EwfMountLoopback(string rawPartition, string mountDir, int? offset = null) =>
+        ExecuteToolText("EwfMountLoopback",
+            $"-o ro,loop,show_sys_files,streams_interace=windows{(offset is not null ? $",offset={offset.Value * 512}" : "")} {Q(rawPartition)} {Q(mountDir)}") is not null;
+
+    /// <summary>
+    /// Mounts a raw EWF partition read-only at <paramref name="mountDir"/> using ntfs-3g with the
+    /// <c>force</c> option (useful for dirty/hibernated NTFS the kernel driver refuses). When
+    /// <paramref name="offset"/> (partition start in sectors) is supplied it is converted to a byte
+    /// offset. Returns true on success.
+    /// </summary>
+    public bool EwfMountNtfs(string rawPartition, string mountDir, int? offset = null) =>
+        ExecuteToolText("EwfMountNtfs",
+            $"-t ntfs-3g -o ro,force{(offset is not null ? $",offset={offset.Value * 512}" : "")} {Q(rawPartition)} {Q(mountDir)}") is not null;
     #endregion
 
     #region Image and partition tools
@@ -94,8 +113,8 @@ public class DiskAnalysisToolkit : Toolkit
 
     public override string[] ToolList { get; } =
     [
-        "EwfInfo", "EwfVerify", "EwfMount", "ImgStat", "Mmls", "FsStat", "Fls",
-        "Icat", "Istat", "Ffind", "Ils", "Blkls", "TskRecover", "Mactime",
-        "Blkcat", "BulkExtractor", "PhotoRec"
+        "EwfInfo", "EwfVerify", "EwfMountRaw", "EwfMountLoopback", "EwfMountNtfs", "ImgStat",
+        "Mmls", "FsStat", "Fls", "Icat", "Istat", "Ffind", "Ils", "Blkls", "TskRecover",
+        "Mactime", "Blkcat", "BulkExtractor", "PhotoRec"
     ];
 }

@@ -15,6 +15,15 @@ public class WindowsAnalysisToolkit : Toolkit
     public LnkFile[]? LECmd(string file) => ExecuteToolJson<LnkFile>("LECmd", $"-f {Q(file)}");
 
     public ShellBag[]? SBECmd(string hiveDirectory) => ExecuteToolJson<ShellBag>("SBECmd", $"-d {Q(hiveDirectory)}");
+
+    public EventLogEntry[]? EvtxECmd(string file) => ExecuteToolJson<EventLogEntry>("EvtxECmd", $"-f {Q(file)}");
+
+    /// <summary>
+    /// Runs SQLECmd over the SQLite databases in <paramref name="directory"/>. Output is heterogeneous
+    /// (one record shape per matched SQLECmd map), so rows are returned as raw key/value records.
+    /// </summary>
+    public Dictionary<string, System.Text.Json.JsonElement>[]? SQLECmd(string directory) =>
+        ExecuteToolJson<Dictionary<string, System.Text.Json.JsonElement>>("SQLECmd", $"-d {Q(directory)}");
     #endregion
 
     #region CSV tools
@@ -23,6 +32,15 @@ public class WindowsAnalysisToolkit : Toolkit
 
     public RecycleBinEntry[]? RBCmd(string file) =>
         ExecuteToolCsv("RBCmd", $"-f {Q(file)}", RecycleBinEntry.FromRow);
+
+    public AmcacheEntry[]? AmcacheParser(string amcacheHive) =>
+        ExecuteToolCsv("AmcacheParser", $"-f {Q(amcacheHive)}", AmcacheEntry.FromRow, "*UnassociatedFileEntries.csv");
+
+    public JumpListEntry[]? JLECmd(string directory) =>
+        ExecuteToolCsv("JLECmd", $"-d {Q(directory)}", JumpListEntry.FromRow, "*AutomaticDestinations.csv");
+
+    public TimelineActivity[]? WxTCmd(string activitiesCacheDb) =>
+        ExecuteToolCsv("WxTCmd", $"-f {Q(activitiesCacheDb)}", TimelineActivity.FromRow, "*Activity.csv");
     #endregion
 
     #region Stdout tools

@@ -88,15 +88,16 @@ public abstract class Toolkit : Runtime
     /// produced file, and deserializes each line to <typeparamref name="T"/>. Returns an empty array
     /// when the tool produced no records, or null when the command itself failed.
     /// </summary>
-    public T[]? ExecuteToolJson<T>(string name, string args)
+    public T[]? ExecuteToolJson<T>(string name, string args, string pattern = "*.json")
     {
         string dir = "/tmp/camel_ez_" + Guid.NewGuid().ToString("N");
         auditEnvironment.ExecuteCommand("mkdir", $"-p {dir}", out _, false);
         try
         {
             if (ExecuteToolText(name, $"{args} --json {dir}") is null) return null;
-            if (!auditEnvironment.ExecuteCommand("cat", $"{dir}/*.json", out string json, false)) return [];
+            if (!auditEnvironment.ExecuteCommand("cat", $"{dir}/{pattern}", out string json, false)) return [];
             return json.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(l => l.TrimStart('﻿'))   // EvtxECmd prefixes the file with a BOM
                 .Where(l => l.StartsWith('{'))
                 .Select(l => System.Text.Json.JsonSerializer.Deserialize<T>(l))
                 .Where(x => x is not null).Select(x => x!).ToArray();
@@ -109,14 +110,14 @@ public abstract class Toolkit : Runtime
     /// file, and maps each row (keyed by header column) with <paramref name="map"/>. Returns an empty
     /// array when no rows were produced, or null when the command itself failed.
     /// </summary>
-    public T[]? ExecuteToolCsv<T>(string name, string args, Func<IReadOnlyDictionary<string, string>, T> map)
+    public T[]? ExecuteToolCsv<T>(string name, string args, Func<IReadOnlyDictionary<string, string>, T> map, string pattern = "*.csv")
     {
         string dir = "/tmp/camel_ez_" + Guid.NewGuid().ToString("N");
         auditEnvironment.ExecuteCommand("mkdir", $"-p {dir}", out _, false);
         try
         {
             if (ExecuteToolText(name, $"{args} --csv {dir}") is null) return null;
-            if (!auditEnvironment.ExecuteCommand("cat", $"{dir}/*.csv", out string csv, false)) return [];
+            if (!auditEnvironment.ExecuteCommand("cat", $"{dir}/{pattern}", out string csv, false)) return [];
             return ParseCsv(csv).Select(map).ToArray();
         }
         finally { auditEnvironment.ExecuteCommand("rm", $"-rf {dir}", out _, false); }

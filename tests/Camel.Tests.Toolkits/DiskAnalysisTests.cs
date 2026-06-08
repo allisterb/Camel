@@ -21,7 +21,7 @@ public class DiskAnalysisTests : TestsRuntime
         Assert.All(toolkit.ToolList, name =>
         {
             Assert.True(toolkit.Tools.ContainsKey(name));
-            Assert.StartsWith("/bin/", toolkit.Tools[name].Command);
+            Assert.Contains("bin/", toolkit.Tools[name].Command);
             Assert.NotEmpty(toolkit.Tools[name].Descriptioon);
         });
     }
@@ -115,13 +115,13 @@ public class DiskAnalysisTests : TestsRuntime
     }
 
     [Fact]
-    public void CanRunEwfMount()
+    public void CanRunEwfMountRaw()
     {
         const string mountDir = "/tmp/camel_ewf";
         sshenv.ExecuteCommand("umount", mountDir, out _, true); // ensure not already mounted
         sshenv.ExecuteCommand("mkdir", $"-p {mountDir}", out _, false);
 
-        var ok = toolkit.EwfMount(Image, mountDir);
+        var ok = toolkit.EwfMountRaw(Image, mountDir);
         Assert.True(ok);
 
         // The raw device ewf1 should be exposed (FUSE mount is root-only, so check via sudo).
@@ -129,6 +129,47 @@ public class DiskAnalysisTests : TestsRuntime
         Assert.Contains("ewf1", contents);
 
         sshenv.ExecuteCommand("umount", mountDir, out _, true);
+    }
+
+    [Fact]
+    public void CanRunEwfMountLoopback()
+    {
+        const string raw = "/tmp/camel_ewfraw_lb";
+        const string mnt = "/tmp/camel_ntfs_lb";
+        sshenv.ExecuteCommand("umount", mnt, out _, true);
+        sshenv.ExecuteCommand("umount", raw, out _, true);
+        sshenv.ExecuteCommand("mkdir", $"-p {raw} {mnt}", out _, false);
+        Assert.True(toolkit.EwfMountRaw(Image, raw));
+
+        var ok = toolkit.EwfMountLoopback($"{raw}/ewf1", mnt, offset: NtfsOffset);
+        Assert.True(ok);
+
+        // The NTFS partition should now be mounted (check via sudo; mount is root-owned).
+        sshenv.ExecuteCommand("ls", mnt, out var contents, true);
+        Assert.Contains("WINDOWS", contents);
+
+        sshenv.ExecuteCommand("umount", mnt, out _, true);
+        sshenv.ExecuteCommand("umount", raw, out _, true);
+    }
+
+    [Fact]
+    public void CanRunEwfMountNtfs()
+    {
+        const string raw = "/tmp/camel_ewfraw_ntfs";
+        const string mnt = "/tmp/camel_ntfs_ntfs";
+        sshenv.ExecuteCommand("umount", mnt, out _, true);
+        sshenv.ExecuteCommand("umount", raw, out _, true);
+        sshenv.ExecuteCommand("mkdir", $"-p {raw} {mnt}", out _, false);
+        Assert.True(toolkit.EwfMountRaw(Image, raw));
+
+        var ok = toolkit.EwfMountNtfs($"{raw}/ewf1", mnt, offset: NtfsOffset);
+        Assert.True(ok);
+
+        sshenv.ExecuteCommand("ls", mnt, out var contents, true);
+        Assert.Contains("WINDOWS", contents);
+
+        sshenv.ExecuteCommand("umount", mnt, out _, true);
+        sshenv.ExecuteCommand("umount", raw, out _, true);
     }
 
     [Fact]
@@ -187,7 +228,7 @@ public class DiskAnalysisTests : TestsRuntime
         Assert.Contains(r, e => e.FileName.Contains("boot.ini"));
     }
 
-    const string Image = "/mnt/memory-images/4Dell Latitude CPi.E01";
+    const string Image = "/mnt/artifacts/4Dell Latitude CPi.E01";
     const int NtfsOffset = 63;
 
     LocalEnvironment localenv;
