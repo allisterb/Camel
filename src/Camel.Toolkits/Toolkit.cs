@@ -96,14 +96,37 @@ public abstract class Toolkit : Runtime
         {
             if (ExecuteToolText(name, $"{args} --json {dir}") is null) return null;
             if (!auditEnvironment.ExecuteCommand("cat", $"{dir}/{pattern}", out string json, false)) return [];
-            return json.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(l => l.TrimStart('﻿'))   // EvtxECmd prefixes the file with a BOM
-                .Where(l => l.StartsWith('{'))
-                .Select(l => System.Text.Json.JsonSerializer.Deserialize<T>(l))
-                .Where(x => x is not null).Select(x => x!).ToArray();
+            return ParseJsonLines<T>(json);
         }
         finally { auditEnvironment.ExecuteCommand("rm", $"-rf {dir}", out _, false); }
     }
+
+    /// <summary>
+    /// Runs a tool that writes JSON-lines output to a single file (the tool's own <c>-w</c>/output flag),
+    /// reads it, and deserializes each line to <typeparamref name="T"/>. <paramref name="buildArgs"/> is
+    /// given the temp output-file path and returns the full argument string. Used by Plaso (psort/psteal).
+    /// </summary>
+    public T[]? ExecuteToolJsonLinesFile<T>(string name, Func<string, string> buildArgs)
+    {
+        string file = "/tmp/camel_jl_" + Guid.NewGuid().ToString("N") + ".jsonl";
+        try
+        {
+            if (ExecuteToolText(name, buildArgs(file)) is null) return null;
+            if (!auditEnvironment.ExecuteCommand("cat", file, out string json, false)) return [];
+            return ParseJsonLines<T>(json);
+        }
+        finally { auditEnvironment.ExecuteCommand("rm", $"-f {file}", out _, false); }
+    }
+
+    private static readonly System.Text.Json.JsonSerializerOptions JsonLineOptions = new() { PropertyNameCaseInsensitive = true };
+
+    /// <summary>Parses newline-delimited JSON (one object per line) into <typeparamref name="T"/>[].</summary>
+    private static T[] ParseJsonLines<T>(string json) =>
+        json.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(l => l.TrimStart('﻿'))   // some tools (e.g. EvtxECmd) prefix the file with a BOM
+            .Where(l => l.StartsWith('{'))
+            .Select(l => System.Text.Json.JsonSerializer.Deserialize<T>(l, JsonLineOptions))
+            .Where(x => x is not null).Select(x => x!).ToArray();
 
     /// <summary>
     /// Runs a tool that writes CSV output to a directory (EZ Tools <c>--csv</c>), reads the produced
@@ -123,8 +146,29 @@ public abstract class Toolkit : Runtime
         finally { auditEnvironment.ExecuteCommand("rm", $"-rf {dir}", out _, false); }
     }
 
+    /// <summary>
+    /// Runs a tool that writes a single CSV file (the tool's own <c>-o</c>/output flag), reads it, and maps
+    /// each row (keyed by header column) with <paramref name="map"/>. <paramref name="buildArgs"/> is given
+    /// the temp output-file path. Used by hayabusa metrics subcommands.
+    /// </summary>
+    public T[]? ExecuteToolCsvFile<T>(string name, Func<string, string> buildArgs, Func<IReadOnlyDictionary<string, string>, T> map)
+    {
+        string file = "/tmp/camel_csv_" + Guid.NewGuid().ToString("N") + ".csv";
+        try
+        {
+            if (ExecuteToolText(name, buildArgs(file)) is null) return null;
+            if (!auditEnvironment.ExecuteCommand("cat", file, out string csv, false)) return [];
+            return ParseCsv(csv).Select(map).ToArray();
+        }
+        finally { auditEnvironment.ExecuteCommand("rm", $"-f {file}", out _, false); }
+    }
+
+    /// <summary>Reads a CSV file on the audit environment and maps its rows; null on read failure.</summary>
+    public T[]? ReadCsvFile<T>(string path, Func<IReadOnlyDictionary<string, string>, T> map) =>
+        auditEnvironment.ExecuteCommand("cat", $"'{path}'", out string csv, false) ? ParseCsv(csv).Select(map).ToArray() : null;
+
     /// <summary>Parses CSV text (RFC4180-style quoting) into rows keyed by the header columns.</summary>
-    private static IReadOnlyDictionary<string, string>[] ParseCsv(string text)
+    public static IReadOnlyDictionary<string, string>[] ParseCsv(string text)
     {
         var records = new List<string[]>();
         var fields = new List<string>();
