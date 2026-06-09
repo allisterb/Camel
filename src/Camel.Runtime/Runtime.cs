@@ -1,11 +1,5 @@
 namespace Camel;
 
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
-using Serilog;
-using Serilog.Core;
-using Serilog.Extensions.Logging;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -14,6 +8,14 @@ using System.Net;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Serilog;
+using Serilog.Extensions.Logging;
+using SerilogTimings;
+using SerilogTimings.Extensions;
 
 public abstract class Runtime
 {
@@ -45,14 +47,16 @@ public abstract class Runtime
     public static string ToolName { get; set; } = "Camel";
         
     public static string LogName { get; set; } = "BASE";
-
+    
     public static string UserHomeDir => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
     public static string AppDataDir => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
     public static string CamelDir => Path.Combine(AppDataDir, "Camel");
 
-    public static Random Rng { get; } = new Random();
+    // Random.Shared is thread-safe; a plain 'new Random()' instance is not, and this is shared statically
+    // across all environments/toolkits which may execute concurrently.
+    public static Random Rng { get; } = Random.Shared;
 
     public static CancellationTokenSource Cts { get; } = new CancellationTokenSource();
 
@@ -90,7 +94,7 @@ public abstract class Runtime
             loggerFactory = lf;
             loggerProvider = lp;
             logger = lf.CreateLogger(toolname);
-            RuntimeInitialized = true;
+            RuntimeInitialized = true;            
         }
     }
 
@@ -99,27 +103,27 @@ public abstract class Runtime
     public static void WithFileLogging(string toolname, string logname, bool debug, string? logdir = null)
     {        
         var filePath= logdir is null ? Path.Combine(AssemblyLocation, toolname + "-" + logname + ".log") : Path.Combine(logdir, toolname + "-" + logname + ".log");
-        var logger = new LoggerConfiguration()
+        _logger = new LoggerConfiguration()
              .Enrich.FromLogContext()
              .MinimumLevel.Is(debug ? Serilog.Events.LogEventLevel.Verbose : Serilog.Events.LogEventLevel.Information)    
              .WriteTo.File(filePath)
              .CreateLogger();
-        var lf = new SerilogLoggerFactory(logger);
-        var lp = new SerilogLoggerProvider(logger, false);        
+        var lf = new SerilogLoggerFactory(_logger);
+        var lp = new SerilogLoggerProvider(_logger, false);        
         Initialize(toolname, logname, debug, lf, lp);
     }
 
     public static void WithFileAndConsoleLogging(string toolname, string logname, bool debug, string? logdir = null)
     {
         var filePath = logdir is null ? Path.Combine(AssemblyLocation, toolname + "-" + logname + ".log") : Path.Combine(logdir, toolname + "-" + logname + ".log");
-        var logger = new LoggerConfiguration()
+        _logger = new LoggerConfiguration()
              .Enrich.FromLogContext()
              .MinimumLevel.Is(debug ? Serilog.Events.LogEventLevel.Verbose : Serilog.Events.LogEventLevel.Information)
              .WriteTo.File(filePath)
              .WriteTo.Console()
              .CreateLogger();
-        var lf = new SerilogLoggerFactory(logger);
-        var lp = new SerilogLoggerProvider(logger, false);
+        var lf = new SerilogLoggerFactory(_logger);
+        var lp = new SerilogLoggerProvider(_logger, false);        
         Initialize(toolname, logname, debug, lf, lp);
     }
 
@@ -142,7 +146,7 @@ public abstract class Runtime
     public static void Fatal(string messageTemplate, params object[] args) => logger.LogCritical(messageTemplate, args);
 
     [DebuggerStepThrough]
-    public static LoggerOp Begin(string messageTemplate, params object[] args) => new LoggerOp(logger, messageTemplate, args);
+    public static Operation Begin(string messageTemplate, params object[] args) => _logger.BeginOperation(messageTemplate, args);
 
     [DebuggerStepThrough]
     public static string FailIfFileDoesNotExist(string filePath)
@@ -320,7 +324,8 @@ public abstract class Runtime
     #endregion
 
     #region Fields
-    public static Microsoft.Extensions.Logging.ILogger logger = NullLogger.Instance;   
+    public static Microsoft.Extensions.Logging.ILogger logger = NullLogger.Instance;
+    public static Serilog.ILogger _logger = Log.Logger;
     public static ILoggerFactory loggerFactory = NullLoggerFactory.Instance;
     public static ILoggerProvider loggerProvider = NullLoggerProvider.Instance;
     static protected IConfigurationRoot? config;

@@ -22,7 +22,7 @@ public struct Result<T>
 
     public bool IsSuccess => this.Type == ResultType.Success;
 
-    public T Value => IsSuccess ? _Value! : throw new InvalidOperationException("The operation did not succced.");
+    public T Value => IsSuccess ? _Value! : throw new InvalidOperationException("The operation did not succeed.");
 
     public bool Succeeded(out Result<T> r)
     {

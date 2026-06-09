@@ -98,15 +98,7 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     }
 
     public new string PathSeparator { get; protected set; } = string.Empty;
-
-    public string ProcessOutput
-    {
-        get
-        {
-            return this.ProcessOutputSB.ToString();
-        }
-    }
-
+    
     public OperatingSystem OS { get; protected set; }
 
     public string? OSName { get; set; }
@@ -120,10 +112,6 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     public LocalEnvironment HostEnvironment { get; protected set; }
 
     public DirectoryInfo WorkDirectory { get; protected set; }
-
-    protected StringBuilder ProcessOutputSB = new StringBuilder();
-
-    protected StringBuilder ProcessErrorSB = new StringBuilder();
 
     internal string LineTerminator { get; set; }
 
@@ -160,7 +148,33 @@ public abstract class AuditEnvironment : Runtime, IDisposable
             return false;
         }
     }
-    
+
+    public async Task<CommandResult> ExecuteCommandAsync(string command, string arguments, bool admin = false)
+    {
+        CommandResult? r;
+        if (admin)
+        {
+            if (this.IsUnix)
+            {
+                r = await this.ExecuteAsync("sudo", command + " " + arguments);
+            }
+            else throw new NotImplementedException("ExecuteCommandAsAdmin is not implemented for Windows environments.");
+        }
+        else
+        {
+            r = await this.ExecuteAsync(command, arguments);
+        }
+        if (r.Status == ProcessExecuteStatus.Completed)
+        {
+            Debug("The command {0} {1} executed successfully. Output: {2}", command, arguments, r.Output);            
+        }
+        else
+        {
+            Debug("The command {0} {1} did not execute successfully. Output: {2}", command, arguments, r.Output);
+        }
+        return r;
+    }
+
     public virtual string GetOSName()
     {
         if (!string.IsNullOrEmpty(this.OSName)) return this.OSName;
@@ -858,28 +872,8 @@ public abstract class AuditEnvironment : Runtime, IDisposable
 
     #region Events
     public event EventHandler<EnvironmentEventArgs>? MessageHandler;
-    public event EventHandler<DataReceivedEventArgs>? OutputDataReceivedHandler;
-    public event EventHandler<DataReceivedEventArgs>? ErrorDataReceivedHandler;
 
-    protected virtual void OnMessage(EnvironmentEventArgs e) => MessageHandler?.Invoke(this, e);
-            
-    protected virtual void OnOutputDataReceived(object sender, DataReceivedEventArgs e)
-    {
-        if (!String.IsNullOrEmpty(e.Data))
-        {
-            ProcessOutputSB.AppendLine(e.Data);
-            OutputDataReceivedHandler?.Invoke(this, e);
-        }
-    }
-
-    protected virtual void OnErrorDataReceived(object sender, DataReceivedEventArgs e)
-    {
-        if (!String.IsNullOrEmpty(e.Data))
-        {
-            ProcessErrorSB.AppendLine(e.Data);
-            ErrorDataReceivedHandler?.Invoke(this, e);
-        }
-    }
+    protected virtual void OnMessage(EnvironmentEventArgs e) => MessageHandler?.Invoke(this, e);               
     #endregion
 
     #region Fields

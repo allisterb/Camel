@@ -265,9 +265,127 @@ public abstract class Toolkit : Runtime
         finally { auditEnvironment.ExecuteCommand("rm", $"-f {file}", out _, false); }
     }
 
+    public async Task<T?> ExecuteToolAsync<T>(string name, string args) where T : class
+    {
+        var r = await auditEnvironment.ExecuteCommandAsync(Tools[name].Command, args, Tools[name].Sudo);
+        if (r.IsCompleted)
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<T>(r.Output);
+        }
+        else
+        {
+            Error($"Failed to execute tool command ${Tools[name].Command} {args}: {r.Output}.");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Execute a tool that emits plain-text (non-JSON) output and return its raw stdout,
+    /// or null if the command failed. Used by tools (e.g. The Sleuth Kit / EWF) that do
+    /// not support structured JSON output.
+    /// </summary>
+    public async Task<string?> ExecuteToolTextAsync(string name, string args)
+    {
+        var r = await auditEnvironment.ExecuteCommandAsync(Tools[name].Command, args, Tools[name].Sudo);
+        if (r.IsCompleted)
+        {
+            return r.Output;
+        }
+        else
+        {
+            Error($"Failed to execute tool command ${Tools[name].Command} {args}: {r.Output}.");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Runs a tool that writes JSON-lines output to a directory (EZ Tools <c>--json</c>), reads the
+    /// produced file, and deserializes each line to <typeparamref name="T"/>. Returns an empty array
+    /// when the tool produced no records, or null when the command itself failed.
+    /// </summary>
+    public async Task<T[]?> ExecuteToolJsonAsync<T>(string name, string args, string pattern = "*.json")
+    {
+        string dir = "/tmp/camel_ez_" + Guid.NewGuid().ToString("N");
+        await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {dir}", false);
+        try
+        {
+            if (await ExecuteToolTextAsync(name, $"{args} --json {dir}") is null) return null;
+            var r = await auditEnvironment.ExecuteCommandAsync("cat", $"{dir}/{pattern}", false);
+            if (!r.IsCompleted) return [];
+            return ParseJsonLines<T>(r.Output);
+        }
+        finally { await auditEnvironment.ExecuteCommandAsync("rm", $"-rf {dir}", false); }
+    }
+
+    /// <summary>
+    /// Runs a tool that writes JSON-lines output to a single file (the tool's own <c>-w</c>/output flag),
+    /// reads it, and deserializes each line to <typeparamref name="T"/>. <paramref name="buildArgs"/> is
+    /// given the temp output-file path and returns the full argument string. Used by Plaso (psort/psteal).
+    /// </summary>
+    public async Task<T[]?> ExecuteToolJsonLinesFileAsync<T>(string name, Func<string, string> buildArgs)
+    {
+        string file = "/tmp/camel_jl_" + Guid.NewGuid().ToString("N") + ".jsonl";
+        try
+        {
+            if (await ExecuteToolTextAsync(name, buildArgs(file)) is null) return null;
+            var r = await auditEnvironment.ExecuteCommandAsync("cat", file, false);
+            if (!r.IsCompleted) return [];
+            return ParseJsonLines<T>(r.Output);
+        }
+        finally { await auditEnvironment.ExecuteCommandAsync("rm", $"-f {file}", false); }
+    }
+    
+    /// <summary>
+    /// Runs a tool that writes CSV output to a directory (EZ Tools <c>--csv</c>), reads the produced
+    /// file, and maps each row (keyed by header column) with <paramref name="map"/>. Returns an empty
+    /// array when no rows were produced, or null when the command itself failed.
+    /// </summary>
+    public async Task<T[]?> ExecuteToolCsvAsync<T>(string name, string args, Func<IReadOnlyDictionary<string, string>, T> map, string pattern = "*.csv")
+    {
+        string dir = "/tmp/camel_ez_" + Guid.NewGuid().ToString("N");
+        await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {dir}", false);
+        try
+        {
+            if (await ExecuteToolTextAsync(name, $"{args} --csv {dir}") is null) return null;
+            var r = await auditEnvironment.ExecuteCommandAsync("cat", $"{dir}/{pattern}", false);
+            if (!r.IsCompleted) return [];
+            return ParseCsv(r.Output).Select(map).ToArray();
+        }
+        finally { await auditEnvironment.ExecuteCommandAsync("rm", $"-rf {dir}", false); }
+    }
+
+    /// <summary>
+    /// Runs a tool that writes a single CSV file (the tool's own <c>-o</c>/output flag), reads it, and maps
+    /// each row (keyed by header column) with <paramref name="map"/>. <paramref name="buildArgs"/> is given
+    /// the temp output-file path. Used by hayabusa metrics subcommands.
+    /// </summary>
+    public async Task<T[]?> ExecuteToolCsvFileAsync<T>(string name, Func<string, string> buildArgs, Func<IReadOnlyDictionary<string, string>, T> map)
+    {
+        string file = "/tmp/camel_csv_" + Guid.NewGuid().ToString("N") + ".csv";
+        try
+        {
+            if (await ExecuteToolTextAsync(name, buildArgs(file)) is null) return null;
+            var r = await auditEnvironment.ExecuteCommandAsync("cat", file, false);
+            if (!r.IsCompleted) return [];
+            return ParseCsv(r.Output).Select(map).ToArray();
+        }
+        finally { await auditEnvironment.ExecuteCommandAsync("rm", $"-f {file}", false); }
+    }
+
     /// <summary>Reads a CSV file on the audit environment and maps its rows; null on read failure.</summary>
     public T[]? ReadCsvFile<T>(string path, Func<IReadOnlyDictionary<string, string>, T> map) =>
         auditEnvironment.ExecuteCommand("cat", $"'{path}'", out string csv, false) ? ParseCsv(csv).Select(map).ToArray() : null;
+
+    /// <summary>Reads a CSV file on the audit environment and maps its rows; null on read failure.</summary>
+    public async Task<T[]?> ReadCsvFileAsync<T>(string path, Func<IReadOnlyDictionary<string, string>, T> map)
+    {
+        var r = await auditEnvironment.ExecuteCommandAsync("cat", $"'{path}'", false);
+        if (r.IsCompleted)
+        {
+            return ParseCsv(r.Output).Select(map).ToArray();
+        }
+        else return null;
+    }
 
     /// <summary>Parses CSV text (RFC4180-style quoting) into rows keyed by the header columns.</summary>
     public static IReadOnlyDictionary<string, string>[] ParseCsv(string text)

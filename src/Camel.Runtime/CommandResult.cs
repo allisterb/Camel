@@ -17,6 +17,10 @@ public class CommandResult
     public string StdErr { get; set; }
     public int? ExitCode { get; set; }   
 
+    public bool IsCompleted => Status == ProcessExecuteStatus.Completed;
+
+    public string Output => IsCompleted ? StdOut : StdOut + StdErr;
+
     public CommandResult(ProcessExecuteStatus status, string std_out, string std_err, int? exit_code)
     {
         this.Status = status;

@@ -1,6 +1,7 @@
 ﻿namespace Camel.Environments;
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -469,7 +470,9 @@ public class SshAuditEnvironment : AuditEnvironment
     {
         CallerInformation here = this.Here();
         Stopwatch sw = new Stopwatch();
-        string dir_archive_filename = string.Format("_camel_{0}.tgz", this.GetTimestamp());
+        // Append a GUID: GetTimestamp() is only second-resolution, so concurrent directory pulls would
+        // otherwise collide on this remote archive filename (and on the shared WorkDirectory extraction).
+        string dir_archive_filename = string.Format("_camel_{0}_{1}.tgz", this.GetTimestamp(), Guid.NewGuid().ToString("N"));
         SshCommandSpawanble cs = new SshCommandSpawanble(this.sshClient.CreateCommand(string.Format("tar -czf {0} -C {1} . && stat {0} || echo Failed", dir_archive_filename, remote_path)));
         sw.Start();
         ExpectNet.Session cmd_session = Expect.Spawn(cs, this.LineTerminator);
@@ -554,7 +557,7 @@ public class SshAuditEnvironment : AuditEnvironment
             
             c.ErrorOccurred += ScpClient_ErrorOccurred;
             c.Downloading += ScpClient_Downloading;
-            this.scp_clients.Add(c);
+            this.scp_clients.TryAdd(c, 0);
         }
         catch (SshConnectionException ce)
         {
@@ -582,12 +585,12 @@ public class SshAuditEnvironment : AuditEnvironment
     internal void DestroyScpClient(ScpClient c, [CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
     {
         CallerInformation caller = new CallerInformation(memberName, fileName, lineNumber);
-        if (!scp_clients.Contains(c)) throw new ArgumentException("The ScpClient does not exist in the scp_clients dictionary.");
+        if (!scp_clients.ContainsKey(c)) throw new ArgumentException("The ScpClient does not exist in the scp_clients dictionary.");
         if (c.IsConnected) c.Disconnect();
         c.ErrorOccurred -= ScpClient_ErrorOccurred;
         c.Downloading -= ScpClient_Downloading;
         c.Dispose();
-        scp_clients.Remove(c);
+        scp_clients.TryRemove(c, out _);
         Debug(caller, "Destroyed SCP connection to {0}.", this.HostName);
     }
 
@@ -675,7 +678,9 @@ public class SshAuditEnvironment : AuditEnvironment
     #region Fields    
     SshClient sshClient;
     string? ssh_client_pass;
-    List<ScpClient> scp_clients = new List<ScpClient>();
+    // Concurrent set (byte value is unused) — SCP transfers may run in parallel with command execution,
+    // so adds/removes must be thread-safe. ConcurrentDictionary supports targeted removal (ConcurrentBag does not).
+    ConcurrentDictionary<ScpClient, byte> scp_clients = new();
     private bool IsDisposed = false;
     #endregion
 

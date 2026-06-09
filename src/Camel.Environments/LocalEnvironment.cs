@@ -195,7 +195,9 @@ public class LocalEnvironment : AuditEnvironment
                 Debug("Execute {0} {1} returned exit code {2}.", command, arguments, process_exit_code.Value);
                 process_status = ProcessExecuteStatus.Completed;
             }
-            return new CommandResult(process_status, process_out_sb.ToString(), process_err_sb.ToString(), process_exit_code);
+            // Trim stdout/stderr to match the SSH ExecuteAsync path (cmd.Result.Trim()) and the sync
+            // ExecuteCommand, so async tool output has consistent whitespace across environments.
+            return new CommandResult(process_status, process_out_sb.ToString().Trim(), process_err_sb.ToString().Trim(), process_exit_code);
         }
         catch (Exception e)
         {
