@@ -40,7 +40,8 @@ public abstract class Toolkit : Runtime
         foreach (string toolName in ToolList)
         {
             Tools[toolName] = GetTool(toolName);
-        }   
+        }
+        InstallMissingTools();
     }
     #endregion
 
@@ -51,6 +52,59 @@ public abstract class Toolkit : Runtime
 
     #region Methods
     public Tool GetTool(string name) => new Tool(name, GetRequiredValue(toolConfig, $"{name}:Description"), GetRequiredValue(toolConfig, $"{name}:Command"), bool.Parse(toolConfig[$"{name}:Sudo"] ?? "false"));
+
+    /// <summary>
+    /// Called at the end of the base constructor. Override in a derived toolkit to download/install any
+    /// tools that are missing from the current SIFT workstation. The base implementation does nothing.
+    /// </summary>
+    protected virtual void InstallMissingTools() { }
+
+    /// <summary>
+    /// Installs an Eric Zimmerman .NET tool from its download-server zip into <c>/opt/zimmermantools</c>:
+    /// downloads <paramref name="url"/> with wget, unzips it, and moves its contents into the tools dir
+    /// (some zips contain a tool subfolder, e.g. <c>RECmd/</c>, others loose files, e.g. <c>PECmd.dll</c> —
+    /// moving the extracted contents handles both). Skipped when <paramref name="checkPath"/> already
+    /// exists. Returns true when the tool is present afterwards (already-installed or freshly installed).
+    /// </summary>
+    protected bool InstallZimmermanTool(string name, string url, string checkPath)
+    {
+        if (auditEnvironment.ExecuteCommand("test", $"-e {checkPath}", out _, false))
+            return true; // already installed — nothing to do
+
+        Info($"Installing missing tool {name} from {url} ...");
+        string zip = $"/tmp/camel_ez_{name}.zip", extract = $"/tmp/camel_ez_{name}";
+        try
+        {
+            if (!auditEnvironment.ExecuteCommand("wget", $"-q {url} -O {zip}", out string dl, false))
+            { Error($"Failed to download {name}: {dl}"); return false; }
+            auditEnvironment.ExecuteCommand("rm", $"-rf {extract}", out _, false);
+            if (!auditEnvironment.ExecuteCommand("unzip", $"-o -q {zip} -d {extract}", out string uz, false))
+            { Error($"Failed to unzip {name}: {uz}"); return false; }
+            auditEnvironment.ExecuteCommand("mkdir", "-p /opt/zimmermantools", out _, true);
+            if (!auditEnvironment.ExecuteCommand("mv", $"-f {extract}/* /opt/zimmermantools/", out string mv, true))
+            { Error($"Failed to install {name}: {mv}"); return false; }
+            Info($"Installed {name} to /opt/zimmermantools.");
+            return auditEnvironment.ExecuteCommand("test", $"-e {checkPath}", out _, false);
+        }
+        finally { auditEnvironment.ExecuteCommand("rm", $"-rf {zip} {extract}", out _, false); }
+    }
+
+    /// <summary>
+    /// Downloads a single file from <paramref name="url"/> to <paramref name="destPath"/> on the
+    /// workstation with wget (under sudo, since the tools directory is typically root-owned), unless it
+    /// already exists. Used for auxiliary files a tool needs alongside its install (e.g. RECmd batch
+    /// files). Returns true when the file is present afterwards.
+    /// </summary>
+    protected bool InstallFile(string name, string url, string destPath)
+    {
+        if (auditEnvironment.ExecuteCommand("test", $"-e {destPath}", out _, false))
+            return true; // already present — nothing to do
+
+        Info($"Downloading {name} from {url} ...");
+        if (!auditEnvironment.ExecuteCommand("wget", $"-q {url} -O {destPath}", out string dl, true))
+        { Error($"Failed to download {name}: {dl}"); return false; }
+        return auditEnvironment.ExecuteCommand("test", $"-e {destPath}", out _, false);
+    }
 
     public T? ExecuteTool<T>(string name, string args) where T : class
     {

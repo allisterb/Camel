@@ -121,6 +121,16 @@ public class WindowsAnalysisTests : TestsRuntime
     }
 
     [Fact]
+    public void CanRunRECmd()
+    {
+        // Batch-parse the mount's registry hives with the bundled DFIR batch file (--bn).
+        var r = toolkit.RECmd($"{Modern}/Windows/System32/config", DfirBatch);
+        Assert.NotNull(r);
+        Assert.NotEmpty(r);
+        Assert.Contains(r, e => !string.IsNullOrEmpty(e.KeyPath) && !string.IsNullOrEmpty(e.HivePath));
+    }
+
+    [Fact]
     public void CanRunSQLECmd()
     {
         // SQLECmd's --json aggregate is empty for these Chrome DBs (maps emit per-artifact files), and a full
@@ -135,6 +145,7 @@ public class WindowsAnalysisTests : TestsRuntime
     }
 
     const string Modern = "/mnt/ewf";
+    const string DfirBatch = "/opt/zimmermantools/RECmd/DFIRBatch.reb";
 
     LocalEnvironment localenv;
     AuditEnvironment sshenv;

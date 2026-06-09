@@ -9,6 +9,17 @@ public class WindowsAnalysisToolkit : Toolkit
 {
     public WindowsAnalysisToolkit(AuditEnvironment auditEnvironment, IConfigurationRoot? config = null) : base("WindowsAnalysis", auditEnvironment, config) { }
 
+    /// <summary>
+    /// Installs RECmd (the Eric Zimmerman registry batch parser) into <c>/opt/zimmermantools</c> when the
+    /// latest SIFT image omits it, plus the DFIR batch file it relies on for batch-mode parsing. No-op for
+    /// anything already present.
+    /// </summary>
+    protected override void InstallMissingTools()
+    {
+        InstallZimmermanTool("RECmd", "https://download.ericzimmermanstools.com/net9/RECmd.zip", "/opt/zimmermantools/RECmd/RECmd.dll");
+        InstallFile("DFIRBatch.reb", "https://github.com/EricZimmerman/RECmd/raw/refs/heads/master/BatchExamples/DFIRBatch.reb", "/opt/zimmermantools/RECmd/DFIRBatch.reb");
+    }
+
     #region JSON tools
     public MFTEntry[]? MFTECmd(string file) => ExecuteToolJson<MFTEntry>("MFTECmd", $"-f {Q(file)}");
 
@@ -41,6 +52,14 @@ public class WindowsAnalysisToolkit : Toolkit
 
     public TimelineActivity[]? WxTCmd(string activitiesCacheDb) =>
         ExecuteToolCsv("WxTCmd", $"-f {Q(activitiesCacheDb)}", TimelineActivity.FromRow, "*Activity.csv");
+
+    /// <summary>
+    /// Runs RECmd in batch mode over the registry hives in <paramref name="hiveDirectory"/> using the
+    /// <c>.reb</c> batch file <paramref name="batchFile"/> (the <c>--bn</c> argument), returning one
+    /// <see cref="RegistryEntry"/> per key/value the batch's plugins matched.
+    /// </summary>
+    public RegistryEntry[]? RECmd(string hiveDirectory, string batchFile) =>
+        ExecuteToolCsv("RECmd", $"-d {Q(hiveDirectory)} --bn {Q(batchFile)}", RegistryEntry.FromRow, "*Output.csv");
     #endregion
 
     #region Stdout tools

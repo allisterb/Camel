@@ -1,3 +1,6 @@
+using System;
+using System.Text;
+
 using Camel.Environments;
 using Camel.Toolkits;
 
@@ -132,6 +135,71 @@ public class DiskAnalysisTests : TestsRuntime
     }
 
     [Fact]
+    public void CanRunDDMount()
+    {
+        EnsureDdImages();
+        const string mnt = "/tmp/camel_ddmnt";
+        sshenv.ExecuteCommand("umount", mnt, out _, true);
+        sshenv.ExecuteCommand("mkdir", $"-p {mnt}", out _, false);
+
+        Assert.True(toolkit.DDMount("/tmp/camel_whole.dd", mnt));
+        sshenv.ExecuteCommand("ls", mnt, out var contents, true);
+        Assert.Contains("lost+found", contents); // ext4 filesystem mounted
+
+        sshenv.ExecuteCommand("umount", mnt, out _, true);
+    }
+
+    [Fact]
+    public void CanRunDDMountWithOffset()
+    {
+        EnsureDdImages();
+        const string mnt = "/tmp/camel_ddmnt_off";
+        sshenv.ExecuteCommand("umount", mnt, out _, true);
+        sshenv.ExecuteCommand("mkdir", $"-p {mnt}", out _, false);
+
+        // The partition starts at sector 2048 (per ListPartitions / fdisk).
+        Assert.True(toolkit.DDMount("/tmp/camel_part.dd", mnt, offset: 2048));
+        sshenv.ExecuteCommand("ls", mnt, out var contents, true);
+        Assert.Contains("lost+found", contents);
+
+        sshenv.ExecuteCommand("umount", mnt, out _, true);
+    }
+
+    [Fact]
+    public void CanRunMakeMountDir()
+    {
+        const string name = "camel_mp_test";
+        sshenv.ExecuteCommand("rmdir", $"/mnt/{name}", out _, true); // clean up any prior run
+
+        var path = toolkit.MakeMountDir(name);
+        Assert.Equal($"/mnt/{name}", path);
+        Assert.True(sshenv.ExecuteCommand("test", $"-d /mnt/{name}", out _, false)); // dir exists
+
+        sshenv.ExecuteCommand("rmdir", $"/mnt/{name}", out _, true);
+    }
+
+    [Fact]
+    public void CanRunListPartitions()
+    {
+        // ListPartitions reads a raw disk device; expose the E01 as ewf1 first.
+        const string raw = "/tmp/camel_ewfraw_lp";
+        sshenv.ExecuteCommand("umount", raw, out _, true);
+        sshenv.ExecuteCommand("mkdir", $"-p {raw}", out _, false);
+        Assert.True(toolkit.EwfMountRaw(Image, raw));
+
+        var parts = toolkit.ListPartitions($"{raw}/ewf1");
+        Assert.NotNull(parts);
+        Assert.NotEmpty(parts);
+
+        // The NTFS partition's Start sector is the offset used by the loopback/ntfs mount tests.
+        var ntfs = Assert.Single(parts, p => p.Type.Contains("NTFS"));
+        Assert.Equal(NtfsOffset, ntfs.Start);
+        Assert.True(ntfs.Sectors > 0 && ntfs.End > ntfs.Start);
+
+        sshenv.ExecuteCommand("umount", raw, out _, true);
+    }
+
+    [Fact]
     public void CanRunEwfMountLoopback()
     {
         const string raw = "/tmp/camel_ewfraw_lb";
@@ -226,6 +294,18 @@ public class DiskAnalysisTests : TestsRuntime
         Assert.NotEmpty(r);
         Assert.All(r, e => Assert.NotEmpty(e.Date));
         Assert.Contains(r, e => e.FileName.Contains("boot.ini"));
+    }
+
+    // Creates two small ext4 .dd images on the workstation (idempotent): a whole-filesystem image and a
+    // partitioned image with one partition at sector 2048. Delivered via base64 to avoid shell quoting.
+    void EnsureDdImages()
+    {
+        const string script =
+            "[ -f /tmp/camel_whole.dd ] || { dd if=/dev/zero of=/tmp/camel_whole.dd bs=1M count=16 status=none; mkfs.ext4 -q -F /tmp/camel_whole.dd; }\n" +
+            "[ -f /tmp/camel_part.dd ] || { dd if=/dev/zero of=/tmp/camel_part.dd bs=1M count=32 status=none; printf 'label: dos\\nstart=2048, type=83\\n' | sfdisk /tmp/camel_part.dd >/dev/null 2>&1; L=$(losetup -fP --show /tmp/camel_part.dd); mkfs.ext4 -q -F ${L}p1; losetup -d $L; }\n";
+        var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(script));
+        sshenv.ExecuteCommand("bash", $"-c \"echo {b64} | base64 -d > /tmp/camel_ddsetup.sh\"", out _, false);
+        sshenv.ExecuteCommand("bash", "/tmp/camel_ddsetup.sh", out _, true); // sudo: sfdisk/losetup/mkfs
     }
 
     const string Image = "/mnt/artifacts/4Dell Latitude CPi.E01";

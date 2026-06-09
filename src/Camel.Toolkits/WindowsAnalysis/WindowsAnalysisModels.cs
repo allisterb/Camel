@@ -248,6 +248,45 @@ public class TimelineActivity
     };
 }
 
+/// <summary>RECmd: a single registry key/value matched by a batch (<c>--bn</c>) plugin (CSV output).</summary>
+public class RegistryEntry
+{
+    public string HivePath { get; set; } = "";
+    public string? HiveType { get; set; }
+    public string? Description { get; set; }
+    public string? Category { get; set; }
+    public string? KeyPath { get; set; }
+    public string? ValueName { get; set; }
+    public string? ValueType { get; set; }
+    public string? ValueData { get; set; }
+    public string? ValueData2 { get; set; }
+    public string? ValueData3 { get; set; }
+    public string? Comment { get; set; }
+    public bool Recursive { get; set; }
+    public bool Deleted { get; set; }
+    public DateTime? LastWriteTimestamp { get; set; }
+    public string? PluginDetailFile { get; set; }
+
+    public static RegistryEntry FromRow(IReadOnlyDictionary<string, string> r) => new()
+    {
+        HivePath = r.Get("HivePath") ?? "",
+        HiveType = r.Get("HiveType"),
+        Description = r.Get("Description"),
+        Category = r.Get("Category"),
+        KeyPath = r.Get("KeyPath"),
+        ValueName = r.Get("ValueName"),
+        ValueType = r.Get("ValueType"),
+        ValueData = r.Get("ValueData"),
+        ValueData2 = r.Get("ValueData2"),
+        ValueData3 = r.Get("ValueData3"),
+        Comment = r.Get("Comment"),
+        Recursive = EzParse.ToBool(r.Get("Recursive")),
+        Deleted = EzParse.ToBool(r.Get("Deleted")),
+        LastWriteTimestamp = EzParse.ToDate(r.Get("LastWriteTimestamp")),
+        PluginDetailFile = r.Get("PluginDetailFile"),
+    };
+}
+
 /// <summary>RBCmd: a single recycle-bin deleted-file record (CSV output).</summary>
 public class RecycleBinEntry
 {

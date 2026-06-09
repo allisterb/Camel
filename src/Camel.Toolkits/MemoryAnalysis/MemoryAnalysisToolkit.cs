@@ -58,6 +58,6 @@ public class MemoryAnalysisToolkit : Toolkit
     public WindowsRegistryPrintKey[]? WindowsRegistryPrintKey(string filename, string key) => ExecuteTool<WindowsRegistryPrintKey[]>("Volatility3", $"-f {filename} -r json windows.registry.printkey --key '{key}'");
 
     public WindowsRegistryUserAssist[]? WindowsRegistryUserAssist(string filename) => ExecuteTool<WindowsRegistryUserAssist[]>("Volatility3", $"-f {filename} -r json windows.registry.userassist");
-
+    
     public override string[] ToolList { get; } = ["Volatility3"];
 }

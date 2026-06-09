@@ -179,6 +179,52 @@ public class MmlsEntry
             .ToArray();
 }
 
+/// <summary>
+/// fdisk -l: a single partition row. <see cref="Start"/> (in sectors) is the value to pass as the offset
+/// to EwfMountLoopback / EwfMountNtfs. Column set varies between MBR (Boot/Id present) and GPT layouts.
+/// </summary>
+public class PartitionInfo
+{
+    public string DeviceName { get; set; } = "";
+    public bool Boot { get; set; }
+    public long Start { get; set; }
+    public long End { get; set; }
+    public long Sectors { get; set; }
+    public string Size { get; set; } = "";
+    public string? Id { get; set; }
+    public string Type { get; set; } = "";
+
+    public static PartitionInfo[] ParseAll(string s)
+    {
+        var lines = TskParse.Lines(s);
+        int header = Array.FindIndex(lines, l => l.TrimStart().StartsWith("Device", StringComparison.Ordinal));
+        if (header < 0) return [];
+
+        var cols = lines[header].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        bool hasBoot = cols.Contains("Boot");
+        bool hasId = cols.Contains("Id");
+
+        var result = new List<PartitionInfo>();
+        foreach (var line in lines.Skip(header + 1))
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            var t = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            int i = 0;
+            var p = new PartitionInfo { DeviceName = t[i++] };
+            if (hasBoot && i < t.Length && t[i] == "*") { p.Boot = true; i++; }
+            if (i + 2 >= t.Length) continue;            // need Start, End, Sectors
+            p.Start = TskParse.ToLong(t[i++]);
+            p.End = TskParse.ToLong(t[i++]);
+            p.Sectors = TskParse.ToLong(t[i++]);
+            if (i < t.Length) p.Size = t[i++];
+            if (hasId && i < t.Length) p.Id = t[i++];
+            p.Type = string.Join(' ', t.Skip(i));
+            result.Add(p);
+        }
+        return result.ToArray();
+    }
+}
+
 /// <summary>fsstat: filesystem metadata (common fields plus the full label map).</summary>
 public class FsStat
 {

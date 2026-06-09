@@ -52,6 +52,31 @@ public class DiskAnalysisToolkit : Toolkit
 
     public MmlsEntry[]? Mmls(string image) =>
         ExecuteToolText("Mmls", Q(image)) is { } o ? MmlsEntry.ParseAll(o) : null;
+
+    /// <summary>
+    /// Lists the partition table of a raw disk device (e.g. the <c>ewf1</c> exposed by <see cref="EwfMountRaw"/>)
+    /// via <c>fdisk -l</c>. Each <see cref="PartitionInfo.Start"/> (in sectors) is the offset to pass to
+    /// <see cref="EwfMountLoopback"/> / <see cref="EwfMountNtfs"/> for that partition.
+    /// </summary>
+    public PartitionInfo[]? ListPartitions(string disk) =>
+        ExecuteToolText("ListPartitions", $"-l {Q(disk)}") is { } o ? PartitionInfo.ParseAll(o) : null;
+
+    /// <summary>
+    /// Mounts a raw <c>.dd</c> disk image read-only at <paramref name="mountDir"/> via loopback. When
+    /// <paramref name="offset"/> (a partition start in sectors, e.g. from <see cref="ListPartitions"/>) is
+    /// supplied it is converted to a byte offset so a partition within the image is mounted. The mount
+    /// directory must already exist. Returns true on success.
+    /// </summary>
+    public bool DDMount(string imageFile, string mountDir, int? offset = null) =>
+        ExecuteToolText("DDMount",
+            $"-o ro,loop{(offset is not null ? $",offset={offset.Value * 512}" : "")} {Q(imageFile)} {Q(mountDir)}") is not null;
+
+    /// <summary>
+    /// Creates the mount-point directory <c>/mnt/&lt;name&gt;</c> on the workstation (via <c>sudo mkdir -p</c>),
+    /// for use when additional mount points are needed. Returns the created path, or null on failure.
+    /// </summary>
+    public string? MakeMountDir(string name) =>
+        ExecuteToolText("MakeMountDir", $"-p {Q($"/mnt/{name}")}") is not null ? $"/mnt/{name}" : null;
     #endregion
 
     #region Filesystem tools
@@ -113,8 +138,8 @@ public class DiskAnalysisToolkit : Toolkit
 
     public override string[] ToolList { get; } =
     [
-        "EwfInfo", "EwfVerify", "EwfMountRaw", "EwfMountLoopback", "EwfMountNtfs", "ImgStat",
-        "Mmls", "FsStat", "Fls", "Icat", "Istat", "Ffind", "Ils", "Blkls", "TskRecover",
-        "Mactime", "Blkcat", "BulkExtractor", "PhotoRec"
+        "EwfInfo", "EwfVerify", "EwfMountRaw", "EwfMountLoopback", "EwfMountNtfs", "ListPartitions",
+        "DDMount", "MakeMountDir", "ImgStat", "Mmls", "FsStat", "Fls", "Icat", "Istat", "Ffind", "Ils",
+        "Blkls", "TskRecover", "Mactime", "Blkcat", "BulkExtractor", "PhotoRec"
     ];
 }
