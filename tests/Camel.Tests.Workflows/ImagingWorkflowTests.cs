@@ -143,6 +143,103 @@ public class ImagingWorkflowTests : TestsRuntime
         sshenv.ExecuteCommand("umount", rawDir, out _, true);
     }
 
+    [Fact]
+    public async Task CanVerifyImage()
+    {
+        var r = await workflow.VerifyImageAsync(Image);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.True(r.Result.IntegrityVerified); // stored hash == recalculated hash
+        Assert.Equal("aee4fcd9301c03b3b054623ca261959a", r.Result.Info.MD5);
+        Assert.Equal(r.Result.Verification.StoredMD5, r.Result.Verification.CalculatedMD5);
+    }
+
+    [Fact]
+    public async Task VerifyImageFailsForMissingImage()
+    {
+        var r = await workflow.VerifyImageAsync("/mnt/artifacts/does_not_exist.E01");
+
+        Assert.False(r.IsSuccess);
+        Assert.Null(r.Result);
+        Assert.NotNull(r.Message);
+    }
+
+    [Fact]
+    public async Task CanGenerateFilesystemTimeline()
+    {
+        var r = await workflow.GenerateFilesystemTimelineAsync(Image, NtfsOffset);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.NotEmpty(r.Result.Entries);
+        Assert.All(r.Result.Entries, e => Assert.NotEmpty(e.Date));
+        Assert.Contains(r.Result.Entries, e => e.FileName.Contains("boot.ini"));
+        Assert.False(string.IsNullOrEmpty(r.Result.BodyfilePath));
+    }
+
+    [Fact]
+    public async Task GenerateFilesystemTimelineFailsForInvalidOffset()
+    {
+        // Sector 30 is before the NTFS partition (starts at 63): fsstat finds no filesystem there.
+        var r = await workflow.GenerateFilesystemTimelineAsync(Image, 30);
+
+        Assert.False(r.IsSuccess);
+        Assert.Null(r.Result);
+        Assert.Contains("No valid filesystem", r.Message);
+    }
+
+    [Fact]
+    public async Task CanRecoverFiles()
+    {
+        const string outDir = "/tmp/camel_wf_recover";
+        sshenv.ExecuteCommand("rm", $"-rf {outDir}", out _, true);
+
+        var r = await workflow.RecoverFilesAsync(Image, outDir, NtfsOffset, includeDeleted: false);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.True(r.Result.FilesRecovered > 0);
+        Assert.Equal(outDir, r.Result.OutputDir);
+
+        // tsk_recover ran under sudo; the workflow hands the tree back to the login user.
+        sshenv.ExecuteCommand("stat", $"-c %U {outDir}", out var owner, false);
+        Assert.NotEqual("root", owner.Trim());
+    }
+
+    [Fact]
+    public async Task RecoverFilesFailsForInvalidOffset()
+    {
+        var r = await workflow.RecoverFilesAsync(Image, "/tmp/camel_wf_recover_bad", 30);
+
+        Assert.False(r.IsSuccess);
+        Assert.Null(r.Result);
+        Assert.Contains("No valid filesystem", r.Message);
+    }
+
+    [Fact]
+    public async Task CanUnmountImage()
+    {
+        const string rawDir = "/tmp/camel_wf_unmount_raw";
+        const string fsDir = "/tmp/camel_wf_unmount_fs";
+        sshenv.ExecuteCommand("umount", fsDir, out _, true); // clean slate
+        sshenv.ExecuteCommand("umount", rawDir, out _, true);
+
+        var raw = await workflow.MountEwfImageAsync(Image, rawDir);
+        Assert.True(raw.IsSuccess, raw.Message);
+        var fs = await workflow.MountFileSystemAsync(raw.Result!, NtfsOffset, fsDir);
+        Assert.True(fs.IsSuccess, fs.Message);
+
+        var r = await workflow.UnmountImageAsync(raw.Result!, fs.Result!);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.Equal(2, r.Result!.Length); // filesystem mount + raw device
+
+        // Neither path should still be a mountpoint (mountpoint -q exits non-zero when not mounted).
+        Assert.False(sshenv.ExecuteCommand("mountpoint", $"-q {fsDir}", out _, true));
+        Assert.False(sshenv.ExecuteCommand("mountpoint", $"-q {rawDir}", out _, true));
+    }
+
     const string Image = "/mnt/artifacts/4Dell Latitude CPi.E01";
     const int NtfsOffset = 63;
 

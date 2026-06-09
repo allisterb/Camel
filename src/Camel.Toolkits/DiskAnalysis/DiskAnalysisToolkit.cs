@@ -85,6 +85,13 @@ public class DiskAnalysisToolkit : Toolkit
     /// </summary>
     public async Task<bool> MakeDirAsync(string path) =>
         await ExecuteToolTextAsync("MakeMountDir", $"-p {Q(path)}") is not null;
+
+    /// <summary>
+    /// Unmounts the filesystem or device mounted at <paramref name="mountDir"/> (<c>umount</c> under sudo).
+    /// Used to tear down mounts created by the EWF/DD/loopback mount methods. Returns true on success.
+    /// </summary>
+    public async Task<bool> UnmountAsync(string mountDir) =>
+        await ExecuteToolTextAsync("Unmount", Q(mountDir)) is not null;
     #endregion
 
     #region Filesystem tools
@@ -95,6 +102,15 @@ public class DiskAnalysisToolkit : Toolkit
         await ExecuteToolTextAsync("Fls",
             (recursive ? "-r " : "") + (deletedOnly ? "-d " : "") + Offset(offset) + Q(image) +
             (inode is not null ? $" {inode}" : "")) is { } o ? FlsEntry.ParseAll(o) : null;
+
+    /// <summary>
+    /// Runs <c>fls -r -m</c> against <paramref name="image"/> to produce a mactime <em>bodyfile</em> at
+    /// <paramref name="outputFile"/> on the workstation: a recursive walk of the filesystem (including
+    /// deleted entries) with each row prefixed by the mount point <paramref name="mountPoint"/>. Feed the
+    /// result to <see cref="MactimeAsync"/> to build a sorted timeline. Returns true on success.
+    /// </summary>
+    public async Task<bool> FlsBodyfileAsync(string image, string outputFile, int? offset = null, string mountPoint = "/") =>
+        await ExecuteToolTextAsync("Fls", $"-r -m {Q(mountPoint)} {Offset(offset)}{Q(image)} > {Q(outputFile)}") is not null;
 
     public async Task<Istat?> IstatAsync(string image, long inode, int? offset = null) =>
         await ExecuteToolTextAsync("Istat", Offset(offset) + Q(image) + $" {inode}") is { } o ? Models.Istat.Parse(o) : null;
@@ -147,7 +163,7 @@ public class DiskAnalysisToolkit : Toolkit
     public override string[] ToolList { get; } =
     [
         "EwfInfo", "EwfVerify", "EwfMountRaw", "EwfMountLoopback", "EwfMountNtfs", "ListPartitions",
-        "DDMount", "MakeMountDir", "ImgStat", "Mmls", "FsStat", "Fls", "Icat", "Istat", "Ffind", "Ils",
+        "DDMount", "MakeMountDir", "Unmount", "ImgStat", "Mmls", "FsStat", "Fls", "Icat", "Istat", "Ffind", "Ils",
         "Blkls", "TskRecover", "Mactime", "Blkcat", "BulkExtractor", "PhotoRec"
     ];
 }
