@@ -5,13 +5,14 @@ using System.Linq;
 
 using Camel.Environments;
 using Camel.Toolkits;
+using Microsoft.Extensions.Configuration;
 
-public class CamelApi
+public class CamelApi : Runtime
 {
     #region Constructors
-    public CamelApi(AuditEnvironment env)
+    public CamelApi(AuditEnvironment env, IConfigurationRoot? config = null)
     {
-        this.MemoryAnalysis = new MemoryAnalysisToolkit(env);
+        this.MemoryAnalysis = new MemoryAnalysisToolkit(env, config);
     }
     #endregion
 

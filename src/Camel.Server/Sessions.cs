@@ -24,7 +24,7 @@ public sealed class SessionContext : IDisposable
     public SessionContext(IConfigurationRoot config)
     {
         Environment = AuditEnvironment.CreateFromConfig(config);
-        Api = new CamelApi(Environment);
+        Api = new CamelApi(Environment, config);
     }
 
     public void Dispose()
@@ -51,6 +51,12 @@ public sealed class SessionRegistry : IDisposable
         this.config = config;
         this.maxSessions = maxSessions;
     }
+
+    /// <summary>Number of live sessions (those whose environment has been created). Primarily for tests/diagnostics.</summary>
+    public int Count => sessions.Count;
+
+    /// <summary>True if a context exists for <paramref name="sessionId"/>.</summary>
+    public bool Contains(string sessionId) => sessions.ContainsKey(sessionId);
 
     /// <summary>Returns the session's context, creating its environment on first use. Throws if the session cap is reached.</summary>
     public SessionContext GetOrCreate(string sessionId)

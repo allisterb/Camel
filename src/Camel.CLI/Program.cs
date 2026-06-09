@@ -52,26 +52,25 @@ internal class Program : Runtime
     static async Task HandleServerArgs(ServerOptions opts)
     {
         if (config is null) throw new Exception("Configuration not loaded.");
-
-        // CLI flags override the configured environment type. The MCP server creates one environment per
-        // session from this config (see SessionRegistry), so we only pass config — not a shared connection.
-        if (opts.Ssh) config["SIFT:Environment"] = "Ssh";
-        else if (opts.Local) config["SIFT:Environment"] = "Local";
+        
+        if (opts.Ssh)
+        {
+            config["SIFT:Environment"] = "Ssh";
+        }
+        else if (opts.Local)
+        {
+            config["SIFT:Environment"] = "Local";
+        }
 
         if (Enum.Parse<EnvironmentType>(GetRequiredValue(config, "SIFT:Environment")) == EnvironmentType.Ssh)
         {
             // Fail fast: verify SSH connectivity once at startup (sessions then connect lazily on first use).
             host = GetRequiredValue(config, "SIFT:Host");
-            if (AuditEnvironment.CreateFromConfig(config) is SshAuditEnvironment se && se.IsConnected)
-            {
-                Info($"Verified SSH connectivity to host {host}.");
-                se.Dispose();
-            }
-            else
+            if (AuditEnvironment.CreateFromConfig(config) is SshAuditEnvironment se && !se.IsConnected)
             {
                 Error($"Could not connect to SSH environment on host {host}.");
                 Environment.Exit(1);
-            }
+            }           
         }
         else
         {
@@ -79,12 +78,12 @@ internal class Program : Runtime
         }
         if (opts.Http)
         {
-            AnsiConsole.MarkupLine("[green]Starting Camel MCP Server in HTTP mode...[/]");
+            Info("Starting Camel MCP Server in HTTP mode.");
             await CamelMCPServer.RunHttpAsync(config);
         }
         else
         {
-            AnsiConsole.MarkupLine("[green]Starting Camel MCP Server in stdio mode...[/]");
+            Info("Starting Camel MCP Server in stdio mode.");
             await CamelMCPServer.RunStdioAsync(config);
         }
     }

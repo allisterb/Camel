@@ -117,7 +117,14 @@ public class CamelMCPServer : Runtime
         await app.RunAsync();
     }
 
-    public static async Task RunHttpAsync(IConfigurationRoot config)
+    public static async Task RunHttpAsync(IConfigurationRoot config) => await BuildHttpApp(config).RunAsync();
+
+    /// <summary>
+    /// Builds the fully-configured HTTP MCP <see cref="WebApplication"/> (DI, CORS, transport, endpoints,
+    /// lifecycle) without starting it. <see cref="RunHttpAsync"/> just runs the result; integration tests
+    /// host it themselves (e.g. on an ephemeral port) and connect a real MCP client.
+    /// </summary>
+    public static WebApplication BuildHttpApp(IConfigurationRoot config)
     {
         var builder = WebApplication.CreateBuilder();
         // One environment per MCP session, created lazily and swept when idle.
@@ -196,6 +203,6 @@ public class CamelMCPServer : Runtime
             }
         });
 
-        await app.RunAsync();
+        return app;
     }
 }
