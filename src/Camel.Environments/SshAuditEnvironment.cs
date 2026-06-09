@@ -11,6 +11,7 @@ using System.Runtime.InteropServices;
 using System.Security;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 using ExpectNet;
@@ -235,9 +236,12 @@ public class SshAuditEnvironment : AuditEnvironment
         }
         SshCommand cmd = this.sshClient.CreateCommand(command + " " + arguments);
         using var op = Begin("Executing command {0} {1}...", command, arguments);
+        // Link the environment-wide cancellation token (tripped on e.g. client disconnect) with the
+        // process-wide shutdown token, so either aborts this command.
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(Runtime.Ct, this.ExecuteCt);
         try
         {
-            await cmd.ExecuteAsync(CancellationToken);            
+            await cmd.ExecuteAsync(linked.Token);
             process_output = cmd.Result.Trim();
             process_error = cmd.Error.Trim();
             if (cmd.ExitStatus == 0)
@@ -254,6 +258,13 @@ public class SshAuditEnvironment : AuditEnvironment
                 cmd.Dispose();
                 return new CommandResult(process_status, process_output, process_error, cmd.ExitStatus);
             }
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation is not a command failure — tear down the channel and let it propagate so the
+            // caller can distinguish "cancelled" from "errored".
+            cmd.Dispose();
+            throw;
         }
         catch (SshConnectionException sce)
         {

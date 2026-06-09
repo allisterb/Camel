@@ -9,6 +9,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Security;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 using static Result;
@@ -178,10 +179,16 @@ public class LocalEnvironment : AuditEnvironment
         try
         {
             using var op = Begin("Executing {0} {1}...", command, arguments);
+            // Link the environment-wide cancellation token (tripped on e.g. client disconnect) with the
+            // process-wide shutdown token, so either aborts this command.
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(Runtime.Ct, this.ExecuteCt);
             p.Start();
             p.BeginErrorReadLine();
             p.BeginOutputReadLine();
-            await p.WaitForExitAsync();
+            // WaitForExitAsync(token) stops waiting on cancel but does not stop the child; kill the process
+            // tree so a cancelled command actually terminates the (possibly long-running) tool.
+            using var reg = linked.Token.Register(() => { try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { /* already exited */ } });
+            await p.WaitForExitAsync(linked.Token);
             process_exit_code = p.ExitCode;
             p.Close();
             op.Complete();
@@ -198,6 +205,12 @@ public class LocalEnvironment : AuditEnvironment
             // Trim stdout/stderr to match the SSH ExecuteAsync path (cmd.Result.Trim()) and the sync
             // ExecuteCommand, so async tool output has consistent whitespace across environments.
             return new CommandResult(process_status, process_out_sb.ToString().Trim(), process_err_sb.ToString().Trim(), process_exit_code);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation is not a command failure — let it propagate (the process was killed above).
+            try { p.Close(); } catch { }
+            throw;
         }
         catch (Exception e)
         {

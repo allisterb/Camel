@@ -11,6 +11,7 @@ using System.Security;
 using System.Security.AccessControl;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 using Microsoft.Extensions.Configuration;
@@ -115,6 +116,28 @@ public abstract class AuditEnvironment : Runtime, IDisposable
 
     internal string LineTerminator { get; set; }
 
+    #endregion
+
+    #region Cancellation
+    // Backing source whose token is observed by every async Execute call on this environment. Cancelling
+    // it (via CancelExecutions) aborts all in-flight and pending async commands — e.g. on client disconnect.
+    private CancellationTokenSource executeCts = new();
+
+    /// <summary>The token all async Execute methods on this environment observe. Trip it via <see cref="CancelExecutions"/>.</summary>
+    public CancellationToken ExecuteCt => executeCts.Token;
+
+    /// <summary>
+    /// Cancels every in-flight and pending async command on this environment, then swaps in a fresh source
+    /// so subsequent calls execute normally. The old source is intentionally not disposed: a caller may have
+    /// read it but not yet built its linked token, and disposing it would make that read throw
+    /// <see cref="ObjectDisposedException"/>; a plain (timer-less) source holds no unmanaged handle, so GC
+    /// reclaims it safely once the cancellation callbacks have run.
+    /// </summary>
+    public void CancelExecutions()
+    {
+        var old = Interlocked.Exchange(ref executeCts, new CancellationTokenSource());
+        old.Cancel();
+    }
     #endregion
 
     #region Methods

@@ -314,7 +314,9 @@ public abstract class Toolkit : Runtime
             if (!r.IsCompleted) return [];
             return ParseJsonLines<T>(r.Output);
         }
-        finally { await auditEnvironment.ExecuteCommandAsync("rm", $"-rf {dir}", false); }
+        // Sync ExecuteCommand has no cancellation token, so cleanup runs even after the async work was
+        // cancelled; guarded so a teardown failure can never mask the method's result.
+        finally { try { auditEnvironment.ExecuteCommand("rm", $"-rf {dir}", out _, false); } catch { } }
     }
 
     /// <summary>
@@ -332,7 +334,9 @@ public abstract class Toolkit : Runtime
             if (!r.IsCompleted) return [];
             return ParseJsonLines<T>(r.Output);
         }
-        finally { await auditEnvironment.ExecuteCommandAsync("rm", $"-f {file}", false); }
+        // Sync ExecuteCommand has no cancellation token, so cleanup runs even after the async work was
+        // cancelled; guarded so a teardown failure can never mask the method's result.
+        finally { try { auditEnvironment.ExecuteCommand("rm", $"-f {file}", out _, false); } catch { } }
     }
     
     /// <summary>
@@ -351,7 +355,9 @@ public abstract class Toolkit : Runtime
             if (!r.IsCompleted) return [];
             return ParseCsv(r.Output).Select(map).ToArray();
         }
-        finally { await auditEnvironment.ExecuteCommandAsync("rm", $"-rf {dir}", false); }
+        // Sync ExecuteCommand has no cancellation token, so cleanup runs even after the async work was
+        // cancelled; guarded so a teardown failure can never mask the method's result.
+        finally { try { auditEnvironment.ExecuteCommand("rm", $"-rf {dir}", out _, false); } catch { } }
     }
 
     /// <summary>
@@ -369,7 +375,9 @@ public abstract class Toolkit : Runtime
             if (!r.IsCompleted) return [];
             return ParseCsv(r.Output).Select(map).ToArray();
         }
-        finally { await auditEnvironment.ExecuteCommandAsync("rm", $"-f {file}", false); }
+        // Sync ExecuteCommand has no cancellation token, so cleanup runs even after the async work was
+        // cancelled; guarded so a teardown failure can never mask the method's result.
+        finally { try { auditEnvironment.ExecuteCommand("rm", $"-f {file}", out _, false); } catch { } }
     }
 
     /// <summary>Reads a CSV file on the audit environment and maps its rows; null on read failure.</summary>
