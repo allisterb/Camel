@@ -55,7 +55,6 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     public abstract AuditFileInfo ConstructFile(string file_path);
     public abstract AuditDirectoryInfo ConstructDirectory(string dir_path);
     public abstract Dictionary<AuditFileInfo, string> ReadFilesAsText(List<AuditFileInfo> files);
-    public abstract int MaxConcurrentExecutions { get; }
     protected abstract TraceSource TraceSource { get; set; }
     #endregion
 
@@ -118,6 +117,46 @@ public abstract class AuditEnvironment : Runtime, IDisposable
 
     #endregion
 
+    #region Concurrency limiting
+    /// <summary>
+    /// Maximum number of concurrent async command executions on this environment. <c>0</c> (default) means
+    /// unlimited. A positive value bounds fan-out (e.g. a code-mode <c>Promise.all</c>) so a single session
+    /// can't exhaust the connection's SSH channels or swamp the workstation. Typically set from config.
+    /// </summary>
+    public int MaxConcurrentExecutions { get; set; } = 0;
+
+    private SemaphoreSlim? _executionLimiter;
+    private readonly object _executionLimiterLock = new();
+
+    // Lazily built (MaxConcurrentExecutions is usually assigned from config after construction). Null = unlimited.
+    private SemaphoreSlim? ExecutionLimiter
+    {
+        get
+        {
+            if (MaxConcurrentExecutions <= 0) return null;
+            if (_executionLimiter is null)
+                lock (_executionLimiterLock) _executionLimiter ??= new SemaphoreSlim(MaxConcurrentExecutions);
+            return _executionLimiter;
+        }
+    }
+
+    /// <summary>
+    /// Runs <paramref name="execute"/> under this environment's concurrency limit (see
+    /// <see cref="MaxConcurrentExecutions"/>; 0 = unlimited). The wait honours the environment's cancellation
+    /// token so a disconnect doesn't leave callers queued. Intended to wrap each <c>ExecuteAsync</c> override.
+    /// </summary>
+    protected async Task<CommandResult> RunWithLimitAsync(Func<Task<CommandResult>> execute)
+    {
+        var limiter = ExecutionLimiter;
+        if (limiter is null) return await execute();
+
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(Runtime.Ct, ExecuteCt);
+        await limiter.WaitAsync(linked.Token);   // throws OCE if cancelled while queued (nothing to release)
+        try { return await execute(); }
+        finally { limiter.Release(); }
+    }
+    #endregion
+
     #region Cancellation
     // Backing source whose token is observed by every async Execute call on this environment. Cancelling
     // it (via CancelExecutions) aborts all in-flight and pending async commands — e.g. on client disconnect.
@@ -174,6 +213,8 @@ public abstract class AuditEnvironment : Runtime, IDisposable
 
     public async Task<CommandResult> ExecuteCommandAsync(string command, string arguments, bool admin = false)
     {
+        // Concurrency limiting is enforced in ExecuteAsync (the primitive both this wrapper and any direct
+        // caller funnel through), so it is intentionally not applied here to avoid acquiring twice.
         CommandResult? r;
         if (admin)
         {
@@ -189,7 +230,7 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         }
         if (r.Status == ProcessExecuteStatus.Completed)
         {
-            Debug("The command {0} {1} executed successfully. Output: {2}", command, arguments, r.Output);            
+            Debug("The command {0} {1} executed successfully. Output: {2}", command, arguments, r.Output);
         }
         else
         {
@@ -877,19 +918,24 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     public static AuditEnvironment CreateFromConfig(IConfigurationRoot config)
     {
         var environmentType = Enum.Parse<EnvironmentType>(GetRequiredValue(config, "SIFT:Environment"));
+        // Optional cap on concurrent async executions (0/absent = unlimited).
+        int maxConcurrent = int.TryParse(config["SIFT:MaxConcurrentExecutions"], out var n) ? n : 0;
+        AuditEnvironment env;
         if (environmentType == EnvironmentType.Local)
         {
-            return new LocalEnvironment();
+            env = new LocalEnvironment();
         }
         else if (environmentType == EnvironmentType.Ssh)
-        {        
+        {
             var host = GetRequiredValue(config, "SIFT:Host");
             var port = Int32.Parse(GetRequiredValue(config, "SIFT:Port"));
             var user = GetRequiredValue(config, "SIFT:User");
             var password = GetRequiredValue(config, "SIFT:Password");
-            return new SshAuditEnvironment("camel", host, port, user, password, new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), new LocalEnvironment());            
+            env = new SshAuditEnvironment("camel", host, port, user, password, new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), new LocalEnvironment());
         }
         else throw new Exception($"Invalid environment type specified in configuration: {environmentType.ToString()}");
+        env.MaxConcurrentExecutions = maxConcurrent;
+        return env;
     }
     #endregion
 
@@ -929,16 +975,8 @@ public abstract class AuditEnvironment : Runtime, IDisposable
                 // allocated for them. 
                 if (isDisposing)
                 {
-                    // Release all managed resources here 
-                    // Need to unregister/detach yourself from the events. Always make sure 
-                    // the object is not null first before trying to unregister/detach them! 
-                    // Failure to unregister can be a BIG source of memory leaks 
-                    //if (someDisposableObjectWithAnEventHandler != null)
-                    //{ someDisposableObjectWithAnEventHandler.SomeEvent -= someDelegate; 
-                    //someDisposableObjectWithAnEventHandler.Dispose(); 
-                    //someDisposableObjectWithAnEventHandler = null; } 
-                    // If this is a WinForm/UI control, uncomment this code 
-                    //if (components != null) //{ // components.Dispose(); //} } 
+                    // Release all managed resources here.
+                    _executionLimiter?.Dispose();
                 }
                 // Release all unmanaged resources here 
                 // (example) if (someComObject != null && Marshal.IsComObject(someComObject)) { Marshal.FinalReleaseComObject(someComObject); someComObject = null; 

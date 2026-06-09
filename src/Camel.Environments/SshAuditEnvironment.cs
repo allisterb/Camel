@@ -91,7 +91,6 @@ public class SshAuditEnvironment : AuditEnvironment
 
     #region Overriden properties
     protected override TraceSource TraceSource { get; set; } = new TraceSource("SshAuditEnvironment");
-    public override int MaxConcurrentExecutions { get; } = 0;
     #endregion
 
     #region Properties
@@ -219,7 +218,8 @@ public class SshAuditEnvironment : AuditEnvironment
         
     }
 
-    public override async Task<CommandResult> ExecuteAsync(string command, string arguments, Dictionary<string, string>? env = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
+    public override Task<CommandResult> ExecuteAsync(string command, string arguments, Dictionary<string, string>? env = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null) =>
+        RunWithLimitAsync(async () =>
     {
         if (!this.IsConnected) throw new InvalidOperationException("The SSH session is not connected.");
         var process_status = ProcessExecuteStatus.Unknown;
@@ -291,7 +291,7 @@ public class SshAuditEnvironment : AuditEnvironment
             return new CommandResult(process_status, process_output, process_error, cmd.ExitStatus);
         }
 
-    }
+    });
 
     public override CommandResult ExecuteAsUser(string command, string arguments, string user, SecureString password, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
     {        

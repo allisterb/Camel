@@ -26,7 +26,6 @@ public class LocalEnvironment : AuditEnvironment
 
     #region Overriden properties
     protected override TraceSource TraceSource { get; set; } = new TraceSource("LocalEnvironment");
-    public override int MaxConcurrentExecutions { get; } = 0;
     #endregion
 
     #region Overriden methods
@@ -132,7 +131,8 @@ public class LocalEnvironment : AuditEnvironment
         }                
     }
 
-    public override async Task<CommandResult> ExecuteAsync(string command, string arguments, Dictionary<string, string>? env = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
+    public override Task<CommandResult> ExecuteAsync(string command, string arguments, Dictionary<string, string>? env = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null) =>
+        RunWithLimitAsync(async () =>
     {
         FileInfo cf = new FileInfo(command);
         int? process_exit_code = null;
@@ -226,7 +226,8 @@ public class LocalEnvironment : AuditEnvironment
                 return new CommandResult(process_status, string.Empty, e.Message, process_exit_code);
             }
         }
-    }
+    });
+
     public override CommandResult ExecuteAsUser(string command, string arguments, string user, SecureString password, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
     {        
         if (this.OS.Platform == PlatformID.Win32NT)
