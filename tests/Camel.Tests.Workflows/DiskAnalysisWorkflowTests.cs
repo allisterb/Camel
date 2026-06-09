@@ -3,14 +3,14 @@ using Camel.Workflows;
 
 namespace Camel.Tests.Workflows;
 
-public class ImagingWorkflowTests : TestsRuntime
+public class DiskAnalysisWorkflowTests : TestsRuntime
 {
-    public ImagingWorkflowTests()
+    public DiskAnalysisWorkflowTests()
     {
         var sshconfig = LoadConfigFile("sshtestappsettings.json");
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         api = new CamelApi(sshenv, sshconfig);
-        workflow = new ImagingWorkflow(api);
+        workflow = new DiskAnalysisWorkflow(api);
     }
 
     [Fact]
@@ -245,5 +245,5 @@ public class ImagingWorkflowTests : TestsRuntime
 
     AuditEnvironment sshenv;
     CamelApi api;
-    ImagingWorkflow workflow;
+    DiskAnalysisWorkflow workflow;
 }

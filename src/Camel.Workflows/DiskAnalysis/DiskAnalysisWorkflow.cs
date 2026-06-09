@@ -1,12 +1,13 @@
+namespace Camel.Workflows;
+
 using System;
 
 using Camel.Toolkits.Models;
+using Camel.Workflows.Models;
 
-namespace Camel.Workflows;
-
-public class ImagingWorkflow : Workflow
+public class DiskAnalysisWorkflow : Workflow
 {
-    public ImagingWorkflow(CamelApi api) : base(api) {}
+    public DiskAnalysisWorkflow(CamelApi api) : base(api) {}
 
     /// <summary>
     /// Mounts an EWF/E01 evidence image read-only on the workstation, following standard forensic practice:
@@ -25,24 +26,24 @@ public class ImagingWorkflow : Workflow
 
         // 1. Read and validate the image metadata. This also confirms the file exists and is a readable
         //    EWF/E01 image before we attempt to mount it (records the embedded MD5/SHA1 for case notes).
-        var info = await api.DiskAnalysis.EwfInfoAsync(imageFile);
+        var info = await DiskAnalysis.EwfInfoAsync(imageFile);
         if (info is null)
             return WorkflowResult<EwfImageMount>.Failure(
                 $"Could not read EWF metadata for '{imageFile}'; the file may be missing or not a valid E01/EWF image.");
 
         // 2. Ensure the mount point exists (sudo mkdir -p; harmless if it already does).
-        if (!await api.DiskAnalysis.MakeDirAsync(mountDir))
+        if (!await DiskAnalysis.MakeDirAsync(mountDir))
             return WorkflowResult<EwfImageMount>.Failure($"Failed to create mount directory '{mountDir}'.");
 
         // 3. Mount the EWF image read-only, exposing the raw disk as <mountDir>/ewf1.
-        if (!await api.DiskAnalysis.EwfMountRawAsync(imageFile, mountDir))
+        if (!await DiskAnalysis.EwfMountRawAsync(imageFile, mountDir))
             return WorkflowResult<EwfImageMount>.Failure(
                 $"ewfmount failed for '{imageFile}' at '{mountDir}'. The image may already be mounted there — " +
                 $"unmount with 'umount {mountDir}' and retry.");
 
         // 4. Inspect the partition table of the raw device so callers can locate the target volume.
         string rawDevice = $"{mountDir.TrimEnd('/')}/ewf1";
-        var partitionTable = await api.DiskAnalysis.MmlsAsync(rawDevice);
+        var partitionTable = await DiskAnalysis.MmlsAsync(rawDevice);
         if (partitionTable is null)
         {
             // mmls failing isn't fatal: a single-volume image (a partition image rather than a whole disk)
@@ -78,23 +79,23 @@ public class ImagingWorkflow : Workflow
         // 1. Verify a filesystem actually lives at this offset before attempting to mount. fsstat reads the
         //    volume boot record / superblock at the offset; it reports a File System Type only when one is
         //    recognised (it otherwise prints "Cannot determine file system type", leaving the type unset).
-        var fs = await api.DiskAnalysis.FsStatAsync(imageMount.RawDevice, offset);
+        var fs = await DiskAnalysis.FsStatAsync(imageMount.RawDevice, offset);
         if (fs is null || string.IsNullOrWhiteSpace(fs.FileSystemType))
             return WorkflowResult<FileSystemMount>.Failure(
                 $"No valid filesystem found at sector offset {offset} of '{imageMount.RawDevice}'. " +
                 $"Check the partition table (mmls) for a correct partition start sector.");
 
         // 2. Ensure the mount point exists (sudo mkdir -p; harmless if it already does).
-        if (!await api.DiskAnalysis.MakeDirAsync(mountDir))
+        if (!await DiskAnalysis.MakeDirAsync(mountDir))
             return WorkflowResult<FileSystemMount>.Failure($"Failed to create mount directory '{mountDir}'.");
 
         // 3. Mount read-only. NTFS gets the Windows-aware kernel driver, falling back to ntfs-3g 'force' for
         //    dirty/hibernated volumes the kernel driver refuses; everything else uses a plain ro,loop mount.
         bool isNtfs = fs.FileSystemType!.Contains("NTFS", StringComparison.OrdinalIgnoreCase);
         bool mounted = isNtfs
-            ? await api.DiskAnalysis.EwfMountLoopbackAsync(imageMount.RawDevice, mountDir, offset)
-              || await api.DiskAnalysis.EwfMountNtfsAsync(imageMount.RawDevice, mountDir, offset)
-            : await api.DiskAnalysis.DDMountAsync(imageMount.RawDevice, mountDir, offset);
+            ? await DiskAnalysis.EwfMountLoopbackAsync(imageMount.RawDevice, mountDir, offset)
+              || await DiskAnalysis.EwfMountNtfsAsync(imageMount.RawDevice, mountDir, offset)
+            : await DiskAnalysis.DDMountAsync(imageMount.RawDevice, mountDir, offset);
 
         if (!mounted)
             return WorkflowResult<FileSystemMount>.Failure(
@@ -118,12 +119,12 @@ public class ImagingWorkflow : Workflow
     {
         using var op = Begin("Verifying EWF image {0}", imageFile);
 
-        var info = await api.DiskAnalysis.EwfInfoAsync(imageFile);
+        var info = await DiskAnalysis.EwfInfoAsync(imageFile);
         if (info is null)
             return WorkflowResult<ImageVerification>.Failure(
                 $"Could not read EWF metadata for '{imageFile}'; the file may be missing or not a valid E01/EWF image.");
 
-        var verify = await api.DiskAnalysis.EwfVerifyAsync(imageFile);
+        var verify = await DiskAnalysis.EwfVerifyAsync(imageFile);
         if (verify is null)
             return WorkflowResult<ImageVerification>.Failure($"ewfverify did not complete for '{imageFile}'.");
 
@@ -154,18 +155,18 @@ public class ImagingWorkflow : Workflow
         using var op = Begin("Generating filesystem timeline for {0} (offset {1})", imageFile, offset?.ToString() ?? "none");
 
         // Confirm a filesystem actually lives at the offset before walking it (avoids an empty/garbage timeline).
-        var fs = await api.DiskAnalysis.FsStatAsync(imageFile, offset);
+        var fs = await DiskAnalysis.FsStatAsync(imageFile, offset);
         if (fs is null || string.IsNullOrWhiteSpace(fs.FileSystemType))
             return WorkflowResult<FilesystemTimeline>.Failure(
                 $"No valid filesystem found at sector offset {offset} of '{imageFile}'. " +
                 $"Check the partition table (mmls) for a correct partition start sector.");
 
         // Walk the filesystem into a mactime bodyfile, then sort it into a timeline.
-        if (!await api.DiskAnalysis.FlsBodyfileAsync(imageFile, bodyfilePath, offset))
+        if (!await DiskAnalysis.FlsBodyfileAsync(imageFile, bodyfilePath, offset))
             return WorkflowResult<FilesystemTimeline>.Failure(
                 $"Failed to generate the fls bodyfile for '{imageFile}' (offset {offset}).");
 
-        var entries = await api.DiskAnalysis.MactimeAsync(bodyfilePath, timezone);
+        var entries = await DiskAnalysis.MactimeAsync(bodyfilePath, timezone);
         if (entries is null)
             return WorkflowResult<FilesystemTimeline>.Failure($"mactime failed to process bodyfile '{bodyfilePath}'.");
 
@@ -191,13 +192,13 @@ public class ImagingWorkflow : Workflow
     {
         using var op = Begin("Recovering files from {0} (offset {1}) to {2}", imageFile, offset?.ToString() ?? "none", outputDir);
 
-        var fs = await api.DiskAnalysis.FsStatAsync(imageFile, offset);
+        var fs = await DiskAnalysis.FsStatAsync(imageFile, offset);
         if (fs is null || string.IsNullOrWhiteSpace(fs.FileSystemType))
             return WorkflowResult<FileRecovery>.Failure(
                 $"No valid filesystem found at sector offset {offset} of '{imageFile}'. " +
                 $"Check the partition table (mmls) for a correct partition start sector.");
 
-        var count = await api.DiskAnalysis.TskRecoverAsync(imageFile, outputDir, all: includeDeleted, offset: offset);
+        var count = await DiskAnalysis.TskRecoverAsync(imageFile, outputDir, all: includeDeleted, offset: offset);
         if (count is null)
             return WorkflowResult<FileRecovery>.Failure($"tsk_recover failed for '{imageFile}' (offset {offset}).");
 
@@ -222,8 +223,8 @@ public class ImagingWorkflow : Workflow
         var failed = new List<string>();
         // Filesystem mounts sit on top of the raw device, so release them first (reverse of mount order).
         foreach (var fsMount in filesystemMounts)
-            if (!await api.DiskAnalysis.UnmountAsync(fsMount.MountDir)) failed.Add(fsMount.MountDir);
-        if (!await api.DiskAnalysis.UnmountAsync(imageMount.MountDir)) failed.Add(imageMount.MountDir);
+            if (!await DiskAnalysis.UnmountAsync(fsMount.MountDir)) failed.Add(fsMount.MountDir);
+        if (!await DiskAnalysis.UnmountAsync(imageMount.MountDir)) failed.Add(imageMount.MountDir);
 
         if (failed.Count > 0)
             return WorkflowResult<string[]>.Failure($"Failed to unmount: {string.Join(", ", failed)}.");

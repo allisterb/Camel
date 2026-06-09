@@ -29,4 +29,8 @@ public class Workflow : Runtime
         this.api = api;
     }
     protected readonly CamelApi api;
+
+    protected DiskAnalysisToolkit DiskAnalysis => api.DiskAnalysis;
+
+    protected MemoryAnalysisToolkit MemoryAnalysis => api.MemoryAnalysis;
 }

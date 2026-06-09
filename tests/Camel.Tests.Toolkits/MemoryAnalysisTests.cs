@@ -1,5 +1,6 @@
 using Camel.Environments;
 using Camel.Toolkits;
+using Camel.Toolkits.Models;
 
 namespace Camel.Tests.Toolkits;
 
@@ -23,11 +24,37 @@ public class MemoryAnalysisTests : TestsRuntime
     }
 
     [Fact]
+    public async Task CanRunWindowsPsScan()
+    {
+        var r = await toolkit.WindowsPsScanAsync(Image);
+        Assert.NotNull(r);
+        Assert.NotEmpty(r);
+        // psscan returns EPROCESS structures with valid PIDs; SessionId/CreateTime can be null on some
+        // (exited/partial) entries — deserialization must tolerate that.
+        Assert.All(r, p => Assert.True(p.PID >= 0));
+    }
+
+    [Fact]
     public async Task CanRunWindowsPsTree()
     {
         var r = await toolkit.WindowsPsTreeAsync(Image);
         Assert.NotNull(r);
     }
+
+    [Fact]
+    public async Task CanRunWindowsPsTreeForPid()
+    {
+        // Filtering to a PID narrows the forest to the single ancestry branch containing that PID (rooted at
+        // the top-most ancestor, with the target nested among __children).
+        var r = await toolkit.WindowsPsTreeAsync(Image, 988);
+        Assert.NotNull(r);
+        Assert.Single(r);
+        Assert.Contains(Flatten(r), p => p.PID == 988);
+    }
+
+    // Depth-first flatten of a pstree forest (each node plus its nested __children).
+    static IEnumerable<WindowsPsTree> Flatten(IEnumerable<WindowsPsTree> nodes) =>
+        nodes.SelectMany(n => new[] { n }.Concat(Flatten(n.__children)));
 
     [Fact]
     public async Task CanRunWindowsSvcScan()
@@ -62,6 +89,40 @@ public class MemoryAnalysisTests : TestsRuntime
     {
         var r = await toolkit.WindowsPrivsAsync(Image);
         Assert.NotNull(r);
+    }
+
+    // Filtering each per-process plugin to a PID restricts its output to that process (988 is valid in the
+    // test image). An empty result is still valid for some plugins, so only assert PID scoping when present.
+    [Fact]
+    public async Task CanRunWindowsCmdLineForPid()
+    {
+        var r = await toolkit.WindowsCmdLineAsync(Image, 988);
+        Assert.NotNull(r);
+        Assert.All(r, e => Assert.Equal(988, e.PID));
+    }
+
+    [Fact]
+    public async Task CanRunWindowsEnvVarsForPid()
+    {
+        var r = await toolkit.WindowsEnvVarsAsync(Image, 988);
+        Assert.NotNull(r);
+        Assert.All(r, e => Assert.Equal(988, e.PID));
+    }
+
+    [Fact]
+    public async Task CanRunWindowsGetSidsForPid()
+    {
+        var r = await toolkit.WindowsGetSidsAsync(Image, 988);
+        Assert.NotNull(r);
+        Assert.All(r, e => Assert.Equal(988, e.PID));
+    }
+
+    [Fact]
+    public async Task CanRunWindowsPrivsForPid()
+    {
+        var r = await toolkit.WindowsPrivsAsync(Image, 988);
+        Assert.NotNull(r);
+        Assert.All(r, e => Assert.Equal(988, e.PID));
     }
 
     [Fact]

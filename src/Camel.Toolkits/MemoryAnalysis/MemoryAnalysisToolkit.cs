@@ -15,17 +15,23 @@ public class MemoryAnalysisToolkit : Toolkit
 
     public Task<WindowsPsScan[]?> WindowsPsScanAsync(string filename) => ExecuteToolAsync<WindowsPsScan[]>("Volatility3", $"-f {filename} -r json windows.psscan");
 
-    public Task<WindowsPsTree[]?> WindowsPsTreeAsync(string filename) => ExecuteToolAsync<WindowsPsTree[]>("Volatility3", $"-f {filename} -r json windows.pstree");
+    public Task<WindowsPsTree[]?> WindowsPsTreeAsync(string filename, int? pid = null) =>
+        ExecuteToolAsync<WindowsPsTree[]>("Volatility3", $"-f {filename} -r json windows.pstree" +
+            (pid is not null ? $" --pid {pid}" : ""));
 
     public Task<WindowsSvcScan[]?> WindowsSvcScanAsync(string filename) => ExecuteToolAsync<WindowsSvcScan[]>("Volatility3", $"-f {filename} -r json windows.svcscan");
 
-    public Task<WindowsCmdLine[]?> WindowsCmdLineAsync(string filename) => ExecuteToolAsync<WindowsCmdLine[]>("Volatility3", $"-f {filename} -r json windows.cmdline");
+    public Task<WindowsCmdLine[]?> WindowsCmdLineAsync(string filename, int? pid = null) =>
+        ExecuteToolAsync<WindowsCmdLine[]>("Volatility3", $"-f {filename} -r json windows.cmdline" + (pid is not null ? $" --pid {pid}" : ""));
 
-    public Task<WindowsEnvVars[]?> WindowsEnvVarsAsync(string filename) => ExecuteToolAsync<WindowsEnvVars[]>("Volatility3", $"-f {filename} -r json windows.envars");
+    public Task<WindowsEnvVars[]?> WindowsEnvVarsAsync(string filename, int? pid = null) =>
+        ExecuteToolAsync<WindowsEnvVars[]>("Volatility3", $"-f {filename} -r json windows.envars" + (pid is not null ? $" --pid {pid}" : ""));
 
-    public Task<WindowsGetSids[]?> WindowsGetSidsAsync(string filename) => ExecuteToolAsync<WindowsGetSids[]>("Volatility3", $"-f {filename} -r json windows.getsids");
+    public Task<WindowsGetSids[]?> WindowsGetSidsAsync(string filename, int? pid = null) =>
+        ExecuteToolAsync<WindowsGetSids[]>("Volatility3", $"-f {filename} -r json windows.getsids" + (pid is not null ? $" --pid {pid}" : ""));
 
-    public Task<WindowsPrivs[]?> WindowsPrivsAsync(string filename) => ExecuteToolAsync<WindowsPrivs[]>("Volatility3", $"-f {filename} -r json windows.privileges.Privs");
+    public Task<WindowsPrivs[]?> WindowsPrivsAsync(string filename, int? pid = null) =>
+        ExecuteToolAsync<WindowsPrivs[]>("Volatility3", $"-f {filename} -r json windows.privileges.Privs" + (pid is not null ? $" --pid {pid}" : ""));
 
     public Task<WindowsMalFind[]?> WindowsMalFindAsync(string filename) => ExecuteToolAsync<WindowsMalFind[]>("Volatility3", $"-f {filename} -r json windows.malfind");
 

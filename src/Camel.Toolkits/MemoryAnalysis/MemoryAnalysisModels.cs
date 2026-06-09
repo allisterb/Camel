@@ -29,7 +29,7 @@ public class WindowsPsList
 
 public class WindowsPsScan
 {
-    public DateTime CreateTime { get; set; }
+    public DateTime? CreateTime { get; set; }
     public DateTime? ExitTime { get; set; }
     public string Fileoutput { get; set; } = "";
     public object? Handles { get; set; }
@@ -37,7 +37,7 @@ public class WindowsPsScan
     public long OffsetV { get; set; }
     public int PID { get; set; }
     public int PPID { get; set; }
-    public int SessionId { get; set; }
+    public int? SessionId { get; set; }
     public int Threads { get; set; }
     public bool Wow64 { get; set; }
     public object[] __children { get; set; } = [];
@@ -296,5 +296,5 @@ public class WindowsPsTree
     public int? SessionId { get; set; }
     public int Threads { get; set; }
     public bool Wow64 { get; set; }
-    public object[] __children { get; set; } = [];
+    public WindowsPsTree[] __children { get; set; } = [];
 }

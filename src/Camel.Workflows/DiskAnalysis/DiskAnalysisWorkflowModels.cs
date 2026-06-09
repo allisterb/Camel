@@ -1,6 +1,6 @@
-using Camel.Toolkits.Models;
+namespace Camel.Workflows.Models;
 
-namespace Camel.Workflows;
+using Camel.Toolkits.Models;
 
 /// <summary>
 /// The result of mounting an EWF/E01 image: the directory it was mounted under, the raw disk device
