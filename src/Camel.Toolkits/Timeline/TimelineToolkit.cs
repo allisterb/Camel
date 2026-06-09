@@ -13,6 +13,17 @@ public class TimelineToolkit : Toolkit
     public TimelineToolkit(AuditEnvironment auditEnvironment, IConfigurationRoot? config = null) : base("Timeline", auditEnvironment, config) { }
 
     /// <summary>
+    /// Installs hayabusa (the Sigma-based EVTX threat-hunting tool) when the latest SIFT image omits it:
+    /// the release zip (binary + bundled <c>rules/</c> and <c>config/</c>) is extracted to
+    /// <c>/opt/hayabusa</c> and the versioned binary is symlinked to <c>/usr/local/bin/hayabusa</c> so it
+    /// resolves its sibling rules directory. No-op when already present. (Plaso ships with SIFT.)
+    /// </summary>
+    protected override void InstallMissingTools() =>
+        InstallZipRelease("hayabusa",
+            "https://github.com/Yamato-Security/hayabusa/releases/download/v3.9.0/hayabusa-3.9.0-lin-x64-gnu.zip",
+            "/opt/hayabusa", "hayabusa-3.9.0-lin-x64-gnu", "/usr/local/bin/hayabusa");
+
+    /// <summary>
     /// Parses <paramref name="source"/> (a disk image, mounted path, directory, or file) into the Plaso
     /// storage file <paramref name="storageFile"/>. Optionally restrict to a <paramref name="parsers"/>
     /// preset or comma-separated list (e.g. "win7", "winreg,winevtx"). When <paramref name="hash"/> is true,

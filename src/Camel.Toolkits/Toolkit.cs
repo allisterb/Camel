@@ -106,6 +106,54 @@ public abstract class Toolkit : Runtime
         return auditEnvironment.ExecuteCommand("test", $"-e {destPath}", out _, false);
     }
 
+    /// <summary>
+    /// Installs the apt package <paramref name="package"/> on the workstation (<c>apt-get install -y</c>
+    /// under sudo), unless the command at <paramref name="checkPath"/> already exists. Returns true when
+    /// the command is present afterwards.
+    /// </summary>
+    protected bool InstallAptPackage(string package, string checkPath)
+    {
+        if (auditEnvironment.ExecuteCommand("test", $"-e {checkPath}", out _, false))
+            return true; // already installed — nothing to do
+
+        Info($"Installing missing apt package {package} ...");
+        // Refresh package lists first — a fresh SIFT image often has a stale/empty apt cache, which makes
+        // 'apt-get install' fail with "Unable to locate package".
+        auditEnvironment.ExecuteCommand("apt-get", "update", out _, true);
+        if (!auditEnvironment.ExecuteCommand("apt-get", $"install -y {package}", out string o, true))
+        { Error($"Failed to install apt package {package}: {o}"); return false; }
+        return auditEnvironment.ExecuteCommand("test", $"-e {checkPath}", out _, false);
+    }
+
+    /// <summary>
+    /// Installs a tool shipped as a release zip (e.g. a GitHub release with a binary alongside its data
+    /// directories): downloads <paramref name="url"/>, extracts it into <paramref name="installDir"/>, marks
+    /// the binary <c>&lt;installDir&gt;/&lt;binary&gt;</c> executable, and symlinks it to <paramref name="linkPath"/>
+    /// on the PATH (so the tool resolves its sibling rules/config directories from the install dir). Skipped
+    /// when <paramref name="linkPath"/> already exists. Returns true when the tool is present afterwards.
+    /// </summary>
+    protected bool InstallZipRelease(string name, string url, string installDir, string binary, string linkPath)
+    {
+        if (auditEnvironment.ExecuteCommand("test", $"-e {linkPath}", out _, false))
+            return true; // already installed — nothing to do
+
+        Info($"Installing missing tool {name} from {url} ...");
+        string zip = $"/tmp/camel_zip_{name}.zip";
+        try
+        {
+            if (!auditEnvironment.ExecuteCommand("wget", $"-q {url} -O {zip}", out string dl, false))
+            { Error($"Failed to download {name}: {dl}"); return false; }
+            auditEnvironment.ExecuteCommand("mkdir", $"-p {installDir}", out _, true);
+            if (!auditEnvironment.ExecuteCommand("unzip", $"-o -q {zip} -d {installDir}", out string uz, true))
+            { Error($"Failed to unzip {name}: {uz}"); return false; }
+            auditEnvironment.ExecuteCommand("chmod", $"+x {installDir}/{binary}", out _, true);
+            auditEnvironment.ExecuteCommand("ln", $"-sf {installDir}/{binary} {linkPath}", out _, true);
+            Info($"Installed {name} to {installDir}.");
+            return auditEnvironment.ExecuteCommand("test", $"-e {linkPath}", out _, false);
+        }
+        finally { auditEnvironment.ExecuteCommand("rm", $"-f {zip}", out _, false); }
+    }
+
     public T? ExecuteTool<T>(string name, string args) where T : class
     {
         if (auditEnvironment.ExecuteCommand(Tools[name].Command, args, out string output, Tools[name].Sudo))

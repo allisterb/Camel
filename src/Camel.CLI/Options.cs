@@ -44,7 +44,13 @@ public class Options
 [Verb("server", HelpText = "Start the Camel MCP server.")]
 public class ServerOptions : Options
 {
-    [Option("http", Required = false, HelpText = "Enable the HTTP transport.")]
+    [Option("local", Required = false, HelpText = "Use the local environment, overriding the configuration file environment setting.")]
+    public bool Local { get; set; }
+
+    [Option("ssh", Required = false, HelpText = "Use the SSH environment, overriding the configuration file environment setting. SSH login data will still be pulled from the configuration file.")]
+    public bool Ssh { get; set; }
+
+    [Option("http", Required = false, HelpText = "Enable the MCP server HTTP transport.")]
     public bool Http { get; set; }
 }
 

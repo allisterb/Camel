@@ -10,6 +10,15 @@ public class YaraToolkit : Toolkit
     public YaraToolkit(AuditEnvironment auditEnvironment, IConfigurationRoot? config = null) : base("Yara", auditEnvironment, config) { }
 
     /// <summary>
+    /// Installs the <c>yara</c> apt package (providing both the <c>yara</c> scanner and <c>yarac</c>
+    /// compiler) when the latest SIFT image omits it. No-op when it is already present.
+    /// </summary>
+    protected override void InstallMissingTools()
+    {
+        InstallAptPackage("yara", "/usr/bin/yara");
+    }
+
+    /// <summary>
     /// Scans <paramref name="scanPath"/> (a file or, with <c>options.Recurse</c>, a directory) using the
     /// YARA rules in <paramref name="rules"/>. <paramref name="options"/> maps to the yara command flags
     /// (recursion, tags/meta/strings output, timeout, threads, compiled rules, etc.). Returns one

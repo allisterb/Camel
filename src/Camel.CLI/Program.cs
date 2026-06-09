@@ -19,6 +19,7 @@ internal class Program : Runtime
     {
         Runtime.WithFileAndConsoleLogging("Camel", "CLI", true);
         config = LoadConfigFile(Path.Combine(AssemblyLocation, "appsettings.json"));
+        if (config is null) throw new Exception("Configuration not loaded.");
         environmentType = Enum.Parse<EnvironmentType>(GetRequiredValue(config, "SIFT:Environment"));
         auditEnvironment = le;
     }
@@ -50,13 +51,28 @@ internal class Program : Runtime
 
     static async Task HandleServerArgs(ServerOptions opts)
     {
-        if (environmentType == EnvironmentType.Ssh)
+        if (config is null) throw new Exception("Configuration not loaded.");
+        if (opts.Ssh || (environmentType == EnvironmentType.Ssh && !opts.Local))
         {
-            host = GetRequiredValue(config, "Sift:Host");
-            port = Int32.Parse(GetRequiredValue(config, "Sift:Port"));
-            user = GetRequiredValue(config, "Sift:User");
-            password = GetRequiredValue(config, "Sift:Password");
-            auditEnvironment = new SshAuditEnvironment("camel", host, port, user, password, new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), le);
+            host = GetRequiredValue(config, "SIFT:Host");
+            port = Int32.Parse(GetRequiredValue(config, "SIFT:Port"));
+            user = GetRequiredValue(config, "SIFT:User");
+            password = GetRequiredValue(config, "SIFT:Password");
+            var se = new SshAuditEnvironment("camel", host, port, user, password, new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), le);
+            if (se.IsConnected)
+            {
+                auditEnvironment = se;
+                Info($"Using SSH environment on host {host}.");
+            }
+            else
+            {
+                Error("Could not connect to SSH environment on host {host}.");
+                Environment.Exit(1);
+            }            
+        }
+        else
+        {
+            Info($"Using local environment on host {Environment.MachineName}");
         }
         if (opts.Http)
         {

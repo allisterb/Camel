@@ -113,7 +113,8 @@ public class CamelMCPServer : Runtime
         var builder = WebApplication.CreateBuilder();
         var tool = new CamelMCPTools(auditEnvironment);       
         builder
-            .Logging.AddProvider(loggerProvider)
+            .Logging.ClearProviders()
+            .AddProvider(loggerProvider)
             .SetMinimumLevel(LogLevel.Trace);
 
         // Allow browser-based MCP clients (served from a different origin) to call
