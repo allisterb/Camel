@@ -11,6 +11,18 @@ public class WindowsInfo
     public object[] __children { get; set; } = [];
 }
 
+/// <summary>
+/// A single row from a Volatility dump plugin (e.g. <c>windows.pslist --dump</c>, <c>windows.memmap --dump</c>):
+/// captures only the <c>File output</c> column, which names the file the plugin wrote to the output directory
+/// (or an error/"Disabled" marker when nothing was dumped).
+/// </summary>
+public class WindowsDump
+{
+    [JsonPropertyName("File output")]
+    public string? FileOutput { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
 public class WindowsPsList
 {
     public DateTime? CreateTime { get; set; }

@@ -211,6 +211,38 @@ public class MemoryAnalysisTests : TestsRuntime
         Assert.NotNull(r);
     }
 
+    [Fact]
+    public async Task CanDumpProcessExecutable()
+    {
+        const string dir = "/tmp/camel_dump_exe";
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, true); // clean slate
+
+        var files = await toolkit.DumpProcessExecutableAsync(Image, 988, dir); // services.exe
+        Assert.NotNull(files);
+        Assert.NotEmpty(files);
+        Assert.All(files, f => Assert.StartsWith(dir, f));
+        // Each reported path is a non-empty file that really exists on disk.
+        Assert.All(files, f => Assert.True(sshenv.ExecuteCommand("test", $"-s {f}", out _, true)));
+
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, true);
+    }
+
+    [Fact]
+    public async Task CanDumpProcessMemory()
+    {
+        const string dir = "/tmp/camel_dump_mem";
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, true);
+
+        var files = await toolkit.DumpProcessMemoryAsync(Image, 988, dir);
+        Assert.NotNull(files);
+        Assert.NotEmpty(files);
+        // memmap writes a single pid.<PID>.dmp for the process.
+        Assert.Contains(files, f => f.EndsWith("pid.988.dmp"));
+        Assert.All(files, f => Assert.True(sshenv.ExecuteCommand("test", $"-s {f}", out _, true)));
+
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, true);
+    }
+
     // windows.netstat / windows.netscan do not support the Windows XP (5.1) test image
     // (Volatility3 raises NotImplementedError), so verify against the Windows 10 image.
     [Fact]

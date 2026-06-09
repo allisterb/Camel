@@ -48,3 +48,36 @@ public record SuspiciousServiceReport
         this.TotalServices = totalServices;
     }
 }
+
+/// <summary>
+/// The result of scanning a Windows memory image for code-injection and process-hollowing indicators with
+/// <c>windows.malfind</c>. Every malfind hit (<see cref="SuspectRegions"/>) is already a private, executable
+/// memory region with no file backing — anomalous by itself. Two stronger indicators are surfaced from it:
+/// <list type="bullet">
+/// <item><see cref="MzHeaderRegions"/> — regions that begin with an <c>MZ</c>/PE header: an executable image
+/// mapped into memory that no file on disk backs, the classic process-hollowing / PE-injection indicator.</item>
+/// <item><see cref="RwxRegions"/> — regions with read-write-execute protection (<c>PAGE_EXECUTE_READWRITE</c>):
+/// a writable code region, the classic shellcode-injection indicator.</item>
+/// </list>
+/// A region may appear in both lists. malfind is prone to false positives (JIT, .NET CLR), so triage hits.
+/// When dumping is requested, <see cref="DumpedExecutables"/> / <see cref="DumpedProcessMemory"/> carry the
+/// workstation paths of the extracted artifacts for downstream triage (strings, YARA, etc.).
+/// </summary>
+public record AnomalousMemoryReport
+{
+    public WindowsMalFind[] MzHeaderRegions { get; }
+    public WindowsMalFind[] RwxRegions { get; }
+    public WindowsMalFind[] SuspectRegions { get; }
+
+    /// <summary>Paths of dumped process executables (PE images), when a dump directory was requested.</summary>
+    public string[] DumpedExecutables { get; init; } = [];
+    /// <summary>Paths of dumped process memory images, when a dump directory was requested.</summary>
+    public string[] DumpedProcessMemory { get; init; } = [];
+
+    public AnomalousMemoryReport(WindowsMalFind[] mzHeaderRegions, WindowsMalFind[] rwxRegions, WindowsMalFind[] suspectRegions)
+    {
+        this.MzHeaderRegions = mzHeaderRegions;
+        this.RwxRegions = rwxRegions;
+        this.SuspectRegions = suspectRegions;
+    }
+}

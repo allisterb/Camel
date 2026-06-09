@@ -92,6 +92,75 @@ public class MemoryAnalysisWorkflowTests : TestsRuntime
     static bool HasFragment(string? path, string fragment) =>
         path is not null && path.Contains(fragment, StringComparison.OrdinalIgnoreCase);
 
+    [Fact]
+    public async Task CanFindHollowingIndicators()
+    {
+        var r = await workflow.FindAnomalousMemoryIndicatorsAsync(Image);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.NotEmpty(r.Result.SuspectRegions); // malfind found anomalous executable regions
+
+        // The two indicator buckets are subsets of all malfind hits.
+        Assert.True(r.Result.RwxRegions.Length <= r.Result.SuspectRegions.Length);
+        Assert.True(r.Result.MzHeaderRegions.Length <= r.Result.SuspectRegions.Length);
+
+        // Every RWX region is genuinely writable+executable; every MZ region genuinely starts with an MZ header.
+        Assert.All(r.Result.RwxRegions, h =>
+        {
+            Assert.Contains("EXECUTE", h.Protection);
+            Assert.Contains("WRITE", h.Protection);
+        });
+        Assert.All(r.Result.MzHeaderRegions, h =>
+            Assert.True((h.Notes?.Contains("MZ", StringComparison.OrdinalIgnoreCase) ?? false)
+                || h.Hexdump.TrimStart().StartsWith("4d 5a", StringComparison.OrdinalIgnoreCase)));
+
+        // This image contains at least one RWX (PAGE_EXECUTE_READWRITE) region, so the RWX detector flags it.
+        Assert.NotEmpty(r.Result.RwxRegions);
+    }
+
+    [Fact]
+    public async Task FindHollowingIndicatorsFailsForMissingImage()
+    {
+        var r = await workflow.FindAnomalousMemoryIndicatorsAsync("/mnt/artifacts/does_not_exist.raw");
+
+        Assert.False(r.IsSuccess);
+        Assert.Null(r.Result);
+        Assert.NotNull(r.Message);
+    }
+
+    [Fact]
+    public async Task FindAnomalousMemoryDumpsAnomalousProcesses()
+    {
+        const string exeDir = "/tmp/camel_wf_anom_exe";
+        sshenv.ExecuteCommand("rm", $"-rf {exeDir}", out _, true); // clean slate
+
+        // Request executable dumps (light, ~100KB each). The memory-dump path uses the same per-PID helper and
+        // is covered by the toolkit-level CanDumpProcessMemory test, so we don't dump ~100MB × every PID here.
+        var r = await workflow.FindAnomalousMemoryIndicatorsAsync(Image, dumpProcessDir: exeDir);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.NotEmpty(r.Result.DumpedExecutables);              // each flagged process's image was dumped
+        Assert.Empty(r.Result.DumpedProcessMemory);               // memory dir not requested
+        Assert.All(r.Result.DumpedExecutables, f => Assert.StartsWith(exeDir, f));
+        // 0-byte dumps (PE image paged out of RAM) are filtered, so every returned path is a non-empty file.
+        Assert.All(r.Result.DumpedExecutables, f => Assert.True(sshenv.ExecuteCommand("test", $"-s {f}", out _, true)));
+
+        sshenv.ExecuteCommand("rm", $"-rf {exeDir}", out _, true);
+    }
+
+    [Fact]
+    public async Task FindAnomalousMemoryDoesNotDumpByDefault()
+    {
+        var r = await workflow.FindAnomalousMemoryIndicatorsAsync(Image);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.Empty(r.Result.DumpedExecutables);
+        Assert.Empty(r.Result.DumpedProcessMemory);
+    }
+
     const string Image = "/mnt/artifacts/pat-2009-11-19.mddramimage";
 
     AuditEnvironment sshenv;

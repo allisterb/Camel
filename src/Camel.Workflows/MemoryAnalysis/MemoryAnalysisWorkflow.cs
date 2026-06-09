@@ -1,7 +1,9 @@
 namespace Camel.Workflows;
 
+using System;
 using System.Linq;
 
+using Camel.Toolkits.Models;
 using Camel.Workflows.Models;
 
 public class MemoryAnalysisWorkflow : Workflow
@@ -93,4 +95,74 @@ public class MemoryAnalysisWorkflow : Workflow
                 : $"Found {suspicious.Length} service(s) with suspicious binary paths: " +
                   string.Join(", ", suspicious.Select(s => $"{s.Name} ({s.Binary ?? s.BinaryRegistry ?? s.Dll})")) + ".");
     }
+
+    /// <summary>
+    /// Scans a Windows memory image for code-injection and process-hollowing indicators with
+    /// <c>windows.malfind</c>, which reports private, executable memory regions that no file on disk backs.
+    /// Among those hits it flags the two indicators the methodology calls out: regions beginning with an
+    /// <c>MZ</c>/PE header (an executable image injected into memory — the classic hollowing / PE-injection
+    /// sign) and regions with read-write-execute protection (the classic shellcode-injection sign). malfind
+    /// has a high false-positive rate (JIT, .NET CLR), so the returned hits are leads to triage, not verdicts.
+    /// </summary>
+    /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
+    /// <param name="dumpProcessDir">If set, each anomalous process's executable (PE) image is dumped to this
+    /// directory on the workstation for downstream triage; the resulting paths are returned in the report.</param>
+    /// <param name="dumpMemoryDir">If set, each anomalous process's mapped memory is dumped to this directory
+    /// on the workstation; the resulting paths are returned in the report.</param>
+    public async Task<WorkflowResult<AnomalousMemoryReport>> FindAnomalousMemoryIndicatorsAsync(
+        string imageFile, string? dumpProcessDir = null, string? dumpMemoryDir = null)
+    {
+        using var op = Begin("Finding process-hollowing indicators in {0}", imageFile);
+
+        var hits = await MemoryAnalysis.WindowsMalFindAsync(imageFile);
+        if (hits is null)
+            return WorkflowResult<AnomalousMemoryReport>.Failure(
+                $"windows.malfind failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
+
+        // Every malfind hit is already a private, executable region with no file backing. Split out the two
+        // strongest indicators: an MZ/PE header at the start (image injected => hollowing) and read-write-
+        // execute protection (writable code => shellcode). A region can be both.
+        var mz = hits.Where(HasMzHeader).ToArray();
+        var rwx = hits.Where(h => IsReadWriteExecute(h.Protection)).ToArray();
+
+        // Optionally extract each anomalous process (every distinct PID malfind flagged) for downstream triage.
+        var anomalousPids = hits.Select(h => h.PID).Distinct().ToArray();
+        var dumpedExe = dumpProcessDir is null ? []
+            : await DumpEachAsync(imageFile, anomalousPids, dumpProcessDir, MemoryAnalysis.DumpProcessExecutableAsync);
+        var dumpedMem = dumpMemoryDir is null ? []
+            : await DumpEachAsync(imageFile, anomalousPids, dumpMemoryDir, MemoryAnalysis.DumpProcessMemoryAsync);
+
+        op.Complete();
+        var flagged = mz.Concat(rwx).Select(h => $"{h.Process} (PID {h.PID})").Distinct().ToArray();
+        var dumpNote = dumpProcessDir is null && dumpMemoryDir is null ? ""
+            : $" Dumped {dumpedExe.Length} executable(s) and {dumpedMem.Length} memory image(s) for {anomalousPids.Length} process(es).";
+        return WorkflowResult<AnomalousMemoryReport>.Success(
+            new AnomalousMemoryReport(mz, rwx, hits) { DumpedExecutables = dumpedExe, DumpedProcessMemory = dumpedMem },
+            (flagged.Length == 0
+                ? $"No hollowing/injection indicators among {hits.Length} malfind region(s)."
+                : $"Found injection indicators across {hits.Length} malfind region(s): {mz.Length} MZ/PE-headed " +
+                  $"(hollowing) and {rwx.Length} RWX (shellcode), in: {string.Join(", ", flagged)}.") + dumpNote);
+    }
+
+    // Dumps each PID via the given toolkit dump method into dir, collecting the produced file paths.
+    static async Task<string[]> DumpEachAsync(string imageFile, int[] pids, string dir,
+        Func<string, int, string, Task<string[]?>> dump)
+    {
+        var paths = new List<string>();
+        foreach (var pid in pids)
+            if (await dump(imageFile, pid, dir) is { } files)
+                paths.AddRange(files);
+        return paths.ToArray();
+    }
+
+    // A malfind region carries an injected PE image when malfind tagged it with an MZ header, or its dumped
+    // bytes begin with the "MZ" signature (4d 5a).
+    static bool HasMzHeader(WindowsMalFind hit) =>
+        (hit.Notes is not null && hit.Notes.Contains("MZ", StringComparison.OrdinalIgnoreCase)) ||
+        hit.Hexdump.TrimStart().StartsWith("4d 5a", StringComparison.OrdinalIgnoreCase);
+
+    // RWX = simultaneously writable and executable (e.g. PAGE_EXECUTE_READWRITE / PAGE_EXECUTE_WRITECOPY).
+    static bool IsReadWriteExecute(string protection) =>
+        protection.Contains("EXECUTE", StringComparison.OrdinalIgnoreCase) &&
+        protection.Contains("WRITE", StringComparison.OrdinalIgnoreCase);
 }
