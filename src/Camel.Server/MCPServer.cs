@@ -6,6 +6,7 @@ using System.ComponentModel;
 using System.Text;
 using System.Threading.Tasks;
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -24,19 +25,21 @@ public enum TransportType
     Http = 1,
 }
 
-public class CamelMCPTools 
-{       
-   public CamelMCPTools(AuditEnvironment auditEnvironment)
+public class CamelMCPTools
+{
+   public CamelMCPTools(SessionRegistry registry)
    {
-        this.auditEnvironment = auditEnvironment;        
+        this.registry = registry;
         jsoptions = new Options();
-        jsoptions.Host.StringCompilationAllowed = false;      
-        api = new CamelApi(auditEnvironment);   
+        jsoptions.Host.StringCompilationAllowed = false;
     }
 
     [McpServerTool(Name = "ExecuteJavaScript"), Description("Execute JavaScript code against the Camel API.")]
-    public async Task<CallToolResult> ExecuteJavaScript(string script)
+    public async Task<CallToolResult> ExecuteJavaScript(string script, RequestContext<CallToolRequestParams> context)
     {
+        // Each MCP session gets its own environment/API (its own SSH connection); resolve it by session id.
+        // The RequestContext is injected by the SDK per request; context.Server carries the session id.
+        var session = registry.GetOrCreate(SessionId(context.Server));
         StringBuilder output = new StringBuilder();
         var jsinterp = new Engine(jsoptions)
           .SetValue("log", new Action<string>((s) => output.AppendLine(s)))
@@ -46,7 +49,7 @@ public class CamelMCPTools
               output.AppendLine(headers.ToString());
 
           }))
-          .SetValue("memoryAnalysis", api.MemoryAnalysis);
+          .SetValue("memoryAnalysis", session.Api.MemoryAnalysis);
         try
         {
             await jsinterp.ExecuteAsync(script);
@@ -79,20 +82,25 @@ public class CamelMCPTools
             Content = [new TextContentBlock { Text = output.ToString() }],
         };
     }
-    
-    readonly AuditEnvironment auditEnvironment;
+
+    // Stdio (and any transport that doesn't assign one) yields a null/empty session id; bucket those under "default".
+    static string SessionId(McpServer server) => string.IsNullOrEmpty(server.SessionId) ? "default" : server.SessionId;
+
+    readonly SessionRegistry registry;
     readonly Options jsoptions;
-    readonly CamelApi api;
 }
 
 public class CamelMCPServer : Runtime
 {
     const string CorsPolicyName = "CamelMcpCors";
    
-    public static async Task RunStdioAsync(AuditEnvironment auditEnvironment)
-    {        
+    public static async Task RunStdioAsync(IConfigurationRoot config)
+    {
         var builder = Host.CreateEmptyApplicationBuilder(null);
-        var tool = new CamelMCPTools(auditEnvironment);        
+        // One environment per MCP session, created lazily and swept when idle.
+        var registry = new SessionRegistry(config);
+        builder.Services.AddSingleton(registry);
+        builder.Services.AddHostedService<IdleSessionSweeper>();
         builder
             .Logging.AddProvider(loggerProvider)
             .SetMinimumLevel(LogLevel.Trace);
@@ -100,18 +108,22 @@ public class CamelMCPServer : Runtime
         var mcpServices = builder
             .Services
             .AddMcpServer()
-            .WithTools(tool)
+            .WithTools(new CamelMCPTools(registry))
             .WithStdioServerTransport();
-        
+
         var app = builder.Build();
-        
+        app.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(registry.Dispose);
+
         await app.RunAsync();
     }
 
-    public static async Task RunHttpAsync(AuditEnvironment auditEnvironment)
+    public static async Task RunHttpAsync(IConfigurationRoot config)
     {
         var builder = WebApplication.CreateBuilder();
-        var tool = new CamelMCPTools(auditEnvironment);       
+        // One environment per MCP session, created lazily and swept when idle.
+        var registry = new SessionRegistry(config);
+        builder.Services.AddSingleton(registry);
+        builder.Services.AddHostedService<IdleSessionSweeper>();
         builder
             .Logging.ClearProviders()
             .AddProvider(loggerProvider)
@@ -137,7 +149,7 @@ public class CamelMCPServer : Runtime
         var mcpServices = builder
             .Services
             .AddMcpServer()
-            .WithTools(tool)
+            .WithTools(new CamelMCPTools(registry))
             .WithHttpTransport(options =>
             {
                 // Use stateful sessions so the Streamable HTTP transport can
@@ -159,6 +171,9 @@ public class CamelMCPServer : Runtime
         // Maps the Streamable HTTP endpoints at the root path and, because
         // EnableLegacySse is set above, the legacy "/sse" and "/message" endpoints.
         app.MapMcp();
+
+        // Tear down all session environments (cancel in-flight commands, disconnect SSH) on shutdown.
+        app.Lifetime.ApplicationStopping.Register(registry.Dispose);
 
         app.Lifetime.ApplicationStarted.Register(() =>
         {
