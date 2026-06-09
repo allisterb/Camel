@@ -13,15 +13,17 @@ Camel is written in .NET and C#. It is designed to run either installed locally 
 - Camel.Runtime at src/Camel.Runtime provides global base types and features like logging for all other projects.
 - Camel.Environments at src/Camel.Runtime provides different **audit environments** that represent the local or remote machine SIFT workstation is running on. An audit environment allows common I/O operations like running commands and reading files to be abstracted so
 the same code works locally or remotely over SSH.
-- Camel.Toolkits at src/Camel.Runtime provides strongly-typed interfaces to the SIFT tools. 
-- Camel.Server at src/Camel.Server provides the constrained JavaScript execution engine and MCP server implementation
+- Camel.Toolkits at src/Camel.Runtime provides a strongly-typed, asynchronous API for the SIFT tools. 
+- Camel.Workflows at src/Camel.Workflows codifies existing forensic knowledge and workflows utilizing the SIFT tools API.
+- Camel.Server at src/Camel.Server provides the constrained JavaScript execution engine and MCP server implementation.
 - Camel.Training (planned) For training and testing machine learning models on forensic tool data, and for generating synthetic data for training and testing.
 - Camel.Inference (planned) For performing inference using trained machine learning models on forensic tool data.
-- Camel.CLI at src/Camel.CLI provides the main interface for launching the MCP server
+- Camel.CLI at src/Camel.CLI provides the main interface for launching the MCP server.
 
-## Project milestone
+## Project milestones
 
-- Define all toolkits and tools to be implemented in Camel.Toolkits, and the models that represent their outputs. (currently in progress))
+- Define all toolkits and tools to be implemented in Camel.Toolkits, and the models that represent their outputs.
+- Define higher-level workflows to be implemented in Camel.Workflows (currently in progress)
 
 ## Project implementation
 

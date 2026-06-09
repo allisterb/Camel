@@ -3,9 +3,10 @@
 using System;
 using System.Linq;
 
+using Microsoft.Extensions.Configuration;
+
 using Camel.Environments;
 using Camel.Toolkits;
-using Microsoft.Extensions.Configuration;
 
 public class CamelApi : Runtime
 {
@@ -13,10 +14,12 @@ public class CamelApi : Runtime
     public CamelApi(AuditEnvironment env, IConfigurationRoot? config = null)
     {
         this.MemoryAnalysis = new MemoryAnalysisToolkit(env, config);
+        this.DiskAnalysis = new DiskAnalysisToolkit(env, config);   
     }
     #endregion
 
     #region Properties
     public MemoryAnalysisToolkit MemoryAnalysis { get; }
+    public DiskAnalysisToolkit DiskAnalysis { get; }
     #endregion
 }

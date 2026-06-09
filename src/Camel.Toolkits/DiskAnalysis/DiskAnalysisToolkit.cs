@@ -77,6 +77,14 @@ public class DiskAnalysisToolkit : Toolkit
     /// </summary>
     public async Task<string?> MakeMountDirAsync(string name) =>
         await ExecuteToolTextAsync("MakeMountDir", $"-p {Q($"/mnt/{name}")}") is not null ? $"/mnt/{name}" : null;
+
+    /// <summary>
+    /// Creates the directory <paramref name="path"/> (and any missing parents) on the workstation via
+    /// <c>sudo mkdir -p</c>. Unlike <see cref="MakeMountDirAsync"/> this accepts an arbitrary absolute path
+    /// rather than prefixing <c>/mnt/</c>. Returns true on success.
+    /// </summary>
+    public async Task<bool> MakeDirAsync(string path) =>
+        await ExecuteToolTextAsync("MakeMountDir", $"-p {Q(path)}") is not null;
     #endregion
 
     #region Filesystem tools

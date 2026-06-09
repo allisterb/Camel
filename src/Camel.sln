@@ -37,6 +37,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Camel.Workflows", "Camel.Wo
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Camel.Tests.Server", "..\tests\Camel.Tests.Server\Camel.Tests.Server.csproj", "{E009E02C-84E4-43CF-969E-732218CFD450}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Camel.Tests.Workflows", "..\tests\Camel.Tests.Workflows\Camel.Tests.Workflows.csproj", "{C72ADD51-4EC6-4E0C-982A-59877DBBAE27}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -83,6 +85,10 @@ Global
 		{E009E02C-84E4-43CF-969E-732218CFD450}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E009E02C-84E4-43CF-969E-732218CFD450}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E009E02C-84E4-43CF-969E-732218CFD450}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C72ADD51-4EC6-4E0C-982A-59877DBBAE27}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C72ADD51-4EC6-4E0C-982A-59877DBBAE27}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C72ADD51-4EC6-4E0C-982A-59877DBBAE27}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C72ADD51-4EC6-4E0C-982A-59877DBBAE27}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -98,6 +104,7 @@ Global
 		{4C091659-AD6D-4434-BB26-1848C81F7BAF} = {F882AC14-85FC-413B-BE2B-8BE11E45BD75}
 		{3B15F211-02C2-46D3-8AE9-E9CB802C4634} = {E8840196-B3E7-4537-AB77-8C1B8F75486A}
 		{E009E02C-84E4-43CF-969E-732218CFD450} = {C17BDA0E-EB4C-44D5-B32E-19A2CE189AAA}
+		{C72ADD51-4EC6-4E0C-982A-59877DBBAE27} = {C17BDA0E-EB4C-44D5-B32E-19A2CE189AAA}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {97AB5048-4498-43FE-8CB8-B2FC147FCDE7}
