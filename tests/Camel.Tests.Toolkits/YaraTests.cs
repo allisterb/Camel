@@ -37,9 +37,9 @@ public class YaraTests : TestsRuntime
     }
 
     [Fact]
-    public void CanRunScanBasic()
+    public async Task CanRunScanBasic()
     {
-        var r = toolkit.Scan($"{Dir}/test.yar", $"{Dir}/sample.txt");
+        var r = await toolkit.ScanAsync($"{Dir}/test.yar", $"{Dir}/sample.txt");
         Assert.NotNull(r);
         var match = Assert.Single(r);
         Assert.Equal("CamelTest", match.Rule);
@@ -47,9 +47,9 @@ public class YaraTests : TestsRuntime
     }
 
     [Fact]
-    public void CanRunScanWithTagsMetaAndStrings()
+    public async Task CanRunScanWithTagsMetaAndStrings()
     {
-        var r = toolkit.Scan($"{Dir}/test.yar", $"{Dir}/sample.txt",
+        var r = await toolkit.ScanAsync($"{Dir}/test.yar", $"{Dir}/sample.txt",
             new YaraOptions { PrintTags = true, PrintMeta = true, PrintStrings = true, PrintNamespace = true });
         Assert.NotNull(r);
         var match = Assert.Single(r);
@@ -61,9 +61,9 @@ public class YaraTests : TestsRuntime
     }
 
     [Fact]
-    public void CanRunScanRecursiveNoFalsePositive()
+    public async Task CanRunScanRecursiveNoFalsePositive()
     {
-        var r = toolkit.Scan($"{Dir}/test.yar", Dir, new YaraOptions { Recurse = true });
+        var r = await toolkit.ScanAsync($"{Dir}/test.yar", Dir, new YaraOptions { Recurse = true });
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, m => m.Target.EndsWith("sample.txt"));
@@ -71,14 +71,14 @@ public class YaraTests : TestsRuntime
     }
 
     [Fact]
-    public void CanRunCompileThenScanCompiled()
+    public async Task CanRunCompileThenScanCompiled()
     {
         var compiled = $"{Dir}/test.yarc";
         sshenv.ExecuteCommand("rm", $"-f {compiled}", out _, false);
 
-        Assert.True(toolkit.Compile($"{Dir}/test.yar", compiled));
+        Assert.True(await toolkit.CompileAsync($"{Dir}/test.yar", compiled));
 
-        var r = toolkit.Scan(compiled, $"{Dir}/sample.txt", new YaraOptions { Compiled = true });
+        var r = await toolkit.ScanAsync(compiled, $"{Dir}/sample.txt", new YaraOptions { Compiled = true });
         Assert.NotNull(r);
         var match = Assert.Single(r);
         Assert.Equal("CamelTest", match.Rule);

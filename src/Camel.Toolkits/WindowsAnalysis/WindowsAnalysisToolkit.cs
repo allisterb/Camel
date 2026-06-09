@@ -21,45 +21,45 @@ public class WindowsAnalysisToolkit : Toolkit
     }
 
     #region JSON tools
-    public MFTEntry[]? MFTECmd(string file) => ExecuteToolJson<MFTEntry>("MFTECmd", $"-f {Q(file)}");
+    public Task<MFTEntry[]?> MFTECmdAsync(string file) => ExecuteToolJsonAsync<MFTEntry>("MFTECmd", $"-f {Q(file)}");
 
-    public LnkFile[]? LECmd(string file) => ExecuteToolJson<LnkFile>("LECmd", $"-f {Q(file)}");
+    public Task<LnkFile[]?> LECmdAsync(string file) => ExecuteToolJsonAsync<LnkFile>("LECmd", $"-f {Q(file)}");
 
-    public ShellBag[]? SBECmd(string hiveDirectory) => ExecuteToolJson<ShellBag>("SBECmd", $"-d {Q(hiveDirectory)}");
+    public Task<ShellBag[]?> SBECmdAsync(string hiveDirectory) => ExecuteToolJsonAsync<ShellBag>("SBECmd", $"-d {Q(hiveDirectory)}");
 
-    public EventLogEntry[]? EvtxECmd(string file) => ExecuteToolJson<EventLogEntry>("EvtxECmd", $"-f {Q(file)}");
+    public Task<EventLogEntry[]?> EvtxECmdAsync(string file) => ExecuteToolJsonAsync<EventLogEntry>("EvtxECmd", $"-f {Q(file)}");
 
     /// <summary>
     /// Runs SQLECmd over the SQLite databases in <paramref name="directory"/>. Output is heterogeneous
     /// (one record shape per matched SQLECmd map), so rows are returned as raw key/value records.
     /// </summary>
-    public Dictionary<string, System.Text.Json.JsonElement>[]? SQLECmd(string directory) =>
-        ExecuteToolJson<Dictionary<string, System.Text.Json.JsonElement>>("SQLECmd", $"-d {Q(directory)}");
+    public Task<Dictionary<string, System.Text.Json.JsonElement>[]?> SQLECmdAsync(string directory) =>
+        ExecuteToolJsonAsync<Dictionary<string, System.Text.Json.JsonElement>>("SQLECmd", $"-d {Q(directory)}");
     #endregion
 
     #region CSV tools
-    public ShimcacheEntry[]? AppCompatCacheParser(string systemHive) =>
-        ExecuteToolCsv("AppCompatCacheParser", $"-f {Q(systemHive)}", ShimcacheEntry.FromRow);
+    public Task<ShimcacheEntry[]?> AppCompatCacheParserAsync(string systemHive) =>
+        ExecuteToolCsvAsync("AppCompatCacheParser", $"-f {Q(systemHive)}", ShimcacheEntry.FromRow);
 
-    public RecycleBinEntry[]? RBCmd(string file) =>
-        ExecuteToolCsv("RBCmd", $"-f {Q(file)}", RecycleBinEntry.FromRow);
+    public Task<RecycleBinEntry[]?> RBCmdAsync(string file) =>
+        ExecuteToolCsvAsync("RBCmd", $"-f {Q(file)}", RecycleBinEntry.FromRow);
 
-    public AmcacheEntry[]? AmcacheParser(string amcacheHive) =>
-        ExecuteToolCsv("AmcacheParser", $"-f {Q(amcacheHive)}", AmcacheEntry.FromRow, "*UnassociatedFileEntries.csv");
+    public Task<AmcacheEntry[]?> AmcacheParserAsync(string amcacheHive) =>
+        ExecuteToolCsvAsync("AmcacheParser", $"-f {Q(amcacheHive)}", AmcacheEntry.FromRow, "*UnassociatedFileEntries.csv");
 
-    public JumpListEntry[]? JLECmd(string directory) =>
-        ExecuteToolCsv("JLECmd", $"-d {Q(directory)}", JumpListEntry.FromRow, "*AutomaticDestinations.csv");
+    public Task<JumpListEntry[]?> JLECmdAsync(string directory) =>
+        ExecuteToolCsvAsync("JLECmd", $"-d {Q(directory)}", JumpListEntry.FromRow, "*AutomaticDestinations.csv");
 
-    public TimelineActivity[]? WxTCmd(string activitiesCacheDb) =>
-        ExecuteToolCsv("WxTCmd", $"-f {Q(activitiesCacheDb)}", TimelineActivity.FromRow, "*Activity.csv");
+    public Task<TimelineActivity[]?> WxTCmdAsync(string activitiesCacheDb) =>
+        ExecuteToolCsvAsync("WxTCmd", $"-f {Q(activitiesCacheDb)}", TimelineActivity.FromRow, "*Activity.csv");
 
     /// <summary>
     /// Runs RECmd in batch mode over the registry hives in <paramref name="hiveDirectory"/> using the
     /// <c>.reb</c> batch file <paramref name="batchFile"/> (the <c>--bn</c> argument), returning one
     /// <see cref="RegistryEntry"/> per key/value the batch's plugins matched.
     /// </summary>
-    public RegistryEntry[]? RECmd(string hiveDirectory, string batchFile) =>
-        ExecuteToolCsv("RECmd", $"-d {Q(hiveDirectory)} --bn {Q(batchFile)}", RegistryEntry.FromRow, "*Output.csv");
+    public Task<RegistryEntry[]?> RECmdAsync(string hiveDirectory, string batchFile) =>
+        ExecuteToolCsvAsync("RECmd", $"-d {Q(hiveDirectory)} --bn {Q(batchFile)}", RegistryEntry.FromRow, "*Output.csv");
     #endregion
 
     #region Stdout tools
@@ -67,8 +67,8 @@ public class WindowsAnalysisToolkit : Toolkit
     /// Extracts ASCII/Unicode strings from <paramref name="file"/> using bstrings. This build of
     /// bstrings reads from stdin only, so the file is fed via shell redirection.
     /// </summary>
-    public string[]? Bstrings(string file, int minLength = 3) =>
-        ExecuteToolText("Bstrings", $"-q -m {minLength} < {Q(file)}")
+    public async Task<string[]?> BstringsAsync(string file, int minLength = 3) =>
+        (await ExecuteToolTextAsync("Bstrings", $"-q -m {minLength} < {Q(file)}"))
             ?.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     #endregion
 

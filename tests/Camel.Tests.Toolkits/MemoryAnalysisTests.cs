@@ -1,4 +1,4 @@
-﻿using Camel.Environments;
+using Camel.Environments;
 using Camel.Toolkits;
 
 namespace Camel.Tests.Toolkits;
@@ -10,159 +10,166 @@ public class MemoryAnalysisTests : TestsRuntime
         var sshconfig = LoadConfigFile("sshtestappsettings.json");
         localenv = new LocalEnvironment();
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
-        toolkit = new MemoryAnalysisToolkit(sshenv, sshconfig);    
+        toolkit = new MemoryAnalysisToolkit(sshenv, sshconfig);
     }
 
-    [Fact]
-    public void CanRunWindowsPsList()
-    {
-        var r = toolkit.WindowsPsList("/mnt/artifacts/pat-2009-11-19.mddramimage");
-        Assert.NotNull(r);
-    }
+    const string Image = "/mnt/artifacts/pat-2009-11-19.mddramimage";
 
     [Fact]
-    public void CanRunWindowsPsTree()
+    public async Task CanRunWindowsPsList()
     {
-        var r = toolkit.WindowsPsTree("/mnt/artifacts/pat-2009-11-19.mddramimage");
-        Assert.NotNull(r);
-    }
-    [Fact]
-    public void CanRunWindowsSvcScan()
-    {
-        var r = toolkit.WindowsSvcScan("/mnt/artifacts/pat-2009-11-19.mddramimage");
-        Assert.NotNull(r);
-    }
-    [Fact]
-    public void CanRunWindowsCmdLine()
-    {
-        var r = toolkit.WindowsCmdLine("/mnt/artifacts/pat-2009-11-19.mddramimage");
+        var r = await toolkit.WindowsPsListAsync(Image);
         Assert.NotNull(r);
     }
 
     [Fact]
-    public void CanRunWindowsEnvVars()
+    public async Task CanRunWindowsPsTree()
     {
-        var r = toolkit.WindowsEnvVars("/mnt/artifacts/pat-2009-11-19.mddramimage");
+        var r = await toolkit.WindowsPsTreeAsync(Image);
         Assert.NotNull(r);
     }
 
     [Fact]
-    public void CanRunWindowsGetSids()
+    public async Task CanRunWindowsSvcScan()
     {
-        var r = toolkit.WindowsGetSids("/mnt/artifacts/pat-2009-11-19.mddramimage");
+        var r = await toolkit.WindowsSvcScanAsync(Image);
         Assert.NotNull(r);
     }
 
     [Fact]
-    public void CanRunWindowsPrivs()
+    public async Task CanRunWindowsCmdLine()
     {
-        var r = toolkit.WindowsPrivs("/mnt/artifacts/pat-2009-11-19.mddramimage");
+        var r = await toolkit.WindowsCmdLineAsync(Image);
         Assert.NotNull(r);
     }
 
     [Fact]
-    public void CanRunWindowsHandles()
+    public async Task CanRunWindowsEnvVars()
     {
-        var r = toolkit.WindowsHandles("/mnt/artifacts/pat-2009-11-19.mddramimage");
+        var r = await toolkit.WindowsEnvVarsAsync(Image);
         Assert.NotNull(r);
     }
 
     [Fact]
-    public void CanRunWindowsHandlesFiltered()
+    public async Task CanRunWindowsGetSids()
     {
-        var r = toolkit.WindowsHandles("/mnt/artifacts/pat-2009-11-19.mddramimage", 988, "Key");
+        var r = await toolkit.WindowsGetSidsAsync(Image);
+        Assert.NotNull(r);
+    }
+
+    [Fact]
+    public async Task CanRunWindowsPrivs()
+    {
+        var r = await toolkit.WindowsPrivsAsync(Image);
+        Assert.NotNull(r);
+    }
+
+    [Fact]
+    public async Task CanRunWindowsHandles()
+    {
+        var r = await toolkit.WindowsHandlesAsync(Image);
+        Assert.NotNull(r);
+    }
+
+    [Fact]
+    public async Task CanRunWindowsHandlesFiltered()
+    {
+        var r = await toolkit.WindowsHandlesAsync(Image, 988, "Key");
         Assert.NotNull(r);
         Assert.All(r, h => Assert.Equal(988, h.PID));
         Assert.All(r, h => Assert.Equal("Key", h.Type));
     }
+
     [Fact]
-    public void CanRunWindowsMalFind()
+    public async Task CanRunWindowsMalFind()
     {
-        var r = toolkit.WindowsMalFind("/mnt/artifacts/pat-2009-11-19.mddramimage");
-        Assert.NotNull(r);
-    }
-    [Fact]
-    public void CanRunWindowsDllList()
-    {
-        var r = toolkit.WindowsDllList("/mnt/artifacts/pat-2009-11-19.mddramimage");
+        var r = await toolkit.WindowsMalFindAsync(Image);
         Assert.NotNull(r);
     }
 
     [Fact]
-    public void CanRunWindowsGetServiceSids()
+    public async Task CanRunWindowsDllList()
     {
-        var r = toolkit.WindowsGetServiceSids("/mnt/artifacts/pat-2009-11-19.mddramimage");
+        var r = await toolkit.WindowsDllListAsync(Image);
         Assert.NotNull(r);
     }
 
     [Fact]
-    public void CanRunWindowsModules()
+    public async Task CanRunWindowsGetServiceSids()
     {
-        var r = toolkit.WindowsModules("/mnt/artifacts/pat-2009-11-19.mddramimage");
+        var r = await toolkit.WindowsGetServiceSidsAsync(Image);
         Assert.NotNull(r);
     }
 
     [Fact]
-    public void CanRunWindowsModScan()
+    public async Task CanRunWindowsModules()
     {
-        var r = toolkit.WindowsModScan("/mnt/artifacts/pat-2009-11-19.mddramimage");
+        var r = await toolkit.WindowsModulesAsync(Image);
         Assert.NotNull(r);
     }
 
     [Fact]
-    public void CanRunWindowsFileScan()
+    public async Task CanRunWindowsModScan()
     {
-        var r = toolkit.WindowsFileScan("/mnt/artifacts/pat-2009-11-19.mddramimage");
+        var r = await toolkit.WindowsModScanAsync(Image);
         Assert.NotNull(r);
     }
 
     [Fact]
-    public void CanRunWindowsVadInfo()
+    public async Task CanRunWindowsFileScan()
     {
-        var r = toolkit.WindowsVadInfo("/mnt/artifacts/pat-2009-11-19.mddramimage", 988);
+        var r = await toolkit.WindowsFileScanAsync(Image);
         Assert.NotNull(r);
     }
 
     [Fact]
-    public void CanRunWindowsRegistryHiveList()
+    public async Task CanRunWindowsVadInfo()
     {
-        var r = toolkit.WindowsRegistryHiveList("/mnt/artifacts/pat-2009-11-19.mddramimage");
+        var r = await toolkit.WindowsVadInfoAsync(Image, 988);
         Assert.NotNull(r);
     }
 
     [Fact]
-    public void CanRunWindowsRegistryPrintKey()
+    public async Task CanRunWindowsRegistryHiveList()
     {
-        var r = toolkit.WindowsRegistryPrintKey("/mnt/artifacts/pat-2009-11-19.mddramimage", @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run");
+        var r = await toolkit.WindowsRegistryHiveListAsync(Image);
         Assert.NotNull(r);
     }
 
     [Fact]
-    public void CanRunWindowsRegistryUserAssist()
+    public async Task CanRunWindowsRegistryPrintKey()
     {
-        var r = toolkit.WindowsRegistryUserAssist("/mnt/artifacts/pat-2009-11-19.mddramimage");
+        var r = await toolkit.WindowsRegistryPrintKeyAsync(Image, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run");
+        Assert.NotNull(r);
+    }
+
+    [Fact]
+    public async Task CanRunWindowsRegistryUserAssist()
+    {
+        var r = await toolkit.WindowsRegistryUserAssistAsync(Image);
         Assert.NotNull(r);
     }
 
     // windows.netstat / windows.netscan do not support the Windows XP (5.1) test image
     // (Volatility3 raises NotImplementedError), so verify against the Windows 10 image.
     [Fact]
-    public void CanRunWindowsNetStat()
+    public async Task CanRunWindowsNetStat()
     {
-        var r = toolkit.WindowsNetStat("/mnt/artifacts/Rocba-Memory.raw");
+        var r = await toolkit.WindowsNetStatAsync("/mnt/artifacts/Rocba-Memory.raw");
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.All(r, c => Assert.NotEmpty(c.Proto));
     }
 
     [Fact]
-    public void CanRunWindowsNetScan()
+    public async Task CanRunWindowsNetScan()
     {
-        var r = toolkit.WindowsNetScan("/mnt/artifacts/Rocba-Memory.raw");
+        var r = await toolkit.WindowsNetScanAsync("/mnt/artifacts/Rocba-Memory.raw");
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.All(r, c => Assert.NotEmpty(c.Proto));
     }
+
     LocalEnvironment localenv;
     AuditEnvironment sshenv;
     MemoryAnalysisToolkit toolkit;

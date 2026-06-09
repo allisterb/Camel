@@ -32,6 +32,9 @@ public class CamelMCPTools
         this.registry = registry;
         jsoptions = new Options();
         jsoptions.Host.StringCompilationAllowed = false;
+        // Lets generated JS `await` async toolkit methods (CLR Task<T> -> awaitable JS promise). Required so
+        // tool calls run on the async path, where per-session cancellation (CancelExecutions) takes effect.
+        jsoptions.ExperimentalFeatures = ExperimentalFeature.TaskInterop;
     }
 
     [McpServerTool(Name = "ExecuteJavaScript"), Description("Execute JavaScript code against the Camel API.")]
@@ -52,17 +55,23 @@ public class CamelMCPTools
           .SetValue("memoryAnalysis", session.Api.MemoryAnalysis);
         try
         {
-            await jsinterp.ExecuteAsync(script);
+            // Wrap in an async IIFE so scripts can `await` async toolkit methods: top-level await isn't allowed
+            // in a plain Jint script, and modules can't drive a CLR-task top-level await synchronously. The
+            // surrounding newlines guard against a trailing line comment swallowing the closer. ExecuteAsync
+            // drains the awaited CLR tasks before returning; purely synchronous scripts run unchanged.
+            await jsinterp.ExecuteAsync($"(async () => {{\n{script}\n}})();");
         }
         catch (Exception ex)
         {
-            // Jint surfaces script errors as JavaScriptException, sometimes wrapped
-            // (e.g. when thrown from an async/awaited call). Prefer that message.
+            // Errors surface as JavaScriptException (synchronous throw) or, via the async IIFE, as
+            // PromiseRejectedException; both carry the script-level error text in their message.
             var jsex = ex as Jint.Runtime.JavaScriptException
                        ?? ex.InnerException as Jint.Runtime.JavaScriptException;
             var message = jsex is not null
                 ? $"JavaScript error: {jsex.Message}"
-                : $"Error executing script: {ex.Message}";
+                : ex is Jint.Runtime.PromiseRejectedException
+                    ? $"JavaScript error: {ex.Message}"
+                    : $"Error executing script: {ex.Message}";
 
             // Include anything written via log()/error() before the failure for context.
             if (output.Length > 0)

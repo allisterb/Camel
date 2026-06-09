@@ -2,6 +2,7 @@ namespace Camel.Tests.Server;
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -73,23 +74,37 @@ public class McpServerSshIntegrationTests : TestsRuntime, IAsyncLifetime
         string.Concat(r.Content.OfType<TextContentBlock>().Select(c => c.Text));
 
     [Fact]
-    public async Task RunsVolatilityThroughServerOverSsh()
+    public async Task AwaitsAsyncToolThroughServerOverSsh()
     {
         // xunit 2.9.2 has no dynamic Assert.Skip; soft-skip (no-op pass) when the workstation is unavailable
         // so the suite stays green in CI without a SIFT box, mirroring how the toolkit tests depend on it.
-        if (!connected)
-        {
-            Warn("SIFT workstation not reachable; skipping SSH integration test.");
-            return;
-        }
+        if (!connected) { Warn("SIFT workstation not reachable; skipping SSH integration test."); return; }
         await using var client = await NewClientAsync();
 
-        // windows.info is fast and returns one row per metadata field — enough to prove the tool ran over SSH.
-        var script = $"var info = memoryAnalysis.WindowsInfo('{MemoryImage}'); log('rows=' + info.length);";
+        // Proof the async tool surface works end-to-end: JS awaits a CLR Task that runs vol over SSH.
+        var script = $"var info = await memoryAnalysis.WindowsInfoAsync('{MemoryImage}'); log('rows=' + info.length);";
         var r = await client.CallToolAsync("ExecuteJavaScript",
             new Dictionary<string, object?> { ["script"] = script });
 
         Assert.NotEqual(true, r.IsError);
-        Assert.Matches(@"rows=[1-9]\d*", Text(r));   // non-zero number of rows -> volatility actually parsed the image
+        Assert.Matches(@"rows=[1-9]\d*", Text(r));
+    }
+
+    [Fact]
+    public async Task CancelExecutionsAbortsInFlightCommand()
+    {
+        if (!connected) { Warn("SIFT workstation not reachable; skipping SSH integration test."); return; }
+
+        // The payoff of the async work: CancelExecutions() must abort an in-flight async command (the sync
+        // path never observes the token). Use a long remote sleep so the cancel lands mid-flight.
+        using var env = (SshAuditEnvironment)AuditEnvironment.CreateFromConfig(LoadConfigFile("sshtestappsettings.json"));
+        var sw = Stopwatch.StartNew();
+        var task = env.ExecuteCommandAsync("sleep", "30", false);
+        await Task.Delay(500);              // let the command get in-flight
+        env.CancelExecutions();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await task);
+        sw.Stop();
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(15), $"cancellation should be prompt but took {sw.Elapsed}.");
     }
 }

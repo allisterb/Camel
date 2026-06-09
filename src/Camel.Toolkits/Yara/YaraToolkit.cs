@@ -24,8 +24,8 @@ public class YaraToolkit : Toolkit
     /// (recursion, tags/meta/strings output, timeout, threads, compiled rules, etc.). Returns one
     /// <see cref="YaraMatch"/> per rule/file hit.
     /// </summary>
-    public YaraMatch[]? Scan(string rules, string scanPath, YaraOptions? options = null) =>
-        ExecuteToolText("Scan", (options?.ToArgs() ?? "") + Q(rules) + " " + Q(scanPath))
+    public async Task<YaraMatch[]?> ScanAsync(string rules, string scanPath, YaraOptions? options = null) =>
+        await ExecuteToolTextAsync("Scan", (options?.ToArgs() ?? "") + Q(rules) + " " + Q(scanPath))
             is { } o ? YaraMatch.ParseAll(o) : null;
 
     /// <summary>
@@ -33,8 +33,8 @@ public class YaraToolkit : Toolkit
     /// <paramref name="output"/> on the workstation (for faster reuse with <c>Scan(..., compiled: true)</c>).
     /// Returns true on success.
     /// </summary>
-    public bool Compile(string rules, string output) =>
-        ExecuteToolText("Compile", Q(rules) + " " + Q(output)) is not null;
+    public async Task<bool> CompileAsync(string rules, string output) =>
+        await ExecuteToolTextAsync("Compile", Q(rules) + " " + Q(output)) is not null;
 
     public override string[] ToolList { get; } = ["Scan", "Compile"];
 

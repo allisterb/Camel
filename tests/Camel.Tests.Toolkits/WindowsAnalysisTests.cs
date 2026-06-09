@@ -27,23 +27,23 @@ public class WindowsAnalysisTests : TestsRuntime
     }
 
     [Fact]
-    public void CanRunMFTECmd()
+    public async Task CanRunMFTECmd()
     {
         // The modern $MFT is ~560MB; parsing all of it would round-trip a ~560MB JSON. Parse a bounded
         // extract of the mount's real $MFT (single quotes keep $MFT literal; redirect runs in the shell).
         const string mft = "/tmp/camel_mft_head";
         sshenv.ExecuteCommand("head", $"-c 16000000 '{Modern}/$MFT' > {mft}", out _, false);
 
-        var r = toolkit.MFTECmd(mft);
+        var r = await toolkit.MFTECmdAsync(mft);
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => e.FileName == "$MFT"); // entry 0 is always $MFT
     }
 
     [Fact]
-    public void CanRunLECmd()
+    public async Task CanRunLECmd()
     {
-        var r = toolkit.LECmd($"{Modern}/Users/fredr/AppData/Roaming/Microsoft/Windows/Recent/10l_brianlaiphotography-northcotepoint.lnk");
+        var r = await toolkit.LECmdAsync($"{Modern}/Users/fredr/AppData/Roaming/Microsoft/Windows/Recent/10l_brianlaiphotography-northcotepoint.lnk");
         Assert.NotNull(r);
         var lnk = Assert.Single(r);
         Assert.NotEmpty(lnk.SourceFile);
@@ -51,52 +51,52 @@ public class WindowsAnalysisTests : TestsRuntime
     }
 
     [Fact]
-    public void CanRunSBECmd()
+    public async Task CanRunSBECmd()
     {
         // This image records no parseable shellbags, so just verify the call path returns a (possibly empty) set.
-        var r = toolkit.SBECmd($"{Modern}/Users/fredr");
+        var r = await toolkit.SBECmdAsync($"{Modern}/Users/fredr");
         Assert.NotNull(r);
     }
 
     [Fact]
-    public void CanRunAppCompatCacheParser()
+    public async Task CanRunAppCompatCacheParser()
     {
-        var r = toolkit.AppCompatCacheParser($"{Modern}/Windows/System32/config/SYSTEM");
+        var r = await toolkit.AppCompatCacheParserAsync($"{Modern}/Windows/System32/config/SYSTEM");
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => e.Path.Contains(".exe"));
     }
 
     [Fact]
-    public void CanRunRBCmd()
+    public async Task CanRunRBCmd()
     {
-        var r = toolkit.RBCmd($"{Modern}/$Recycle.Bin/S-1-5-21-528816539-567677750-276746561-1002/$I0JIS5M.lnk");
+        var r = await toolkit.RBCmdAsync($"{Modern}/$Recycle.Bin/S-1-5-21-528816539-567677750-276746561-1002/$I0JIS5M.lnk");
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => !string.IsNullOrEmpty(e.FileName));
     }
 
     [Fact]
-    public void CanRunBstrings()
+    public async Task CanRunBstrings()
     {
-        var r = toolkit.Bstrings($"{Modern}/Users/fredr/AppData/Roaming/Microsoft/Windows/Recent/10l_brianlaiphotography-northcotepoint.lnk", minLength: 5);
+        var r = await toolkit.BstringsAsync($"{Modern}/Users/fredr/AppData/Roaming/Microsoft/Windows/Recent/10l_brianlaiphotography-northcotepoint.lnk", minLength: 5);
         Assert.NotNull(r);
         Assert.Contains(r, s => s.Contains(".jpg"));
     }
 
     [Fact]
-    public void CanRunAmcacheParser()
+    public async Task CanRunAmcacheParser()
     {
-        var r = toolkit.AmcacheParser($"{Modern}/Windows/appcompat/Programs/Amcache.hve");
+        var r = await toolkit.AmcacheParserAsync($"{Modern}/Windows/appcompat/Programs/Amcache.hve");
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => !string.IsNullOrEmpty(e.SHA1) && !string.IsNullOrEmpty(e.FullPath));
     }
 
     [Fact]
-    public void CanRunEvtxECmd()
+    public async Task CanRunEvtxECmd()
     {
-        var r = toolkit.EvtxECmd($"{Modern}/Windows/System32/winevt/Logs/Setup.evtx");
+        var r = await toolkit.EvtxECmdAsync($"{Modern}/Windows/System32/winevt/Logs/Setup.evtx");
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.All(r, e => Assert.Equal("Setup", e.Channel));
@@ -104,34 +104,34 @@ public class WindowsAnalysisTests : TestsRuntime
     }
 
     [Fact]
-    public void CanRunJLECmd()
+    public async Task CanRunJLECmd()
     {
-        var r = toolkit.JLECmd($"{Modern}/Users/fredr/AppData/Roaming/Microsoft/Windows/Recent/AutomaticDestinations");
+        var r = await toolkit.JLECmdAsync($"{Modern}/Users/fredr/AppData/Roaming/Microsoft/Windows/Recent/AutomaticDestinations");
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => !string.IsNullOrEmpty(e.Path));
     }
 
     [Fact]
-    public void CanRunWxTCmd()
+    public async Task CanRunWxTCmd()
     {
         // This image's ActivitiesCache.db files contain no activities; verify the call path returns non-null.
-        var r = toolkit.WxTCmd($"{Modern}/Users/fredr/AppData/Local/ConnectedDevicesPlatform/e431499dada298ba/ActivitiesCache.db");
+        var r = await toolkit.WxTCmdAsync($"{Modern}/Users/fredr/AppData/Local/ConnectedDevicesPlatform/e431499dada298ba/ActivitiesCache.db");
         Assert.NotNull(r);
     }
 
     [Fact]
-    public void CanRunRECmd()
+    public async Task CanRunRECmd()
     {
         // Batch-parse the mount's registry hives with the bundled DFIR batch file (--bn).
-        var r = toolkit.RECmd($"{Modern}/Windows/System32/config", DfirBatch);
+        var r = await toolkit.RECmdAsync($"{Modern}/Windows/System32/config", DfirBatch);
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => !string.IsNullOrEmpty(e.KeyPath) && !string.IsNullOrEmpty(e.HivePath));
     }
 
     [Fact]
-    public void CanRunSQLECmd()
+    public async Task CanRunSQLECmd()
     {
         // SQLECmd's --json aggregate is empty for these Chrome DBs (maps emit per-artifact files), and a full
         // profile scan is slow (~50s). Run against a single small DB copied out of the mount to keep it fast.
@@ -140,7 +140,7 @@ public class WindowsAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("mkdir", $"-p {dir}", out _, false);
         sshenv.ExecuteCommand("cp", $"'{Modern}/Users/fredr/AppData/Local/Google/Chrome/User Data/Default/History' {dir}/", out _, false);
 
-        var r = toolkit.SQLECmd(dir);
+        var r = await toolkit.SQLECmdAsync(dir);
         Assert.NotNull(r);
     }
 

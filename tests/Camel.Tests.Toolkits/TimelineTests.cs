@@ -15,8 +15,9 @@ public class TimelineTests : TestsRuntime
         toolkit = new TimelineToolkit(sshenv, sshconfig);
 
         // Build a small shared .plaso once (winreg over the SYSTEM hive) for the pinfo/psort tests.
+        // Sync-over-async is fine here: test host has no SynchronizationContext, and this is one-time setup.
         if (!sshenv.ExecuteCommand("test", $"-f {Plaso}", out _, false))
-            toolkit.Log2Timeline(SystemHive, Plaso, parsers: "winreg");
+            toolkit.Log2TimelineAsync(SystemHive, Plaso, parsers: "winreg").GetAwaiter().GetResult();
     }
 
     [Fact]
@@ -32,33 +33,33 @@ public class TimelineTests : TestsRuntime
     }
 
     [Fact]
-    public void CanRunLog2Timeline()
+    public async Task CanRunLog2Timeline()
     {
         const string plaso = "/tmp/camel_l2t.plaso";
         sshenv.ExecuteCommand("rm", $"-f {plaso}", out _, false);
 
-        Assert.True(toolkit.Log2Timeline(SystemHive, plaso, parsers: "winreg"));
+        Assert.True(await toolkit.Log2TimelineAsync(SystemHive, plaso, parsers: "winreg"));
         Assert.True(sshenv.ExecuteCommand("test", $"-s {plaso}", out _, false)); // file exists & non-empty
     }
 
     [Fact]
-    public void Log2TimelineHashPopulatesMd5OnEvents()
+    public async Task Log2TimelineHashPopulatesMd5OnEvents()
     {
         const string plaso = "/tmp/camel_l2t_hash.plaso";
         sshenv.ExecuteCommand("rm", $"-f {plaso}", out _, false);
 
         // --hashers md5,sha256 hashes the processed source files; md5_hash then appears on events.
-        Assert.True(toolkit.Log2Timeline(SystemHive, plaso, parsers: "winreg", hash: true));
+        Assert.True(await toolkit.Log2TimelineAsync(SystemHive, plaso, parsers: "winreg", hash: true));
 
-        var r = toolkit.Psort(plaso);
+        var r = await toolkit.PsortAsync(plaso);
         Assert.NotNull(r);
         Assert.Contains(r, e => !string.IsNullOrEmpty(e.Md5Hash));
     }
 
     [Fact]
-    public void CanRunPinfo()
+    public async Task CanRunPinfo()
     {
-        var r = toolkit.Pinfo(Plaso);
+        var r = await toolkit.PinfoAsync(Plaso);
         Assert.NotNull(r);
         Assert.True(r.TotalEvents > 0);
         Assert.NotEmpty(r.ParserCounts);
@@ -66,48 +67,48 @@ public class TimelineTests : TestsRuntime
     }
 
     [Fact]
-    public void CanRunPsort()
+    public async Task CanRunPsort()
     {
-        var r = toolkit.Psort(Plaso);
+        var r = await toolkit.PsortAsync(Plaso);
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => (e.Parser ?? "").StartsWith("winreg"));
     }
 
     [Fact]
-    public void CanRunPsortWithFilter()
+    public async Task CanRunPsortWithFilter()
     {
         // Narrow to just the AppCompatCache (shimcache) registry events; proves the filter is applied.
-        var r = toolkit.Psort(Plaso, "data_type contains 'appcompatcache'");
+        var r = await toolkit.PsortAsync(Plaso, "data_type contains 'appcompatcache'");
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.All(r, e => Assert.Contains("appcompatcache", e.DataType ?? ""));
     }
 
     [Fact]
-    public void CanRunPsteal()
+    public async Task CanRunPsteal()
     {
-        var r = toolkit.Psteal(SystemHive, parsers: "winreg");
+        var r = await toolkit.PstealAsync(SystemHive, parsers: "winreg");
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => (e.Parser ?? "").StartsWith("winreg"));
     }
 
     [Fact]
-    public void CanRunImageExport()
+    public async Task CanRunImageExport()
     {
         const string outDir = "/tmp/camel_ie";
         sshenv.ExecuteCommand("rm", $"-rf {outDir}", out _, false);
 
-        Assert.True(toolkit.ImageExport(E01, outDir, names: "boot.ini"));
+        Assert.True(await toolkit.ImageExportAsync(E01, outDir, names: "boot.ini"));
         Assert.True(sshenv.ExecuteCommand("test", $"-f {outDir}/boot.ini", out _, false));
     }
 
     [Fact]
-    public void CanRunHayabusaJsonTimeline()
+    public async Task CanRunHayabusaJsonTimeline()
     {
         // System.evtx yields a small set of medium+ Sigma detections on this image (fast, bounded).
-        var r = toolkit.HayabusaJsonTimeline($"{EvtxLogs}/System.evtx", minLevel: "medium");
+        var r = await toolkit.HayabusaJsonTimelineAsync($"{EvtxLogs}/System.evtx", minLevel: "medium");
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.All(r, a => Assert.False(string.IsNullOrEmpty(a.RuleTitle)));
@@ -115,27 +116,27 @@ public class TimelineTests : TestsRuntime
     }
 
     [Fact]
-    public void CanRunHayabusaComputerMetrics()
+    public async Task CanRunHayabusaComputerMetrics()
     {
-        var r = toolkit.HayabusaComputerMetrics($"{EvtxLogs}/System.evtx");
+        var r = await toolkit.HayabusaComputerMetricsAsync($"{EvtxLogs}/System.evtx");
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, c => c.Computer == "SRL-FORGE" && c.Events > 0);
     }
 
     [Fact]
-    public void CanRunHayabusaEidMetrics()
+    public async Task CanRunHayabusaEidMetrics()
     {
-        var r = toolkit.HayabusaEidMetrics($"{EvtxLogs}/System.evtx");
+        var r = await toolkit.HayabusaEidMetricsAsync($"{EvtxLogs}/System.evtx");
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => e.EventId > 0 && e.Total > 0);
     }
 
     [Fact]
-    public void CanRunHayabusaLogMetrics()
+    public async Task CanRunHayabusaLogMetrics()
     {
-        var r = toolkit.HayabusaLogMetrics($"{EvtxLogs}/System.evtx");
+        var r = await toolkit.HayabusaLogMetricsAsync($"{EvtxLogs}/System.evtx");
         Assert.NotNull(r);
         var m = Assert.Single(r);
         Assert.Equal("System.evtx", m.Filename);
@@ -143,9 +144,9 @@ public class TimelineTests : TestsRuntime
     }
 
     [Fact]
-    public void CanRunHayabusaLogonSummary()
+    public async Task CanRunHayabusaLogonSummary()
     {
-        var r = toolkit.HayabusaLogonSummary($"{EvtxLogs}/Security.evtx");
+        var r = await toolkit.HayabusaLogonSummaryAsync($"{EvtxLogs}/Security.evtx");
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => !e.Successful && e.Count > 0); // brute-force failures present

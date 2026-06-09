@@ -31,8 +31,8 @@ public class TimelineToolkit : Toolkit
     /// stored on the resulting events (NB: this hashes the parsed input files, not the .plaso output).
     /// Returns true on success.
     /// </summary>
-    public bool Log2Timeline(string source, string storageFile, string? parsers = null, bool hash = false, string timezone = "UTC") =>
-        ExecuteToolText("Log2Timeline",
+    public async Task<bool> Log2TimelineAsync(string source, string storageFile, string? parsers = null, bool hash = false, string timezone = "UTC") =>
+        await ExecuteToolTextAsync("Log2Timeline",
             $"-q --status-view none --storage-file {Q(storageFile)}" +
             (parsers is not null ? $" --parsers {parsers}" : "") +
             (hash ? " --hashers md5,sha256" : "") +
@@ -43,20 +43,20 @@ public class TimelineToolkit : Toolkit
     /// An optional Plaso <paramref name="filter"/> expression narrows the output
     /// (e.g. "date &gt; '2004-01-01 00:00:00' AND message contains 'cmd.exe'").
     /// </summary>
-    public TimelineEvent[]? Psort(string storageFile, string? filter = null) =>
-        ExecuteToolJsonLinesFile<TimelineEvent>("Psort",
+    public Task<TimelineEvent[]?> PsortAsync(string storageFile, string? filter = null) =>
+        ExecuteToolJsonLinesFileAsync<TimelineEvent>("Psort",
             f => $"-o json_line -w {Q(f)} {Q(storageFile)}" + (filter is not null ? $" {Qd(filter)}" : ""));
 
     /// <summary>Inspects a .plaso storage file and returns parser hit statistics and the total event count.</summary>
-    public PlasoInfo? Pinfo(string storageFile) =>
-        ExecuteToolText("Pinfo", $"--output-format json {Q(storageFile)}") is { } o ? PlasoInfo.Parse(o) : null;
+    public async Task<PlasoInfo?> PinfoAsync(string storageFile) =>
+        await ExecuteToolTextAsync("Pinfo", $"--output-format json {Q(storageFile)}") is { } o ? PlasoInfo.Parse(o) : null;
 
     /// <summary>
     /// One-step ingest and export: parses <paramref name="source"/> and returns the timeline events without
     /// a persistent .plaso file. Optionally restrict to a <paramref name="parsers"/> preset/list.
     /// </summary>
-    public TimelineEvent[]? Psteal(string source, string? parsers = null, string timezone = "UTC") =>
-        ExecuteToolJsonLinesFile<TimelineEvent>("Psteal",
+    public Task<TimelineEvent[]?> PstealAsync(string source, string? parsers = null, string timezone = "UTC") =>
+        ExecuteToolJsonLinesFileAsync<TimelineEvent>("Psteal",
             f => $"--source {Q(source)} -o json_line -w {Q(f)} --status-view none --timezone {timezone}" +
                  (parsers is not null ? $" --parsers {parsers}" : ""));
 
@@ -65,8 +65,8 @@ public class TimelineToolkit : Toolkit
     /// Filter by <paramref name="names"/> (glob patterns, comma-separated) and/or <paramref name="extensions"/>
     /// (comma-separated, no dots). Returns true on success.
     /// </summary>
-    public bool ImageExport(string source, string outputDir, string? names = null, string? extensions = null) =>
-        ExecuteToolText("ImageExport",
+    public async Task<bool> ImageExportAsync(string source, string outputDir, string? names = null, string? extensions = null) =>
+        await ExecuteToolTextAsync("ImageExport",
             $"-q --write {Q(outputDir)}" +
             (names is not null ? $" --name {Qd(names)}" : "") +
             (extensions is not null ? $" --extension {Qd(extensions)}" : "") +
@@ -78,41 +78,42 @@ public class TimelineToolkit : Toolkit
     /// is true. <paramref name="minLevel"/> filters by minimum severity (informational, low, medium, high,
     /// critical). Output is always UTC.
     /// </summary>
-    public HayabusaAlert[]? HayabusaJsonTimeline(string evtxPath, bool directory = false, string? minLevel = null) =>
-        ExecuteToolJsonLinesFile<HayabusaAlert>("Hayabusa",
+    public Task<HayabusaAlert[]?> HayabusaJsonTimelineAsync(string evtxPath, bool directory = false, string? minLevel = null) =>
+        ExecuteToolJsonLinesFileAsync<HayabusaAlert>("Hayabusa",
             f => $"json-timeline {(directory ? "-d" : "-f")} {Q(evtxPath)} -L -o {Q(f)} -w -q -Q -U" +
                  (minLevel is not null ? $" -m {minLevel}" : ""));
 
     /// <summary>hayabusa computer-metrics: total events per computer name.</summary>
-    public ComputerMetric[]? HayabusaComputerMetrics(string evtxPath, bool directory = false) =>
-        ExecuteToolCsvFile<ComputerMetric>("Hayabusa",
+    public Task<ComputerMetric[]?> HayabusaComputerMetricsAsync(string evtxPath, bool directory = false) =>
+        ExecuteToolCsvFileAsync<ComputerMetric>("Hayabusa",
             f => $"computer-metrics {Src(evtxPath, directory)} -o {Q(f)} -q -Q", ComputerMetric.FromRow);
 
     /// <summary>hayabusa eid-metrics: event-ID frequency across the logs.</summary>
-    public EidMetric[]? HayabusaEidMetrics(string evtxPath, bool directory = false) =>
-        ExecuteToolCsvFile<EidMetric>("Hayabusa",
+    public Task<EidMetric[]?> HayabusaEidMetricsAsync(string evtxPath, bool directory = false) =>
+        ExecuteToolCsvFileAsync<EidMetric>("Hayabusa",
             f => $"eid-metrics {Src(evtxPath, directory)} -o {Q(f)} -q -Q -U", EidMetric.FromRow);
 
     /// <summary>hayabusa log-metrics: per-evtx-file metadata (events, timestamps, channels, providers).</summary>
-    public LogMetric[]? HayabusaLogMetrics(string evtxPath, bool directory = false) =>
-        ExecuteToolCsvFile<LogMetric>("Hayabusa",
+    public Task<LogMetric[]?> HayabusaLogMetricsAsync(string evtxPath, bool directory = false) =>
+        ExecuteToolCsvFileAsync<LogMetric>("Hayabusa",
             f => $"log-metrics {Src(evtxPath, directory)} -o {Q(f)} -q -Q -U", LogMetric.FromRow);
 
     /// <summary>
     /// hayabusa logon-summary: successful and failed logon records. (hayabusa writes two CSV files from
     /// an output prefix; both are read and combined, each row flagged via <see cref="LogonSummaryEntry.Successful"/>.)
     /// </summary>
-    public LogonSummaryEntry[]? HayabusaLogonSummary(string evtxPath, bool directory = false)
+    public async Task<LogonSummaryEntry[]?> HayabusaLogonSummaryAsync(string evtxPath, bool directory = false)
     {
         string prefix = "/tmp/camel_ls_" + Guid.NewGuid().ToString("N");
         try
         {
-            if (ExecuteToolText("Hayabusa", $"logon-summary {Src(evtxPath, directory)} -o {Q(prefix)} -q -Q -U") is null) return null;
+            if (await ExecuteToolTextAsync("Hayabusa", $"logon-summary {Src(evtxPath, directory)} -o {Q(prefix)} -q -Q -U") is null) return null;
             var list = new List<LogonSummaryEntry>();
-            if (ReadCsvFile($"{prefix}-successful.csv", r => LogonSummaryEntry.FromRow(r, true)) is { } s) list.AddRange(s);
-            if (ReadCsvFile($"{prefix}-failed.csv", r => LogonSummaryEntry.FromRow(r, false)) is { } f) list.AddRange(f);
+            if (await ReadCsvFileAsync($"{prefix}-successful.csv", r => LogonSummaryEntry.FromRow(r, true)) is { } s) list.AddRange(s);
+            if (await ReadCsvFileAsync($"{prefix}-failed.csv", r => LogonSummaryEntry.FromRow(r, false)) is { } f) list.AddRange(f);
             return list.ToArray();
         }
+        // Sync cleanup so it runs even if the operation was cancelled.
         finally { auditEnvironment.ExecuteCommand("rm", $"-f {prefix}-successful.csv {prefix}-failed.csv", out _, false); }
     }
 

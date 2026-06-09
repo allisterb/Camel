@@ -83,6 +83,34 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
     }
 
     [Fact]
+    public async Task AwaitedAsyncToolResolvesViaTaskInterop()
+    {
+        await using var client = await NewClientAsync();
+
+        // WindowsInfoAsync returns a CLR Task<WindowsInfo[]?>. With ExperimentalFeature.TaskInterop the JS
+        // `await` must resolve it to the value (null here, since vol can't run on the Local test host) rather
+        // than hand back an un-awaitable Task object. isNull=true proves the Task->promise interop works.
+        var r = await client.CallToolAsync("ExecuteJavaScript",
+            Script("var info = await memoryAnalysis.WindowsInfoAsync('/no/such/image'); log('isNull=' + (info === null));"));
+
+        Assert.NotEqual(true, r.IsError);
+        Assert.Contains("isNull=true", Text(r));
+    }
+
+    [Fact]
+    public async Task AwaitedRejectionIsReportedAsError()
+    {
+        await using var client = await NewClientAsync();
+
+        // A rejected promise awaited in the script must surface as a catchable error through ExecuteAsync.
+        var r = await client.CallToolAsync("ExecuteJavaScript",
+            Script("await Promise.reject(new Error('async boom'));"));
+
+        Assert.Equal(true, r.IsError);
+        Assert.Contains("async boom", Text(r));
+    }
+
+    [Fact]
     public async Task EachSessionGetsItsOwnEnvironment()
     {
         var registry = app.Services.GetRequiredService<SessionRegistry>();
