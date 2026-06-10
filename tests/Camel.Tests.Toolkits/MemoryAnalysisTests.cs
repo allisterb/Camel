@@ -243,6 +243,29 @@ public class MemoryAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, true);
     }
 
+    [Fact]
+    public async Task CanExtractStrings()
+    {
+        const string dir = "/tmp/camel_strings";
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, true);
+
+        // Dump a process's memory, then extract ASCII and Unicode strings (min 8 chars) from it.
+        var dumps = await toolkit.DumpProcessMemoryAsync(Image, 988, dir);
+        Assert.NotNull(dumps);
+        var dmp = Assert.Single(dumps);
+
+        string ascii = $"{dir}/strings_ascii.txt";
+        string unicode = $"{dir}/strings_unicode.txt";
+        Assert.True(await toolkit.ExtractStringsAsync(dmp, ascii, unicode: false));
+        Assert.True(await toolkit.ExtractStringsAsync(dmp, unicode, unicode: true));
+
+        // Both string files were written with content.
+        Assert.True(sshenv.ExecuteCommand("test", $"-s {ascii}", out _, true));
+        Assert.True(sshenv.ExecuteCommand("test", $"-s {unicode}", out _, true));
+
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, true);
+    }
+
     // windows.netstat / windows.netscan do not support the Windows XP (5.1) test image
     // (Volatility3 raises NotImplementedError), so verify against the Windows 10 image.
     [Fact]

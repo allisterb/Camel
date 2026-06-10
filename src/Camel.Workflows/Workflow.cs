@@ -33,4 +33,6 @@ public class Workflow : Runtime
     protected DiskAnalysisToolkit DiskAnalysis => api.DiskAnalysis;
 
     protected MemoryAnalysisToolkit MemoryAnalysis => api.MemoryAnalysis;
+
+    protected WindowsAnalysisToolkit WindowsAnalysis => api.WindowsAnalysis;
 }

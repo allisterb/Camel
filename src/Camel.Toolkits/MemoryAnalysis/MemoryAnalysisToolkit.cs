@@ -84,6 +84,49 @@ public class MemoryAnalysisToolkit : Toolkit
         DumpAsync($"-o {outputDir} -f {filename} -r json windows.memmap --pid {pid} --dump", outputDir);
 
     /// <summary>
+    /// Extracts printable strings from <paramref name="inputFile"/> on the workstation into
+    /// <paramref name="outputFile"/> via <c>strings</c>, keeping only those at least <paramref name="minLength"/>
+    /// characters long (default 8, to reduce noise). When <paramref name="unicode"/> is true, 16-bit little-
+    /// endian (UTF-16/Unicode) strings are extracted (<c>-el</c>); otherwise 7-bit ASCII. The output directory
+    /// is created if missing. Returns true on success.
+    /// </summary>
+    public async Task<bool> ExtractStringsAsync(string inputFile, string outputFile, bool unicode = false, int minLength = 8)
+    {
+        // Ensure the destination directory exists (created as the login user so strings can write into it).
+        int slash = outputFile.LastIndexOf('/');
+        if (slash > 0)
+            await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p '{outputFile[..slash]}'", false);
+
+        var r = await auditEnvironment.ExecuteCommandAsync("strings",
+            $"-a {(unicode ? "-el " : "")}-n {minLength} '{inputFile}' > '{outputFile}'", false);
+        return r.IsCompleted;
+    }
+
+    /// <summary>
+    /// Generates a mactime <em>bodyfile</em> of every timestamped artifact in <paramref name="image"/>
+    /// (processes, threads, handles, sockets, registry keys, …) via <c>timeliner --create-bodyfile</c>, which
+    /// writes <c>volatility.body</c> into <paramref name="outputDir"/> (the global <c>-o</c> directory;
+    /// <c>-r none</c> suppresses the large, unneeded stdout table). The directory is created if missing. Feed
+    /// the result to <c>mactime</c> to render a timeline. Returns the bodyfile path, or null on failure.
+    /// </summary>
+    public async Task<string?> TimelinerBodyfileAsync(string image, string outputDir)
+    {
+        // Created as the login user so the (sudo'd) plugin can write into it.
+        await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {outputDir}", false);
+
+        if (await ExecuteToolTextAsync("Volatility3", $"-o {outputDir} -f {image} -r none timeliner --create-bodyfile") is null)
+            return null;
+
+        // The plugin runs under sudo, so the bodyfile lands root-owned; hand it back so a non-sudo mactime can read it.
+        if (Tools["Volatility3"].Sudo)
+            await auditEnvironment.ExecuteCommandAsync("chown", $"-R $(id -un):$(id -gn) {outputDir}", true);
+
+        var bodyfile = $"{outputDir.TrimEnd('/')}/volatility.body";
+        var test = await auditEnvironment.ExecuteCommandAsync("test", $"-s '{bodyfile}'", false);
+        return test.IsCompleted ? bodyfile : null;
+    }
+
+    /// <summary>
     /// Runs a Volatility dump plugin (output directory <paramref name="outputDir"/> supplied via the global
     /// <c>-o</c> option in <paramref name="args"/>), creating the directory first, and returns the full paths
     /// of the distinct, non-empty files the plugin reported writing (0-byte dumps — produced when a PE image

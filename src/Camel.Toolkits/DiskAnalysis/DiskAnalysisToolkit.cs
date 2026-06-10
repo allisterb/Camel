@@ -154,6 +154,16 @@ public class DiskAnalysisToolkit : Toolkit
     #region Timeline
     public async Task<MactimeEntry[]?> MactimeAsync(string bodyfile, string timezone = "UTC") =>
         await ExecuteToolTextAsync("Mactime", $"-y -d -z {timezone} -b {Q(bodyfile)}") is { } o ? MactimeEntry.ParseAll(o) : null;
+
+    /// <summary>
+    /// Runs <c>mactime</c> over <paramref name="bodyfile"/> and writes the sorted timeline to
+    /// <paramref name="outputFile"/> on the workstation (timezone <paramref name="timezone"/>, default UTC).
+    /// Unlike <see cref="MactimeAsync"/> the timeline is left as a file rather than parsed — used for large
+    /// timelines (e.g. a memory bodyfile from timeliner) where returning every row is not wanted. Returns
+    /// true on success.
+    /// </summary>
+    public async Task<bool> MactimeToFileAsync(string bodyfile, string outputFile, string timezone = "UTC") =>
+        await ExecuteToolTextAsync("Mactime", $"-z {timezone} -b {Q(bodyfile)} > {Q(outputFile)}") is not null;
     #endregion
 
     // Single-quote a path so spaces in image/file names survive the shell.

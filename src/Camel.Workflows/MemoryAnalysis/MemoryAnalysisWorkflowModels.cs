@@ -73,11 +73,50 @@ public record AnomalousMemoryReport
     public string[] DumpedExecutables { get; init; } = [];
     /// <summary>Paths of dumped process memory images, when a dump directory was requested.</summary>
     public string[] DumpedProcessMemory { get; init; } = [];
+    /// <summary>
+    /// Paths of the per-process ASCII and Unicode strings files extracted from the dumped memory, when both a
+    /// memory dump and a strings directory were requested.
+    /// </summary>
+    public string[] ExtractedStrings { get; init; } = [];
 
     public AnomalousMemoryReport(WindowsMalFind[] mzHeaderRegions, WindowsMalFind[] rwxRegions, WindowsMalFind[] suspectRegions)
     {
         this.MzHeaderRegions = mzHeaderRegions;
         this.RwxRegions = rwxRegions;
         this.SuspectRegions = suspectRegions;
+    }
+}
+
+/// <summary>
+/// The result of collecting the unique remote IP addresses a memory image's network connections reference,
+/// for IOC pivoting. Derived from <c>windows.netscan</c> (a pool-tag scan, so historical/closed connections
+/// are recovered alongside active ones). <see cref="RemoteIPs"/> is the de-duplicated, sorted list of foreign
+/// addresses with loopback, unspecified, and wildcard endpoints (127.0.0.1, ::1, 0.0.0.0, ::, *) excluded;
+/// <see cref="Connections"/> is the full netscan output for correlating each IP to its port, state, and owner.
+/// </summary>
+public record RemoteIpReport
+{
+    public string[] RemoteIPs { get; }
+    public WindowsNetScan[] Connections { get; }
+    public RemoteIpReport(string[] remoteIPs, WindowsNetScan[] connections)
+    {
+        this.RemoteIPs = remoteIPs;
+        this.Connections = connections;
+    }
+}
+
+/// <summary>
+/// The result of generating a memory-artifact timeline: the path to the sorted timeline file written on the
+/// workstation, and the intermediate mactime bodyfile (<c>volatility.body</c>) it was rendered from — kept so
+/// the timeline can be re-rendered with filters (date ranges, etc.) without re-running timeliner.
+/// </summary>
+public record MemoryTimeline
+{
+    public string TimelinePath { get; }
+    public string BodyfilePath { get; }
+    public MemoryTimeline(string timelinePath, string bodyfilePath)
+    {
+        this.TimelinePath = timelinePath;
+        this.BodyfilePath = bodyfilePath;
     }
 }

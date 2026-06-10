@@ -159,9 +159,84 @@ public class MemoryAnalysisWorkflowTests : TestsRuntime
         Assert.NotNull(r.Result);
         Assert.Empty(r.Result.DumpedExecutables);
         Assert.Empty(r.Result.DumpedProcessMemory);
+        Assert.Empty(r.Result.ExtractedStrings);
+    }
+
+    [Fact]
+    public async Task FindAnomalousMemoryStringsRequireMemoryDump()
+    {
+        // A strings dir without a memory dir has nothing to read from: no strings extracted, no memory dumped.
+        var r = await workflow.FindAnomalousMemoryIndicatorsAsync(Image, dumpStringsDir: "/tmp/camel_wf_strings_nomem");
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.Empty(r.Result.ExtractedStrings);
+        Assert.Empty(r.Result.DumpedProcessMemory);
+    }
+
+    [Fact]
+    public async Task CanFindAllUniqueRemoteIPs()
+    {
+        // netscan is unsupported on the Windows XP image, so use the Windows 10 image (which has live connections).
+        var r = await workflow.FindAllUniqueRemoteIPsAsync(Win10Image);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.NotEmpty(r.Result.Connections);
+        Assert.NotEmpty(r.Result.RemoteIPs); // this capture has connections to real remote hosts
+
+        // The list is de-duplicated and excludes loopback/unspecified/wildcard noise.
+        Assert.Equal(r.Result.RemoteIPs.Length, r.Result.RemoteIPs.Distinct().Count());
+        string[] noise = ["", "0.0.0.0", "127.0.0.1", "::", "::1", "*"];
+        Assert.All(r.Result.RemoteIPs, ip => Assert.DoesNotContain(ip, noise));
+
+        // Every reported IP really is a foreign address from the netscan results.
+        var foreign = r.Result.Connections.Select(c => c.ForeignAddr).ToHashSet();
+        Assert.All(r.Result.RemoteIPs, ip => Assert.Contains(ip, foreign));
+    }
+
+    [Fact]
+    public async Task FindAllUniqueRemoteIPsFailsForMissingImage()
+    {
+        var r = await workflow.FindAllUniqueRemoteIPsAsync("/mnt/artifacts/does_not_exist.raw");
+
+        Assert.False(r.IsSuccess);
+        Assert.Null(r.Result);
+        Assert.NotNull(r.Message);
+    }
+
+    [Fact]
+    public async Task CanGenerateTimeline()
+    {
+        const string dir = "/tmp/camel_wf_timeline";
+        const string outPath = dir + "/mem_timeline.txt";
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, true); // clean slate
+
+        var r = await workflow.GenerateTimelineAsync(Image, outPath);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.Equal(outPath, r.Result.TimelinePath);
+        Assert.EndsWith("volatility.body", r.Result.BodyfilePath);
+        // Both the timeline and the intermediate bodyfile were written with content.
+        Assert.True(sshenv.ExecuteCommand("test", $"-s {r.Result.TimelinePath}", out _, true));
+        Assert.True(sshenv.ExecuteCommand("test", $"-s {r.Result.BodyfilePath}", out _, true));
+
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, true);
+    }
+
+    [Fact]
+    public async Task GenerateTimelineFailsForMissingImage()
+    {
+        var r = await workflow.GenerateTimelineAsync("/mnt/artifacts/does_not_exist.raw", "/tmp/camel_wf_timeline_bad/mem_timeline.txt");
+
+        Assert.False(r.IsSuccess);
+        Assert.Null(r.Result);
+        Assert.NotNull(r.Message);
     }
 
     const string Image = "/mnt/artifacts/pat-2009-11-19.mddramimage";
+    const string Win10Image = "/mnt/artifacts/Rocba-Memory.raw";
 
     AuditEnvironment sshenv;
     CamelApi api;

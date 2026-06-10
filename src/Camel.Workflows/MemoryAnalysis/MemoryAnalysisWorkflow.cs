@@ -109,8 +109,11 @@ public class MemoryAnalysisWorkflow : Workflow
     /// directory on the workstation for downstream triage; the resulting paths are returned in the report.</param>
     /// <param name="dumpMemoryDir">If set, each anomalous process's mapped memory is dumped to this directory
     /// on the workstation; the resulting paths are returned in the report.</param>
+    /// <param name="dumpStringsDir">If set <em>and</em> <paramref name="dumpMemoryDir"/> is also set, ASCII and
+    /// Unicode strings (min 8 chars, to reduce noise) are extracted from each dumped memory image into this
+    /// directory; the resulting paths are returned in the report. Ignored without a memory dump to read from.</param>
     public async Task<WorkflowResult<AnomalousMemoryReport>> FindAnomalousMemoryIndicatorsAsync(
-        string imageFile, string? dumpProcessDir = null, string? dumpMemoryDir = null)
+        string imageFile, string? dumpProcessDir = null, string? dumpMemoryDir = null, string? dumpStringsDir = null)
     {
         using var op = Begin("Finding process-hollowing indicators in {0}", imageFile);
 
@@ -132,16 +135,98 @@ public class MemoryAnalysisWorkflow : Workflow
         var dumpedMem = dumpMemoryDir is null ? []
             : await DumpEachAsync(imageFile, anomalousPids, dumpMemoryDir, MemoryAnalysis.DumpProcessMemoryAsync);
 
+        // When both a memory dump and a strings directory are requested, extract ASCII + Unicode strings from
+        // each dumped memory image for IOC hunting (requires the memory dumps to read from).
+        var extractedStrings = dumpStringsDir is not null && dumpMemoryDir is not null
+            ? await ExtractStringsFromDumpsAsync(dumpedMem, dumpStringsDir)
+            : [];
+
         op.Complete();
         var flagged = mz.Concat(rwx).Select(h => $"{h.Process} (PID {h.PID})").Distinct().ToArray();
         var dumpNote = dumpProcessDir is null && dumpMemoryDir is null ? ""
             : $" Dumped {dumpedExe.Length} executable(s) and {dumpedMem.Length} memory image(s) for {anomalousPids.Length} process(es).";
+        if (extractedStrings.Length > 0)
+            dumpNote += $" Extracted {extractedStrings.Length} strings file(s).";
         return WorkflowResult<AnomalousMemoryReport>.Success(
-            new AnomalousMemoryReport(mz, rwx, hits) { DumpedExecutables = dumpedExe, DumpedProcessMemory = dumpedMem },
+            new AnomalousMemoryReport(mz, rwx, hits)
+            {
+                DumpedExecutables = dumpedExe,
+                DumpedProcessMemory = dumpedMem,
+                ExtractedStrings = extractedStrings,
+            },
             (flagged.Length == 0
                 ? $"No hollowing/injection indicators among {hits.Length} malfind region(s)."
                 : $"Found injection indicators across {hits.Length} malfind region(s): {mz.Length} MZ/PE-headed " +
                   $"(hollowing) and {rwx.Length} RWX (shellcode), in: {string.Join(", ", flagged)}.") + dumpNote);
+    }
+
+    /// <summary>
+    /// Collects every unique remote IP address a Windows memory image's network connections reference, for IOC
+    /// pivoting. Uses <c>windows.netscan</c> (a pool-tag scan, so it recovers historical/closed connections as
+    /// well as active ones at capture time), then de-duplicates the foreign addresses, excluding loopback,
+    /// unspecified, and wildcard endpoints (127.0.0.1, ::1, 0.0.0.0, ::, *) that are not routable remotes.
+    /// </summary>
+    /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
+    public async Task<WorkflowResult<RemoteIpReport>> FindAllUniqueRemoteIPsAsync(string imageFile)
+    {
+        using var op = Begin("Finding unique remote IPs in {0}", imageFile);
+
+        // Pool-tag scan of network structures: includes closed/historical connections, not just active ones.
+        var connections = await MemoryAnalysis.WindowsNetScanAsync(imageFile);
+        if (connections is null)
+            return WorkflowResult<RemoteIpReport>.Failure(
+                $"windows.netscan failed for '{imageFile}'; the image may be unreadable, its symbols unavailable, or the OS version unsupported.");
+
+        var remoteIPs = connections
+            .Select(c => c.ForeignAddr)
+            .Where(IsRoutableRemote)
+            .Distinct()
+            .OrderBy(ip => ip, StringComparer.Ordinal)
+            .ToArray();
+
+        op.Complete();
+        return WorkflowResult<RemoteIpReport>.Success(
+            new RemoteIpReport(remoteIPs, connections),
+            remoteIPs.Length == 0
+                ? $"No remote IPs among {connections.Length} netscan connection(s)."
+                : $"Found {remoteIPs.Length} unique remote IP(s) across {connections.Length} netscan connection(s): {string.Join(", ", remoteIPs)}.");
+    }
+
+    // A foreign address is a routable remote endpoint when it isn't blank, loopback, unspecified, or a wildcard.
+    static bool IsRoutableRemote(string? addr) =>
+        !string.IsNullOrWhiteSpace(addr) && addr is not ("0.0.0.0" or "127.0.0.1" or "::" or "::1" or "*");
+
+    /// <summary>
+    /// Generates a timeline of all artifacts in a Windows memory image and writes it to
+    /// <paramref name="timelineOutputPath"/> on the workstation. Runs <c>timeliner --create-bodyfile</c> to
+    /// produce a mactime bodyfile of every timestamped artifact Volatility can find (processes, threads,
+    /// handles, network sockets, registry keys, …), then sorts it into a timeline with <c>mactime</c> (UTC).
+    /// The intermediate bodyfile is written alongside the timeline and returned for re-rendering with filters.
+    /// </summary>
+    /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
+    /// <param name="timelineOutputPath">Workstation path to write the sorted timeline file to.</param>
+    public async Task<WorkflowResult<MemoryTimeline>> GenerateTimelineAsync(string imageFile, string timelineOutputPath)
+    {
+        using var op = Begin("Generating memory timeline for {0} -> {1}", imageFile, timelineOutputPath);
+
+        // The bodyfile (volatility.body) is written into the timeline's directory — which also ensures that
+        // directory exists for the subsequent mactime output.
+        int slash = timelineOutputPath.LastIndexOf('/');
+        string outputDir = slash switch { > 0 => timelineOutputPath[..slash], 0 => "/", _ => "." };
+
+        var bodyfile = await MemoryAnalysis.TimelinerBodyfileAsync(imageFile, outputDir);
+        if (bodyfile is null)
+            return WorkflowResult<MemoryTimeline>.Failure(
+                $"timeliner failed to create a bodyfile for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
+
+        if (!await DiskAnalysis.MactimeToFileAsync(bodyfile, timelineOutputPath))
+            return WorkflowResult<MemoryTimeline>.Failure(
+                $"mactime failed to render the timeline from bodyfile '{bodyfile}'.");
+
+        op.Complete();
+        return WorkflowResult<MemoryTimeline>.Success(
+            new MemoryTimeline(timelineOutputPath, bodyfile),
+            $"Memory timeline written to '{timelineOutputPath}' (bodyfile: '{bodyfile}').");
     }
 
     // Dumps each PID via the given toolkit dump method into dir, collecting the produced file paths.
@@ -153,6 +238,22 @@ public class MemoryAnalysisWorkflow : Workflow
             if (await dump(imageFile, pid, dir) is { } files)
                 paths.AddRange(files);
         return paths.ToArray();
+    }
+
+    // Extracts ASCII and Unicode strings (min 8 chars) from each dumped memory image into stringsDir,
+    // returning the per-process strings files produced (named strings_<dump>_ascii.txt / _unicode.txt).
+    async Task<string[]> ExtractStringsFromDumpsAsync(string[] memoryDumps, string stringsDir)
+    {
+        var outputs = new List<string>();
+        foreach (var dump in memoryDumps)
+        {
+            var stem = System.IO.Path.GetFileNameWithoutExtension(dump);
+            var ascii = $"{stringsDir.TrimEnd('/')}/strings_{stem}_ascii.txt";
+            var unicode = $"{stringsDir.TrimEnd('/')}/strings_{stem}_unicode.txt";
+            if (await MemoryAnalysis.ExtractStringsAsync(dump, ascii, unicode: false)) outputs.Add(ascii);
+            if (await MemoryAnalysis.ExtractStringsAsync(dump, unicode, unicode: true)) outputs.Add(unicode);
+        }
+        return outputs.ToArray();
     }
 
     // A malfind region carries an injected PE image when malfind tagged it with an MZ header, or its dumped

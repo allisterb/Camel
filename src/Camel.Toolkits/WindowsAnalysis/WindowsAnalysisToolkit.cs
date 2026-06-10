@@ -38,14 +38,24 @@ public class WindowsAnalysisToolkit : Toolkit
     #endregion
 
     #region CSV tools
-    public Task<ShimcacheEntry[]?> AppCompatCacheParserAsync(string systemHive) =>
-        ExecuteToolCsvAsync("AppCompatCacheParser", $"-f {Q(systemHive)}", ShimcacheEntry.FromRow);
+    /// <summary>
+    /// Parses the Application Compatibility Cache (Shimcache) from <paramref name="systemHive"/> into
+    /// <see cref="ShimcacheEntry"/> rows. When <paramref name="ignoreTransactionLogs"/> is true the registry
+    /// transaction logs are ignored (<c>--nl</c>) — faster, and appropriate when the hive is not dirty.
+    /// </summary>
+    public Task<ShimcacheEntry[]?> AppCompatCacheParserAsync(string systemHive, bool ignoreTransactionLogs = false) =>
+        ExecuteToolCsvAsync("AppCompatCacheParser", $"-f {Q(systemHive)}" + (ignoreTransactionLogs ? " --nl" : ""), ShimcacheEntry.FromRow);
 
     public Task<RecycleBinEntry[]?> RBCmdAsync(string file) =>
         ExecuteToolCsvAsync("RBCmd", $"-f {Q(file)}", RecycleBinEntry.FromRow);
 
-    public Task<AmcacheEntry[]?> AmcacheParserAsync(string amcacheHive) =>
-        ExecuteToolCsvAsync("AmcacheParser", $"-f {Q(amcacheHive)}", AmcacheEntry.FromRow, "*UnassociatedFileEntries.csv");
+    /// <summary>
+    /// Parses <paramref name="amcacheHive"/> (Amcache.hve) into <see cref="AmcacheEntry"/> rows — executed/
+    /// present binaries with their SHA-1 and metadata. When <paramref name="ignoreTransactionLogs"/> is true
+    /// the registry transaction logs are ignored (<c>--nl</c>) — faster, and appropriate when the hive is not dirty.
+    /// </summary>
+    public Task<AmcacheEntry[]?> AmcacheParserAsync(string amcacheHive, bool ignoreTransactionLogs = false) =>
+        ExecuteToolCsvAsync("AmcacheParser", $"-f {Q(amcacheHive)}" + (ignoreTransactionLogs ? " --nl" : ""), AmcacheEntry.FromRow, "*UnassociatedFileEntries.csv");
 
     public Task<JumpListEntry[]?> JLECmdAsync(string directory) =>
         ExecuteToolCsvAsync("JLECmd", $"-d {Q(directory)}", JumpListEntry.FromRow, "*AutomaticDestinations.csv");

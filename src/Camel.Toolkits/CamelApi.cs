@@ -15,11 +15,13 @@ public class CamelApi : Runtime
     {
         this.MemoryAnalysis = new MemoryAnalysisToolkit(env, config);
         this.DiskAnalysis = new DiskAnalysisToolkit(env, config);   
+        this.WindowsAnalysis = new WindowsAnalysisToolkit(env, config);
     }
     #endregion
 
     #region Properties
     public MemoryAnalysisToolkit MemoryAnalysis { get; }
     public DiskAnalysisToolkit DiskAnalysis { get; }
+    public WindowsAnalysisToolkit WindowsAnalysis { get; }
     #endregion
 }
