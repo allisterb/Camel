@@ -1,5 +1,6 @@
 namespace Camel.Workflows.Models;
 
+using System;
 using System.Linq;
 
 using Camel.Toolkits.Models;
@@ -144,4 +145,178 @@ public record DllHijackReport
 {
     public DllHijackFinding[] Findings { get; init; } = [];
     public int DllsScanned { get; init; }
+}
+
+/// <summary>
+/// A credential-dumping artifact found on a mounted volume. <see cref="Kind"/> distinguishes an exfiltrated AD
+/// database (<c>ntds.dit</c> outside <c>\Windows\NTDS</c>), a registry hive copied out of <c>\System32\config</c>
+/// for offline extraction (SAM/SECURITY/SYSTEM), an LSASS memory dump (<c>lsass*.dmp</c>), or an exported
+/// Kerberos ticket (<c>.kirbi</c>). Filesystem leads to triage.
+/// </summary>
+public record CredentialDumpFinding
+{
+    public string Path { get; init; } = "";
+    public string Name { get; init; } = "";
+    public long Size { get; init; }
+    public string Kind { get; init; } = "";
+    public string[] Reasons { get; init; } = [];
+}
+
+/// <summary>
+/// The result of hunting credential-dumping artifacts on a mounted Windows volume: the <see cref="Findings"/>
+/// and the number of candidate files examined (<see cref="FilesScanned"/>).
+/// </summary>
+public record CredentialDumpReport
+{
+    public CredentialDumpFinding[] Findings { get; init; } = [];
+    public int FilesScanned { get; init; }
+}
+
+/// <summary>
+/// One parsed Windows logon/logoff/privilege Security event. <see cref="LogonType"/> (and its
+/// <see cref="LogonTypeName"/>) classify how the authentication happened — the key discriminator for hunting:
+/// 3 = Network (share/PtH), 10 = RemoteInteractive (RDP), 9 = NewCredentials (runas /netonly, overpass-the-hash),
+/// 2 = Interactive. <see cref="TargetUser"/> is the account that logged on, <see cref="SubjectUser"/> the account
+/// that initiated it, and <see cref="SourceIp"/>/<see cref="Workstation"/> the origin (for remote logons).
+/// </summary>
+public record LogonEvent
+{
+    public DateTime? Time { get; init; }
+    public int EventId { get; init; }
+    public bool Success { get; init; }
+    public int? LogonType { get; init; }
+    public string? LogonTypeName { get; init; }
+    public string? TargetUser { get; init; }
+    public string? TargetDomain { get; init; }
+    public string? SubjectUser { get; init; }
+    public string? SourceIp { get; init; }
+    public string? Workstation { get; init; }
+    public string? AuthPackage { get; init; }
+    public string? LogonProcess { get; init; }
+    public string? Computer { get; init; }
+}
+
+/// <summary>A logon-type bucket and how many logons fell into it.</summary>
+public record LogonTypeCount
+{
+    public int LogonType { get; init; }
+    public string Name { get; init; } = "";
+    public int Count { get; init; }
+}
+
+/// <summary>
+/// The result of analysing a Security event log's authentication events. <see cref="Logons"/> holds every parsed
+/// event; the computed views surface the triage/lateral-movement subsets the methodology calls out —
+/// failed logons (password guessing), RemoteInteractive (RDP), Network (share/PtH), explicit-credential use
+/// (runas), and NewCredentials (overpass-the-hash) — plus a per-logon-type breakdown.
+/// </summary>
+public record LogonReport
+{
+    public LogonEvent[] Logons { get; init; } = [];
+
+    public LogonTypeCount[] ByLogonType => Logons.Where(l => l.LogonType is not null)
+        .GroupBy(l => (l.LogonType!.Value, l.LogonTypeName ?? ""))
+        .Select(g => new LogonTypeCount { LogonType = g.Key.Item1, Name = g.Key.Item2, Count = g.Count() })
+        .OrderByDescending(c => c.Count).ToArray();
+
+    public LogonEvent[] FailedLogons => Logons.Where(l => l.EventId == 4625).ToArray();
+    public LogonEvent[] RemoteDesktopLogons => Logons.Where(l => l.LogonType == 10).ToArray();
+    public LogonEvent[] NetworkLogons => Logons.Where(l => l.LogonType == 3).ToArray();
+    public LogonEvent[] ExplicitCredentialLogons => Logons.Where(l => l.EventId == 4648).ToArray();
+    public LogonEvent[] NewCredentialLogons => Logons.Where(l => l.LogonType == 9).ToArray();
+    public LogonEvent[] PrivilegedLogons => Logons.Where(l => l.EventId == 4672).ToArray();
+}
+
+/// <summary>One network-share access event (Security 5140): the <see cref="ShareName"/> accessed, by which
+/// <see cref="Account"/>, from which <see cref="SourceIp"/> — the admin-share (C$/ADMIN$) channel used for
+/// remote file copy and PsExec.</summary>
+public record ShareAccess
+{
+    public DateTime? Time { get; init; }
+    public string? ShareName { get; init; }
+    public string? SharePath { get; init; }
+    public string? SourceIp { get; init; }
+    public string? Account { get; init; }
+}
+
+/// <summary>
+/// One service-install event (Security 4697 / System 7045): the <see cref="ServiceName"/>, its
+/// <see cref="ImagePath"/>, and start/account context. A service install is always IR-relevant (it's how PsExec,
+/// Cobalt Strike, and many implants execute remotely); <see cref="Suspicious"/> marks the ones matching a
+/// concrete remote-exec pattern (tool name, transient image location, or launching a command interpreter).
+/// </summary>
+public record ServiceInstall
+{
+    public DateTime? Time { get; init; }
+    public int EventId { get; init; }
+    public string? ServiceName { get; init; }
+    public string? ImagePath { get; init; }
+    public string? ServiceType { get; init; }
+    public string? StartType { get; init; }
+    public string? Account { get; init; }
+    public bool Suspicious { get; init; }
+    public string[] Reasons { get; init; } = [];
+}
+
+/// <summary>
+/// The result of hunting lateral movement across a host's event logs. <see cref="RemoteLogons"/> are inbound
+/// Network/RDP logons from real remote sources (who authenticated from where); <see cref="ExplicitCredentialLogons"/>
+/// are 4648 runas/alternate-credential events (pass-the-hash); <see cref="AdminShareAccess"/> is C$/ADMIN$ usage;
+/// <see cref="ServiceInstalls"/> is every installed service (PsExec/implants), with <see cref="SuspiciousServiceInstalls"/>
+/// the auto-flagged subset.
+/// </summary>
+public record LateralMovementReport
+{
+    public LogonEvent[] RemoteLogons { get; init; } = [];
+    public LogonEvent[] ExplicitCredentialLogons { get; init; } = [];
+    public ShareAccess[] AdminShareAccess { get; init; } = [];
+    public ServiceInstall[] ServiceInstalls { get; init; } = [];
+
+    public ServiceInstall[] SuspiciousServiceInstalls => ServiceInstalls.Where(s => s.Suspicious).ToArray();
+}
+
+/// <summary>One event-log-clearing event: which log was wiped (<see cref="ClearedLog"/>), by whom
+/// (<see cref="User"/>), and when — a high-signal anti-forensics indicator (Security 1102 / System 104).</summary>
+public record LogClearedEvent
+{
+    public DateTime? Time { get; init; }
+    public int EventId { get; init; }
+    public string? ClearedLog { get; init; }
+    public string? User { get; init; }
+    public string? Computer { get; init; }
+}
+
+/// <summary>The result of hunting event-log clearing. <see cref="Detected"/> is true when any clear occurred.</summary>
+public record LogClearingReport
+{
+    public LogClearedEvent[] Events { get; init; } = [];
+    public bool Detected => Events.Length > 0;
+}
+
+/// <summary>
+/// One PowerShell script block recorded by script-block logging (event 4104) — the deobfuscated script text
+/// PowerShell actually executed. <see cref="ScriptText"/> is the logged script; <see cref="DecodedText"/> is the
+/// decoded payload when the block carried an encoded command. <see cref="Suspicious"/> marks blocks matching
+/// download-cradle / obfuscation indicators (DownloadString, FromBase64, IEX, <c>-enc</c>, remote URLs).
+/// </summary>
+public record PowerShellScriptBlock
+{
+    public DateTime? Time { get; init; }
+    public string? ScriptText { get; init; }
+    public string? Path { get; init; }
+    public string? ScriptBlockId { get; init; }
+    public string? DecodedText { get; init; }
+    public bool Suspicious { get; init; }
+    public string[] Reasons { get; init; } = [];
+}
+
+/// <summary>
+/// The result of analysing a PowerShell Operational log's script-block events. <see cref="ScriptBlocks"/> holds
+/// every parsed block; <see cref="SuspiciousScriptBlocks"/> is the auto-flagged subset (download cradles,
+/// base64/encoded payloads, dynamic execution).
+/// </summary>
+public record PowerShellReport
+{
+    public PowerShellScriptBlock[] ScriptBlocks { get; init; } = [];
+    public PowerShellScriptBlock[] SuspiciousScriptBlocks => ScriptBlocks.Where(s => s.Suspicious).ToArray();
 }

@@ -251,6 +251,21 @@ public class MemoryAnalysisWorkflowTests : TestsRuntime
     }
 
     [Fact]
+    public async Task ExtractCredentialMaterialRunsOnWin10Image()
+    {
+        // vol3's credential plugins run cleanly on this Win10 image but recover nothing (Win10 SAM encryption,
+        // no cached/LSA creds here), so the workflow must succeed gracefully with a well-formed empty report
+        // rather than fail — distinguishing "ran, found nothing" from "could not run".
+        var r = await workflow.ExtractCredentialMaterialAsync(Win10Image);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.NotNull(r.Result.LocalHashes);
+        Assert.NotNull(r.Result.LsaSecrets);
+        Assert.NotNull(r.Result.CachedCredentials);
+    }
+
+    [Fact]
     public async Task ExtractCredentialMaterialFailsForMissingImage()
     {
         var r = await workflow.ExtractCredentialMaterialAsync("/mnt/artifacts/does_not_exist.raw");

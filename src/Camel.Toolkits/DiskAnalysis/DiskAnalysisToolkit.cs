@@ -135,11 +135,20 @@ public class DiskAnalysisToolkit : Toolkit
     /// levels (0 = unlimited). Returns each as an <see cref="FsFile"/> (path/name/size). Returns an empty array
     /// when the directory is absent or holds no matches (a missing path is normal when probing several locations).
     /// </summary>
-    public async Task<FsFile[]> FindFilesAsync(string directory, string namePattern = "*", int maxDepth = 0)
+    public Task<FsFile[]> FindFilesAsync(string directory, string namePattern = "*", int maxDepth = 0) =>
+        FindFilesAsync(directory, [namePattern], maxDepth);
+
+    /// <summary>
+    /// As <see cref="FindFilesAsync(string, string, int)"/> but matching <em>any</em> of several
+    /// case-insensitive globs in a single directory traversal (e.g. <c>["ntds.dit", "*.kirbi"]</c>).
+    /// </summary>
+    public async Task<FsFile[]> FindFilesAsync(string directory, string[] namePatterns, int maxDepth = 0)
     {
+        if (namePatterns.Length == 0) return [];
         var depth = maxDepth > 0 ? $"-maxdepth {maxDepth} " : "";
+        var names = string.Join(" -o ", namePatterns.Select(p => $"-iname {Q(p)}"));
         var r = await auditEnvironment.ExecuteCommandAsync("find",
-            $"{Q(directory)} {depth}-type f -iname {Q(namePattern)} -printf '%s\\t%p\\n'", false);
+            $"{Q(directory)} {depth}-type f \\( {names} \\) -printf '%s\\t%p\\n'", false);
         return r.IsCompleted
             ? r.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Select(FsFile.FromFindLine).Where(f => f is not null).Select(f => f!).ToArray()

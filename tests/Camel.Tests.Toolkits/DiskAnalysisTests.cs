@@ -326,6 +326,10 @@ public class DiskAnalysisTests : TestsRuntime
         var shallow = await toolkit.FindFilesAsync(d, "*.dll", maxDepth: 1);
         Assert.Equal("a.dll", Assert.Single(shallow).Name);
 
+        // Multi-pattern overload: both globs matched in one traversal (a.dll, sub/c.dll, b.txt).
+        var multi = await toolkit.FindFilesAsync(d, ["*.dll", "*.txt"]);
+        Assert.Equal(3, multi.Length);
+
         // A missing directory yields an empty list rather than an error.
         Assert.Empty(await toolkit.FindFilesAsync($"{d}/nope", "*.dll"));
 

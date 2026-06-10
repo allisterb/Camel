@@ -3,6 +3,7 @@ namespace Camel.Workflows;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 using Camel.Toolkits;
@@ -266,6 +267,368 @@ public class WindowsAnalysisWorkflow : Workflow
         if (a.Size != b.Size) return true;
         var (ha, hb) = (await DiskAnalysis.Sha256Async(a.Path), await DiskAnalysis.Sha256Async(b.Path));
         return ha is null || hb is null || !ha.Equals(hb, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // The credential-dump artifact kinds this workflow recovers.
+    public const string CredNtds = "NTDS database";
+    public const string CredHive = "Registry hive dump";
+    public const string CredLsass = "LSASS memory dump";
+    public const string CredKirbi = "Kerberos ticket";
+
+    // File names that signal credential dumping (matched case-insensitively in one filesystem traversal).
+    private static readonly string[] CredDumpPatterns = ["ntds.dit", "SAM", "SECURITY", "SYSTEM", "lsass*.dmp", "*.kirbi"];
+    // Path fragments (lowercased) where ntds.dit / the registry hives legitimately live — everything else is suspect.
+    private static readonly string[] NtdsCanonical = ["/windows/ntds/", "/winsxs/"];
+    private static readonly string[] HiveKnownGood = ["/windows/system32/config/", "/winsxs/", "/windows/servicing/", "/windows/repair/", "/program files"];
+
+    /// <summary>
+    /// Hunts a mounted Windows volume (<paramref name="volumeRoot"/>) for credential-dumping artifacts — the
+    /// file-system traces left when an attacker harvests secrets: the AD database <c>ntds.dit</c> copied out of
+    /// <c>\Windows\NTDS</c> (ntdsutil IFM / VSS — the way to steal every domain hash), registry hives
+    /// (SAM/SECURITY/SYSTEM) copied out of <c>\System32\config</c> for offline extraction, LSASS process memory
+    /// dumps (<c>lsass*.dmp</c>), and exported Kerberos tickets (<c>.kirbi</c>). Canonical/legitimate copies
+    /// (the live AD database, RegBack, the component store, the dcpromo template) are excluded. Findings are leads.
+    /// </summary>
+    /// <param name="volumeRoot">The mounted volume root to scan (e.g. an image's mount point).</param>
+    public async Task<WorkflowResult<CredentialDumpReport>> DetectCredentialDumpingAsync(string volumeRoot)
+    {
+        var root = volumeRoot.TrimEnd('/');
+        using var op = Begin("Detecting credential-dumping artifacts on {0}", volumeRoot);
+
+        var files = await DiskAnalysis.FindFilesAsync(root, CredDumpPatterns);   // one traversal for all patterns
+
+        var findings = new List<CredentialDumpFinding>();
+        foreach (var f in files)
+        {
+            var p = f.Path.Replace('\\', '/').ToLowerInvariant();
+            var name = f.Name.ToLowerInvariant();
+            if (name == "ntds.dit")
+            {
+                if (NtdsCanonical.Any(p.Contains) || p.EndsWith("/windows/system32/ntds.dit")) continue; // legit
+                findings.Add(Cred(f, CredNtds, @"Active Directory database (ntds.dit) outside the canonical \Windows\NTDS location — likely an ntdsutil/VSS domain credential dump"));
+            }
+            else if (name is "sam" or "security" or "system")
+            {
+                if (HiveKnownGood.Any(p.Contains)) continue; // live hive / RegBack / component store / SDK file
+                findings.Add(Cred(f, CredHive, $@"Registry hive '{f.Name}' copied outside \System32\config — likely exported for offline credential extraction"));
+            }
+            else if (name.EndsWith(".dmp"))   // lsass*.dmp
+                findings.Add(Cred(f, CredLsass, "Possible LSASS process memory dump (credential extraction via procdump / comsvcs MiniDump / Task Manager)"));
+            else if (name.EndsWith(".kirbi"))
+                findings.Add(Cred(f, CredKirbi, "Exported Kerberos ticket (.kirbi) — pass-the-ticket / Mimikatz artifact"));
+        }
+
+        op.Complete();
+        var report = new CredentialDumpReport { Findings = findings.ToArray(), FilesScanned = files.Length };
+        return WorkflowResult<CredentialDumpReport>.Success(report,
+            findings.Count == 0
+                ? $"No credential-dumping artifacts among {files.Length} candidate file(s)."
+                : $"Found {findings.Count} credential-dumping artifact(s): " +
+                  string.Join("; ", findings.Select(x => $"{x.Path} [{x.Kind}]")) + ".");
+    }
+
+    private static CredentialDumpFinding Cred(FsFile f, string kind, string reason) =>
+        new() { Path = f.Path, Name = f.Name, Size = f.Size, Kind = kind, Reasons = [reason] };
+
+    // The Security-log authentication events the methodology focuses on.
+    private const string LogonEventIds = "4624,4625,4634,4647,4648,4672";
+
+    /// <summary>
+    /// Analyses the authentication events in a Security event log (<paramref name="securityEvtxPath"/>) —
+    /// successful (4624) and failed (4625) logons, logoffs (4634/4647), explicit-credential use (4648, runas),
+    /// and privileged logons (4672) — parsing each into a <see cref="LogonEvent"/> classified by <em>logon type</em>.
+    /// The report surfaces the triage/lateral-movement subsets the methodology calls out (failed logons, RDP,
+    /// network, explicit-credential and NewCredentials logons) and a per-logon-type breakdown.
+    /// </summary>
+    /// <param name="securityEvtxPath">Path to the Security event log (<c>…\winevt\Logs\Security.evtx</c>).</param>
+    public async Task<WorkflowResult<LogonReport>> AnalyzeLogonsAsync(string securityEvtxPath)
+    {
+        using var op = Begin("Analyzing logon events in {0}", securityEvtxPath);
+
+        var events = await WindowsAnalysis.EvtxECmdAsync(file: securityEvtxPath, includeIds: LogonEventIds);
+        if (events is null)
+            return WorkflowResult<LogonReport>.Failure(
+                $"EvtxECmd failed to parse '{securityEvtxPath}'; check the path points to a Security.evtx.");
+
+        var logons = events.Select(ToLogonEvent).ToArray();
+
+        op.Complete();
+        var report = new LogonReport { Logons = logons };
+        return WorkflowResult<LogonReport>.Success(report,
+            $"Parsed {logons.Length} authentication event(s): {report.FailedLogons.Length} failed, " +
+            $"{report.RemoteDesktopLogons.Length} RDP (type 10), {report.NetworkLogons.Length} network (type 3), " +
+            $"{report.ExplicitCredentialLogons.Length} explicit-credential (4648), {report.NewCredentialLogons.Length} NewCredentials (type 9).");
+    }
+
+    // Builds a LogonEvent from an EvtxECmd record by reading the raw EventData (Payload JSON).
+    private static LogonEvent ToLogonEvent(EventLogEntry e)
+    {
+        var d = ParseEventData(e.Payload);
+        int? type = d.TryGetValue("LogonType", out var lt) && int.TryParse(lt, out var t) ? t : null;
+        return new LogonEvent
+        {
+            Time = e.TimeCreated,
+            EventId = e.EventId,
+            Success = e.EventId != 4625,
+            LogonType = type,
+            LogonTypeName = type is { } v ? LogonTypeName(v) : null,
+            TargetUser = d.GetValueOrDefault("TargetUserName"),
+            TargetDomain = d.GetValueOrDefault("TargetDomainName"),
+            SubjectUser = d.GetValueOrDefault("SubjectUserName"),
+            SourceIp = d.GetValueOrDefault("IpAddress"),
+            Workstation = d.GetValueOrDefault("WorkstationName"),
+            AuthPackage = d.GetValueOrDefault("AuthenticationPackageName"),
+            LogonProcess = d.GetValueOrDefault("LogonProcessName"),
+            Computer = e.Computer,
+        };
+    }
+
+    // EvtxECmd stores the raw event fields as a JSON string: {"EventData":{"Data":[{"@Name":"x","#text":"y"},…]}}.
+    private static Dictionary<string, string> ParseEventData(string? payload)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrEmpty(payload)) return map;
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            if (doc.RootElement.TryGetProperty("EventData", out var ed) && ed.TryGetProperty("Data", out var data)
+                && data.ValueKind == JsonValueKind.Array)
+                foreach (var item in data.EnumerateArray())
+                    if (item.TryGetProperty("@Name", out var n) && n.GetString() is { } name)
+                        map[name] = item.TryGetProperty("#text", out var v) ? v.GetString() ?? "" : "";
+        }
+        catch { /* malformed payload — return what we have */ }
+        return map;
+    }
+
+    // Windows logon type codes (Security event 4624/4625 LogonType field).
+    private static string LogonTypeName(int type) => type switch
+    {
+        0 => "System",
+        2 => "Interactive",
+        3 => "Network",
+        4 => "Batch",
+        5 => "Service",
+        7 => "Unlock",
+        8 => "NetworkCleartext",
+        9 => "NewCredentials",
+        10 => "RemoteInteractive (RDP)",
+        11 => "CachedInteractive",
+        12 => "CachedRemoteInteractive",
+        13 => "CachedUnlock",
+        _ => $"Type {type}",
+    };
+
+    // Security-log events that evidence lateral movement (logons, explicit creds, service installs, share access).
+    private const string LateralSecurityIds = "4624,4648,4697,5140";
+    private static readonly Regex RemoteExecServiceRegex = new(@"\b(psexesvc|paexec|csexec|remcom|winexesvc)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex ServiceInterpreterRegex = new(@"(cmd\.exe|%comspec%|\bpowershell|\bpwsh|\brundll32|\bregsvr32|\bmshta)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly string[] SuspiciousServicePaths = [@"\temp\", @"\tmp\", @"\appdata\", @"\users\public\", @"\programdata\temp\", @"\perflogs\", @"\$recycle", @"\windows\fonts\"];
+
+    /// <summary>
+    /// Hunts lateral movement across a host's event logs by correlating the inbound-authority artifacts the
+    /// methodology calls out: remote Network (type 3) and RDP (type 10) logons from real remote sources, explicit-
+    /// credential (4648, runas/pass-the-hash) use, admin-share (C$/ADMIN$) access (5140), and service installs
+    /// (4697 from the Security log and 7045 from the System log — the PsExec/implant remote-exec channel). Service
+    /// installs are all surfaced (each is IR-relevant) and the obvious remote-exec ones are auto-flagged. Findings
+    /// are leads to triage, pivotable by source host/account.
+    /// </summary>
+    /// <param name="securityEvtxPath">Path to the Security event log (logons, explicit creds, 4697, 5140).</param>
+    /// <param name="systemEvtxPath">Optional path to the System event log (adds 7045 service installs).</param>
+    public async Task<WorkflowResult<LateralMovementReport>> HuntLateralMovementAsync(string securityEvtxPath, string? systemEvtxPath = null)
+    {
+        using var op = Begin("Hunting lateral movement in {0}", securityEvtxPath);
+
+        var sec = await WindowsAnalysis.EvtxECmdAsync(file: securityEvtxPath, includeIds: LateralSecurityIds);
+        if (sec is null)
+            return WorkflowResult<LateralMovementReport>.Failure(
+                $"EvtxECmd failed to parse '{securityEvtxPath}'; check the path points to a Security.evtx.");
+        var sys = systemEvtxPath is not null
+            ? (await WindowsAnalysis.EvtxECmdAsync(file: systemEvtxPath, includeIds: "7045") ?? [])
+            : [];
+
+        // Inbound Network/RDP logons from a routable remote source, and explicit-credential (runas) events.
+        var remoteLogons = sec.Where(e => e.EventId == 4624).Select(ToLogonEvent)
+            .Where(l => l.LogonType is 3 or 10 && IsRemoteSource(l.SourceIp)).ToArray();
+        var explicitCreds = sec.Where(e => e.EventId == 4648).Select(ToLogonEvent).ToArray();
+
+        // Admin-share access (C$/ADMIN$ — the remote file-copy / PsExec channel; IPC$ excluded as ubiquitous noise).
+        var shares = sec.Where(e => e.EventId == 5140).Select(ToShareAccess).Where(s => IsAdminShare(s.ShareName)).ToArray();
+
+        // Service installs from both logs.
+        var services = sec.Where(e => e.EventId == 4697).Concat(sys.Where(e => e.EventId == 7045))
+            .Select(ToServiceInstall).ToArray();
+
+        op.Complete();
+        var report = new LateralMovementReport
+        {
+            RemoteLogons = remoteLogons, ExplicitCredentialLogons = explicitCreds,
+            AdminShareAccess = shares, ServiceInstalls = services,
+        };
+        return WorkflowResult<LateralMovementReport>.Success(report,
+            $"{remoteLogons.Length} remote logon(s) (network/RDP), {explicitCreds.Length} explicit-credential event(s), " +
+            $"{shares.Length} admin-share access(es), {services.Length} service install(s) " +
+            $"({report.SuspiciousServiceInstalls.Length} flagged).");
+    }
+
+    // A network-share access event (5140) -> ShareAccess.
+    private static ShareAccess ToShareAccess(EventLogEntry e)
+    {
+        var d = ParseEventData(e.Payload);
+        return new ShareAccess
+        {
+            Time = e.TimeCreated,
+            ShareName = d.GetValueOrDefault("ShareName"),
+            SharePath = d.GetValueOrDefault("ShareLocalPath"),
+            SourceIp = d.GetValueOrDefault("IpAddress"),
+            Account = d.GetValueOrDefault("SubjectUserName"),
+        };
+    }
+
+    // A service-install event (4697 Security / 7045 System) -> ServiceInstall, scored for remote-exec patterns.
+    private static ServiceInstall ToServiceInstall(EventLogEntry e)
+    {
+        var d = ParseEventData(e.Payload);
+        // 4697 uses ServiceFileName/ServiceStartType/ServiceAccount; 7045 uses ImagePath/StartType/AccountName.
+        var name = d.GetValueOrDefault("ServiceName");
+        var image = d.GetValueOrDefault("ImagePath") ?? d.GetValueOrDefault("ServiceFileName");
+        var reasons = new List<string>();
+        if (name is not null && RemoteExecServiceRegex.IsMatch(name))
+            reasons.Add("service name matches a known remote-execution tool (PsExec/PAExec/RemCom)");
+        if (image is not null)
+        {
+            if (SuspiciousServicePaths.Any(f => image.Contains(f, StringComparison.OrdinalIgnoreCase)))
+                reasons.Add("service image is in a transient/world-writable location");
+            if (ServiceInterpreterRegex.IsMatch(image))
+                reasons.Add("service launches a command interpreter (cmd/powershell/…) — remote-exec pattern");
+        }
+        return new ServiceInstall
+        {
+            Time = e.TimeCreated, EventId = e.EventId, ServiceName = name, ImagePath = image,
+            ServiceType = d.GetValueOrDefault("ServiceType"),
+            StartType = d.GetValueOrDefault("StartType") ?? d.GetValueOrDefault("ServiceStartType"),
+            Account = d.GetValueOrDefault("AccountName") ?? d.GetValueOrDefault("ServiceAccount"),
+            Suspicious = reasons.Count > 0, Reasons = reasons.ToArray(),
+        };
+    }
+
+    // A routable remote source address (not blank/local/loopback/wildcard).
+    private static bool IsRemoteSource(string? ip) =>
+        !string.IsNullOrWhiteSpace(ip) && ip is not ("-" or "0.0.0.0" or "127.0.0.1" or "::" or "::1" or "*" or "LOCAL");
+
+    // C$ / ADMIN$ administrative shares (the remote file-copy / PsExec channel); IPC$ is excluded as ubiquitous.
+    private static bool IsAdminShare(string? share) =>
+        share is not null && (share.Contains(@"\C$", StringComparison.OrdinalIgnoreCase) || share.Contains(@"\ADMIN$", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Detects event-log clearing — a high-signal anti-forensics action — in a host's logs: the Security audit
+    /// log cleared (1102) and, when <paramref name="systemEvtxPath"/> is supplied, any log cleared as recorded in
+    /// the System log (104, which names the wiped channel). Each finding records which log was cleared, by which
+    /// account, and when. Any hit is noteworthy; legitimate clears are rare and usually administrative.
+    /// </summary>
+    /// <param name="securityEvtxPath">Path to the Security event log (1102 — audit log cleared).</param>
+    /// <param name="systemEvtxPath">Optional path to the System event log (104 — names each cleared channel).</param>
+    public async Task<WorkflowResult<LogClearingReport>> DetectLogClearingAsync(string securityEvtxPath, string? systemEvtxPath = null)
+    {
+        using var op = Begin("Detecting event-log clearing in {0}", securityEvtxPath);
+
+        var sec = await WindowsAnalysis.EvtxECmdAsync(file: securityEvtxPath, includeIds: "1102");
+        if (sec is null)
+            return WorkflowResult<LogClearingReport>.Failure(
+                $"EvtxECmd failed to parse '{securityEvtxPath}'; check the path points to a Security.evtx.");
+        var sys = systemEvtxPath is not null
+            ? (await WindowsAnalysis.EvtxECmdAsync(file: systemEvtxPath, includeIds: "104") ?? [])
+            : [];
+
+        var events = sec.Where(e => e.EventId == 1102).Select(e => ToLogCleared(e, "Security"))
+            .Concat(sys.Where(e => e.EventId == 104).Select(e => ToLogCleared(e, null)))
+            .OrderBy(e => e.Time).ToArray();
+
+        op.Complete();
+        return WorkflowResult<LogClearingReport>.Success(new LogClearingReport { Events = events },
+            events.Length == 0
+                ? "No event-log clearing (1102/104) detected."
+                : $"Detected {events.Length} event-log clearing event(s): " +
+                  string.Join("; ", events.Select(e => $"{e.ClearedLog} log cleared by {e.User}")) + ".");
+    }
+
+    // A log-cleared event (1102/104) -> LogClearedEvent. The fields live in UserData\LogFileCleared.
+    private static LogClearedEvent ToLogCleared(EventLogEntry e, string? defaultLog)
+    {
+        var d = ParseLogFileCleared(e.Payload);
+        var (domain, user) = (d.GetValueOrDefault("SubjectDomainName"), d.GetValueOrDefault("SubjectUserName"));
+        return new LogClearedEvent
+        {
+            Time = e.TimeCreated,
+            EventId = e.EventId,
+            ClearedLog = d.GetValueOrDefault("Channel") ?? defaultLog,
+            User = user is not null && domain is not null ? $@"{domain}\{user}" : user,
+            Computer = e.Computer,
+        };
+    }
+
+    // 1102/104 store their fields under {"UserData":{"LogFileCleared":{…}}} rather than the usual EventData array.
+    private static Dictionary<string, string> ParseLogFileCleared(string? payload)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrEmpty(payload)) return map;
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            if (doc.RootElement.TryGetProperty("UserData", out var ud) && ud.TryGetProperty("LogFileCleared", out var lfc)
+                && lfc.ValueKind == JsonValueKind.Object)
+                foreach (var prop in lfc.EnumerateObject())
+                    map[prop.Name] = prop.Value.ValueKind == JsonValueKind.String ? prop.Value.GetString() ?? "" : prop.Value.ToString();
+        }
+        catch { /* malformed payload */ }
+        return map;
+    }
+
+    /// <summary>
+    /// Analyses a PowerShell Operational log's script-block-logging events (4104) — the deobfuscated script text
+    /// PowerShell actually ran. Each block is surfaced and the malicious ones are auto-flagged on download-cradle /
+    /// obfuscation indicators (DownloadString, FromBase64, IEX, <c>-enc</c>, remote URLs); any encoded command is
+    /// decoded to reveal intent. Script-block logging is the single richest source for catching fileless / encoded
+    /// PowerShell attacks.
+    /// </summary>
+    /// <param name="powershellEvtxPath">Path to <c>Microsoft-Windows-PowerShell%4Operational.evtx</c>.</param>
+    public async Task<WorkflowResult<PowerShellReport>> AnalyzePowerShellAsync(string powershellEvtxPath)
+    {
+        using var op = Begin("Analyzing PowerShell script blocks in {0}", powershellEvtxPath);
+
+        var events = await WindowsAnalysis.EvtxECmdAsync(file: powershellEvtxPath, includeIds: "4104");
+        if (events is null)
+            return WorkflowResult<PowerShellReport>.Failure(
+                $"EvtxECmd failed to parse '{powershellEvtxPath}'; check the path points to a PowerShell Operational log.");
+
+        var blocks = events.Where(e => e.EventId == 4104).Select(ToScriptBlock).ToArray();
+
+        op.Complete();
+        var report = new PowerShellReport { ScriptBlocks = blocks };
+        return WorkflowResult<PowerShellReport>.Success(report,
+            $"Parsed {blocks.Length} PowerShell script block(s); {report.SuspiciousScriptBlocks.Length} flagged " +
+            "(download cradle / encoded / dynamic-execution).");
+    }
+
+    // A 4104 script-block event -> PowerShellScriptBlock, scored on obfuscation/download indicators.
+    private static PowerShellScriptBlock ToScriptBlock(EventLogEntry e)
+    {
+        var d = ParseEventData(e.Payload);
+        var text = d.GetValueOrDefault("ScriptBlockText");
+        var decoded = text is null ? null : DecodeEncodedPowerShell(text);
+        var reasons = new List<string>();
+        if (text is not null && EncodedRegex.IsMatch($"{text} {decoded}"))
+            reasons.Add("download-cradle / encoded / dynamic-execution payload (DownloadString, FromBase64, IEX, -enc, URL)");
+        return new PowerShellScriptBlock
+        {
+            Time = e.TimeCreated,
+            ScriptText = text,
+            Path = d.GetValueOrDefault("Path"),
+            ScriptBlockId = d.GetValueOrDefault("ScriptBlockId"),
+            DecodedText = decoded,
+            Suspicious = reasons.Count > 0,
+            Reasons = reasons.ToArray(),
+        };
     }
 
     // The persistence mechanism categories this workflow recovers, in report order. These mirror the

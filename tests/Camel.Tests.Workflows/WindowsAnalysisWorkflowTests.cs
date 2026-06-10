@@ -284,6 +284,57 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
     }
 
     [Fact]
+    public async Task DetectsCredentialDumping()
+    {
+        // Synthetic volume: legitimate copies (live AD DB, dcpromo template, live + RegBack hives) plus an
+        // attacker IFM dump (ntds.dit + a hive in C:\temp), an LSASS dump, and a Kerberos ticket. Only the
+        // out-of-place artifacts must flag — and lsass.exe must NOT be mistaken for a dump.
+        const string v = "/tmp/camel_creddump";
+        void T(string rel)
+        {
+            var full = $"{v}/{rel}";
+            int slash = full.LastIndexOf('/');
+            sshenv.ExecuteCommand("mkdir", $"-p '{full[..slash]}'", out _, false);
+            sshenv.ExecuteCommand("bash", $"-c \"printf 'x' > '{full}'\"", out _, false);
+        }
+        sshenv.ExecuteCommand("rm", $"-rf {v}", out _, false);
+        T("Windows/NTDS/ntds.dit");                 // canonical AD DB -> benign
+        T("Windows/System32/ntds.dit");             // dcpromo template -> benign
+        T("Windows/System32/config/SAM");           // live hive -> benign
+        T("Windows/System32/config/RegBack/SYSTEM");// RegBack -> benign
+        T("Windows/System32/lsass.exe");            // the real process -> must NOT flag (not a .dmp)
+        T("temp/Active Directory/ntds.dit");        // exfiltrated AD DB -> NTDS
+        T("temp/registry/SYSTEM");                  // exported hive -> Registry hive dump
+        T("Users/evil/lsass.dmp");                  // LSASS memory dump
+        T("Users/evil/admin.kirbi");                // exported Kerberos ticket
+
+        var r = await workflow.DetectCredentialDumpingAsync(v);
+
+        Assert.True(r.IsSuccess, r.Message);
+        var byKind = r.Result!.Findings.ToLookup(f => f.Kind);
+        Assert.Equal($"{v}/temp/Active Directory/ntds.dit", Assert.Single(byKind[WindowsAnalysisWorkflow.CredNtds]).Path);
+        Assert.Equal($"{v}/temp/registry/SYSTEM", Assert.Single(byKind[WindowsAnalysisWorkflow.CredHive]).Path);
+        Assert.Equal($"{v}/Users/evil/lsass.dmp", Assert.Single(byKind[WindowsAnalysisWorkflow.CredLsass]).Path);
+        Assert.Equal($"{v}/Users/evil/admin.kirbi", Assert.Single(byKind[WindowsAnalysisWorkflow.CredKirbi]).Path);
+        Assert.Equal(4, r.Result.Findings.Length);  // none of the benign/canonical copies, and not lsass.exe
+        Assert.DoesNotContain(r.Result.Findings, f => f.Name.Equals("lsass.exe", StringComparison.OrdinalIgnoreCase));
+
+        sshenv.ExecuteCommand("rm", $"-rf {v}", out _, false);
+    }
+
+    [Fact]
+    public async Task DetectCredentialDumpingIsCleanForBenignImage()
+    {
+        // The clean modern workstation image has its hives only in the canonical locations and no AD database at
+        // all, so it must not flag an exfiltrated ntds.dit (the highest-severity credential-dump artifact).
+        var r = await workflow.DetectCredentialDumpingAsync(Modern);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.DoesNotContain(r.Result.Findings, f => f.Kind == WindowsAnalysisWorkflow.CredNtds);
+    }
+
+    [Fact]
     public async Task FindDllHijackingIsCleanForBenignImage()
     {
         // The clean modern image has no Windows-root shadows and no DLLs in the transient dirs scanned (user
@@ -293,6 +344,83 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
         Assert.True(r.IsSuccess, r.Message);
         Assert.NotNull(r.Result);
         Assert.Empty(r.Result.Findings);
+    }
+
+    [Fact]
+    public async Task CanAnalyzeLogons()
+    {
+        // rd-01's Security.evtx holds the full spread of authentication events from the intrusion.
+        var r = await workflow.AnalyzeLogonsAsync("/mnt/srl/Windows/System32/winevt/Logs/Security.evtx");
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotEmpty(r.Result!.Logons);
+        Assert.NotEmpty(r.Result.ByLogonType);
+
+        // The lateral-movement subsets are populated on this compromised host.
+        Assert.NotEmpty(r.Result.FailedLogons);
+        Assert.All(r.Result.FailedLogons, l => Assert.False(l.Success));
+        Assert.NotEmpty(r.Result.NetworkLogons);
+        Assert.NotEmpty(r.Result.ExplicitCredentialLogons);
+
+        // RDP logons are classified by type and parsed with their origin (target user + source IP from the payload).
+        Assert.NotEmpty(r.Result.RemoteDesktopLogons);
+        Assert.All(r.Result.RemoteDesktopLogons, l => { Assert.Equal(10, l.LogonType); Assert.Equal("RemoteInteractive (RDP)", l.LogonTypeName); });
+        Assert.Contains(r.Result.RemoteDesktopLogons, l => l.TargetUser == "tdungan" && l.SourceIp == "192.168.30.10");
+    }
+
+    [Fact]
+    public async Task CanHuntLateralMovement()
+    {
+        const string logs = "/mnt/srl/Windows/System32/winevt/Logs";
+        var r = await workflow.HuntLateralMovementAsync($"{logs}/Security.evtx", $"{logs}/System.evtx");
+
+        Assert.True(r.IsSuccess, r.Message);
+
+        // Remote logons are inbound network/RDP from real remote sources.
+        Assert.NotEmpty(r.Result!.RemoteLogons);
+        Assert.All(r.Result.RemoteLogons, l => { Assert.True(l.LogonType is 3 or 10); Assert.False(string.IsNullOrWhiteSpace(l.SourceIp)); });
+
+        // Explicit-credential (runas / pass-the-hash) events present.
+        Assert.NotEmpty(r.Result.ExplicitCredentialLogons);
+
+        // Admin-share access is restricted to C$/ADMIN$ and carries the accessing account.
+        Assert.NotEmpty(r.Result.AdminShareAccess);
+        Assert.All(r.Result.AdminShareAccess, s => Assert.Matches(@"(?i)\\(C|ADMIN)\$", s.ShareName ?? ""));
+        Assert.Contains(r.Result.AdminShareAccess, s => !string.IsNullOrEmpty(s.Account));
+
+        // Service installs are enumerated from BOTH logs — the System log's 7045 adds the attacker's masquerade
+        // service ("Microsoft Advanced API"), which a Security-log-only view would miss.
+        Assert.NotEmpty(r.Result.ServiceInstalls);
+        Assert.Contains(r.Result.ServiceInstalls, s => (s.ServiceName ?? "").Contains("Advanced API", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task DetectsLogClearing()
+    {
+        const string logs = "/mnt/srl/Windows/System32/winevt/Logs";
+        var r = await workflow.DetectLogClearingAsync($"{logs}/Security.evtx", $"{logs}/System.evtx");
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.True(r.Result!.Detected);
+        // The Security audit log was cleared (1102) by an Administrator account.
+        Assert.Contains(r.Result.Events, e => e.EventId == 1102 && e.ClearedLog == "Security"
+            && (e.User ?? "").Contains("Administrator", StringComparison.OrdinalIgnoreCase));
+        // The System log records its own clear (104), naming the wiped channel.
+        Assert.Contains(r.Result.Events, e => e.EventId == 104 && e.ClearedLog == "System");
+    }
+
+    [Fact]
+    public async Task CanAnalyzePowerShell()
+    {
+        var r = await workflow.AnalyzePowerShellAsync(
+            "/mnt/srl/Windows/System32/winevt/Logs/Microsoft-Windows-PowerShell%4Operational.evtx");
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotEmpty(r.Result!.ScriptBlocks);
+        Assert.NotEmpty(r.Result.SuspiciousScriptBlocks);
+        // The intrusion's download cradle (squirreldirectory.com C2) is surfaced and flagged from a script block.
+        Assert.Contains(r.Result.SuspiciousScriptBlocks, s => (s.ScriptText ?? "").Contains("squirreldirectory", StringComparison.OrdinalIgnoreCase));
+        Assert.All(r.Result.SuspiciousScriptBlocks, s => Assert.NotEmpty(s.Reasons));
     }
 
     const string Modern = "/mnt/ewf";
