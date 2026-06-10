@@ -37,6 +37,8 @@ and adding a method to the toolkit class that executes the tool and returns the 
 Add unit tests for the new tool method in the tests\Camel.Tests.Toolkits project, following the existing tests as examples. You can execute commands for tools on the SIFT
 workstation as described in the Common Commands section below, and use the output to define the model properties for the tool's output model, and to implement the tool method itself.
 
+### Camel.Workflows
+Camel.Workflows codifies existing DFIR knowledge that uses tools in the different toolkits.
 
 ## Project coding instructions:
 - When generating new C# code, please follow the existing coding style.

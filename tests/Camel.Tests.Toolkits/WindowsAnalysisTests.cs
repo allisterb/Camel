@@ -21,7 +21,9 @@ public class WindowsAnalysisTests : TestsRuntime
         Assert.All(toolkit.ToolList, name =>
         {
             Assert.True(toolkit.Tools.ContainsKey(name));
-            Assert.StartsWith("dotnet /opt/zimmermantools/", toolkit.Tools[name].Command);
+            var cmd = toolkit.Tools[name].Command;
+            // EZ Tools run via dotnet from /opt/zimmermantools; RegRipper is the on-PATH rip.pl Perl script.
+            Assert.True(cmd.StartsWith("dotnet /opt/zimmermantools/") || cmd == "rip.pl", $"unexpected command for {name}: {cmd}");
             Assert.NotEmpty(toolkit.Tools[name].Descriptioon);
         });
     }
@@ -41,6 +43,56 @@ public class WindowsAnalysisTests : TestsRuntime
     }
 
     [Fact]
+    public async Task CanRunMFTECmdCsv()
+    {
+        const string mft = "/tmp/camel_mft_csv_in";
+        const string dir = "/tmp/camel_mft_csv";
+        sshenv.ExecuteCommand("head", $"-c 16000000 '{Modern}/$MFT' > {mft}", out _, false); // record-aligned extract
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, false);
+
+        var r = await toolkit.MFTECmdCsvAsync(mft, outputDir: dir, outputFile: "mft.csv", allTimestamps: true);
+
+        Assert.NotNull(r);
+        Assert.True(r.FileRecords > 0);
+        Assert.Equal($"{dir}/mft.csv", r.OutputFile);
+        Assert.True(sshenv.ExecuteCommand("test", $"-s {dir}/mft.csv", out _, false)); // CSV written with content
+
+        sshenv.ExecuteCommand("rm", $"-rf {dir} {mft}", out _, false);
+    }
+
+    [Fact]
+    public async Task CanRunMFTECmdBodyfile()
+    {
+        const string mft = "/tmp/camel_mft_body_in";
+        const string dir = "/tmp/camel_mft_body";
+        sshenv.ExecuteCommand("head", $"-c 16000000 '{Modern}/$MFT' > {mft}", out _, false);
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, false);
+
+        var r = await toolkit.MFTECmdBodyfileAsync(mft, outputDir: dir, outputFile: "mft.body", driveLetter: "C");
+
+        Assert.NotNull(r);
+        Assert.True(r.FileRecords > 0);
+        Assert.Equal($"{dir}/mft.body", r.OutputFile);
+        Assert.True(sshenv.ExecuteCommand("test", $"-s {dir}/mft.body", out _, false));
+        // The bodyfile paths carry the drive letter from --bdl C (e.g. "c:/$MFT").
+        Assert.True(sshenv.ExecuteCommand("grep", $"-q 'c:/' {dir}/mft.body", out _, false));
+
+        sshenv.ExecuteCommand("rm", $"-rf {dir} {mft}", out _, false);
+    }
+
+    [Fact]
+    public async Task MFTECmdCsvRequiresOutputFileOrDir()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => toolkit.MFTECmdCsvAsync("/tmp/x"));
+    }
+
+    [Fact]
+    public async Task MFTECmdBodyfileRequiresOutputFileOrDir()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => toolkit.MFTECmdBodyfileAsync("/tmp/x"));
+    }
+
+    [Fact]
     public async Task CanRunLECmd()
     {
         var r = await toolkit.LECmdAsync($"{Modern}/Users/fredr/AppData/Roaming/Microsoft/Windows/Recent/10l_brianlaiphotography-northcotepoint.lnk");
@@ -56,6 +108,24 @@ public class WindowsAnalysisTests : TestsRuntime
         // This image records no parseable shellbags, so just verify the call path returns a (possibly empty) set.
         var r = await toolkit.SBECmdAsync($"{Modern}/Users/fredr");
         Assert.NotNull(r);
+    }
+
+    [Fact]
+    public async Task CanRunSBECmdCsv()
+    {
+        const string dir = "/tmp/camel_sbe_csv";
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, false); // clean slate
+
+        // The Greg Schardt image's "Mr. Evil" profile NTUSER.DAT has parseable shellbags.
+        var r = await toolkit.SBECmdCsvAsync($"{GregSchardt}/Documents and Settings/Mr. Evil", dir);
+
+        Assert.NotNull(r);
+        Assert.True(r.TotalShellBags > 0);
+        Assert.Equal(dir, r.OutputDirectory);
+        Assert.NotEmpty(r.CsvFiles); // a per-hive CSV (e.g. NTUSER.csv) was written
+        Assert.All(r.CsvFiles, f => Assert.True(sshenv.ExecuteCommand("test", $"-s {f}", out _, false)));
+
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, false);
     }
 
     [Fact]
@@ -104,6 +174,62 @@ public class WindowsAnalysisTests : TestsRuntime
     }
 
     [Fact]
+    public async Task CanRunEvtxECmdWithIncludeFilter()
+    {
+        string log = $"{Modern}/Windows/System32/winevt/Logs/Setup.evtx";
+        var all = await toolkit.EvtxECmdAsync(file: log);
+        Assert.NotNull(all);
+        Assert.NotEmpty(all);
+
+        // Filtering to a single known-present Event ID (--inc) returns only that ID.
+        int id = all[0].EventId;
+        var filtered = await toolkit.EvtxECmdAsync(file: log, includeIds: id.ToString());
+        Assert.NotNull(filtered);
+        Assert.NotEmpty(filtered);
+        Assert.All(filtered, e => Assert.Equal(id, e.EventId));
+        Assert.True(filtered.Length <= all.Length);
+    }
+
+    [Fact]
+    public async Task EvtxECmdRequiresFileOrDirectory()
+    {
+        // With neither -f nor -d there is nothing to parse — fail fast rather than invoking the tool.
+        await Assert.ThrowsAsync<ArgumentException>(() => toolkit.EvtxECmdAsync());
+    }
+
+    [Fact]
+    public async Task CanRunEvtxECmdCsv()
+    {
+        const string dir = "/tmp/camel_evtx_csv";
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, false); // clean slate
+
+        var r = await toolkit.EvtxECmdCsvAsync(
+            file: $"{Modern}/Windows/System32/winevt/Logs/Setup.evtx",
+            outputDir: dir, outputFile: "setup.csv");
+
+        Assert.NotNull(r);
+        Assert.True(r.RecordsIncluded > 0);
+        Assert.Equal($"{dir}/setup.csv", r.OutputFile);
+        Assert.Equal(dir, r.OutputDirectory);
+        // The CSV file was really written with content.
+        Assert.True(sshenv.ExecuteCommand("test", $"-s {dir}/setup.csv", out _, false));
+
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, false);
+    }
+
+    [Fact]
+    public async Task EvtxECmdCsvRequiresFileOrDirectory()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => toolkit.EvtxECmdCsvAsync(outputDir: "/tmp/x"));
+    }
+
+    [Fact]
+    public async Task EvtxECmdCsvRequiresOutputFileOrDir()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => toolkit.EvtxECmdCsvAsync(file: "/x.evtx"));
+    }
+
+    [Fact]
     public async Task CanRunJLECmd()
     {
         var r = await toolkit.JLECmdAsync($"{Modern}/Users/fredr/AppData/Roaming/Microsoft/Windows/Recent/AutomaticDestinations");
@@ -144,7 +270,78 @@ public class WindowsAnalysisTests : TestsRuntime
         Assert.NotNull(r);
     }
 
+    [Fact]
+    public async Task CanRunRegRipper()
+    {
+        // The 'run' plugin lists the autostart Run/RunOnce keys from the SOFTWARE hive.
+        var r = await toolkit.RegRipperAsync($"{Modern}/Windows/System32/config/SOFTWARE", "run");
+        Assert.NotNull(r);
+        Assert.Equal("run", r.Plugin);
+        Assert.NotEmpty(r.Lines);
+        Assert.NotNull(r.Version);
+        Assert.Contains(@"CurrentVersion\Run", r.Output); // the Run key path appears in the plugin output
+    }
+
+    [Fact]
+    public async Task CanParseScheduledTasks()
+    {
+        // Parse the on-disk Task Scheduler XML tree (UTF-16 files) into typed entries with recovered actions.
+        var r = await toolkit.ScheduledTasksAsync($"{Modern}/Windows/System32/Tasks");
+        Assert.NotNull(r);
+        Assert.NotEmpty(r);
+        Assert.All(r, t => Assert.NotEmpty(t.TaskFile));
+        // Most tasks expose a <URI>, and third-party tasks (Adobe/Google/Office) carry an Exec command line.
+        Assert.Contains(r, t => !string.IsNullOrEmpty(t.Uri));
+        Assert.Contains(r, t => !string.IsNullOrEmpty(t.Command));
+    }
+
+    [Fact]
+    public async Task CanLoadLolbas()
+    {
+        // The toolkit constructor installs lolbas.json; load it into the queryable index.
+        var lolbas = await toolkit.LoadLolbasAsync();
+        Assert.NotNull(lolbas);
+        Assert.True(lolbas.Count > 100, $"expected the full LOLBAS list, got {lolbas.Count}");
+        Assert.True(lolbas.IsLolbin("rundll32.exe"));
+        Assert.False(lolbas.IsLolbin("definitely_not_a_lolbin.exe"));
+        // Canonical install location is recognized; the same binary in a temp dir is not (masquerading).
+        Assert.True(lolbas.IsCanonicalPath("rundll32.exe", @"C:\Windows\System32\rundll32.exe"));
+        Assert.True(lolbas.IsCanonicalPath("rundll32.exe", @"%SystemRoot%\System32\rundll32.exe")); // env-var prefix
+        Assert.False(lolbas.IsCanonicalPath("rundll32.exe", @"C:\ProgramData\rundll32.exe"));
+    }
+
+    [Fact]
+    public async Task CanParseWmiSubscriptions()
+    {
+        // Synthetic OBJECTS.DATA with a WMI subscription's strings in repository order; strings extraction +
+        // parsing must recover the consumer, its action, and the bound filter (the proximity-association path).
+        const string dir = "/tmp/camel_wmi_tk";
+        const string content =
+            "PerformanceMonitor\n" +
+            "powershell -W Hidden -nop -noni -ec SQBFAFgA\n" +
+            "SystemPerformanceMonitor\n" +
+            "CommandLineEventConsumer.Name=\"SystemPerformanceMonitor\"\n" +
+            "__EventFilter.Name=\"PerformanceMonitor\"\n";
+        var b64 = System.Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, false);
+        sshenv.ExecuteCommand("mkdir", $"-p {dir}", out _, false);
+        sshenv.ExecuteCommand("echo", $"{b64} | base64 -d > {dir}/OBJECTS.DATA", out _, false);
+
+        var r = await toolkit.WmiSubscriptionsAsync($"{dir}/OBJECTS.DATA");
+
+        Assert.NotNull(r);
+        var c = Assert.Single(r.Consumers);
+        Assert.Equal("CommandLineEventConsumer", c.Type);
+        Assert.Equal("SystemPerformanceMonitor", c.Name);
+        Assert.Contains("powershell", c.Command ?? "");            // action recovered by proximity
+        Assert.Contains("PerformanceMonitor", r.Filters);
+        Assert.Contains(r.Bindings, b => b.ConsumerName == "SystemPerformanceMonitor" && b.FilterName == "PerformanceMonitor");
+
+        sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, false);
+    }
+
     const string Modern = "/mnt/ewf";
+    const string GregSchardt = "/mnt/windows_mount2"; // 'Greg Schardt' XP image (4Dell Latitude CPi.E01)
     const string DfirBatch = "/opt/zimmermantools/RECmd/DFIRBatch.reb";
 
     LocalEnvironment localenv;

@@ -1,5 +1,7 @@
 namespace Camel.Workflows.Models;
 
+using System.Linq;
+
 using Camel.Toolkits.Models;
 
 /// <summary>
@@ -34,4 +36,86 @@ public record KeyArtifactsReport
         this.Artifacts = artifacts;
         this.AllEntries = allEntries;
     }
+}
+
+/// <summary>
+/// A single persistence entry recovered from a registry hive by RegRipper and classified into one of the
+/// malware-persistence mechanism categories (Run keys, Services, Scheduled Tasks, AppInit DLLs, shell open
+/// commands). <see cref="Command"/> is the autostart value / service image path / command line driving the
+/// persistence (null when the source doesn't record one, e.g. a TaskCache entry without its action). When
+/// <see cref="Suspicious"/> is true, <see cref="Reasons"/> explains why (suspicious location, LOLBin/scripting
+/// host, encoded command, hijacked handler, …) — these are leads to triage, not verdicts.
+/// </summary>
+public record PersistenceEntry
+{
+    public string Category { get; init; } = "";
+    public string Hive { get; init; } = "";
+    public string Plugin { get; init; } = "";
+    public string? KeyPath { get; init; }
+    public string Name { get; init; } = "";
+    public string? Command { get; init; }
+    public string? LastWrite { get; init; }
+    public bool Suspicious { get; init; }
+    public string[] Reasons { get; init; } = [];
+}
+
+/// <summary>One malware-persistence mechanism category and the <see cref="PersistenceEntry"/> entries found in it.</summary>
+public record PersistenceMechanism
+{
+    public string Category { get; }
+    public PersistenceEntry[] Entries { get; }
+    public PersistenceMechanism(string category, PersistenceEntry[] entries)
+    {
+        this.Category = category;
+        this.Entries = entries;
+    }
+}
+
+/// <summary>
+/// The result of hunting a Windows system's registry hives for malware-persistence mechanisms.
+/// <see cref="Mechanisms"/> holds one bucket per persistence category (always present, even when empty);
+/// <see cref="AllEntries"/> is every entry found across all categories; <see cref="SuspiciousEntries"/> is the
+/// actionable subset that scored at least one suspicion reason.
+/// </summary>
+public record PersistenceReport
+{
+    public PersistenceMechanism[] Mechanisms { get; }
+    public PersistenceEntry[] AllEntries { get; }
+    public PersistenceEntry[] SuspiciousEntries { get; }
+    public PersistenceReport(PersistenceMechanism[] mechanisms)
+    {
+        this.Mechanisms = mechanisms;
+        this.AllEntries = mechanisms.SelectMany(m => m.Entries).ToArray();
+        this.SuspiciousEntries = this.AllEntries.Where(e => e.Suspicious).ToArray();
+    }
+}
+
+/// <summary>
+/// A WMI event consumer flagged as a persistence lead: its <see cref="Type"/> and <see cref="Name"/>, the
+/// recovered action <see cref="Command"/> (and its <see cref="DecodedCommand"/> when the action was an encoded
+/// PowerShell payload — revealing the real intent, e.g. a download cradle), the bound event filter
+/// (<see cref="FilterName"/>, the trigger), and the <see cref="Reasons"/> it was flagged.
+/// </summary>
+public record WmiPersistenceEntry
+{
+    public string Type { get; init; } = "";
+    public string Name { get; init; } = "";
+    public string? Command { get; init; }
+    public string? DecodedCommand { get; init; }
+    public string? FilterName { get; init; }
+    public string[] Reasons { get; init; } = [];
+}
+
+/// <summary>
+/// The result of hunting WMI event-consumer persistence in a repository's OBJECTS.DATA.
+/// <see cref="SuspiciousConsumers"/> is the flagged subset; <see cref="Consumers"/> is every attacker-favored
+/// (CommandLine/ActiveScript) consumer considered; <see cref="Bindings"/> and <see cref="Filters"/> are the
+/// full recovered subscription context.
+/// </summary>
+public record WmiPersistenceReport
+{
+    public WmiPersistenceEntry[] SuspiciousConsumers { get; init; } = [];
+    public WmiConsumer[] Consumers { get; init; } = [];
+    public WmiBinding[] Bindings { get; init; } = [];
+    public string[] Filters { get; init; } = [];
 }
