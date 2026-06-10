@@ -286,6 +286,32 @@ public class MemoryAnalysisTests : TestsRuntime
         Assert.All(r, c => Assert.NotEmpty(c.Proto));
     }
 
+    [Fact]
+    public async Task CanRunWindowsHashdump()
+    {
+        var r = await toolkit.WindowsHashdumpAsync(Image);
+        Assert.NotNull(r);
+        Assert.NotEmpty(r);
+        Assert.Contains(r, h => h.Rid == 500 && !string.IsNullOrEmpty(h.NtHash)); // built-in Administrator
+    }
+
+    [Fact]
+    public async Task CanRunWindowsLsadump()
+    {
+        var r = await toolkit.WindowsLsadumpAsync(Image);
+        Assert.NotNull(r);
+        Assert.NotEmpty(r);
+        Assert.Contains(r, s => !string.IsNullOrEmpty(s.Key));
+    }
+
+    [Fact]
+    public async Task CanRunWindowsCachedump()
+    {
+        // This standalone image has no cached domain creds; verify the call path returns a (possibly empty) set.
+        var r = await toolkit.WindowsCachedumpAsync(Image);
+        Assert.NotNull(r);
+    }
+
     LocalEnvironment localenv;
     AuditEnvironment sshenv;
     MemoryAnalysisToolkit toolkit;

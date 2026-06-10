@@ -119,3 +119,29 @@ public record WmiPersistenceReport
     public WmiBinding[] Bindings { get; init; } = [];
     public string[] Filters { get; init; } = [];
 }
+
+/// <summary>
+/// A potential DLL-hijacking persistence artifact found on a mounted volume. <see cref="Kind"/> distinguishes a
+/// search-order shadow (a <c>\Windows</c>-root DLL impersonating a System32 DLL — for the latter,
+/// <see cref="ShadowedSystemDll"/> is the genuine file it differs from) from a DLL dropped in a transient/
+/// world-writable location where DLLs do not normally reside. These are filesystem leads to triage.
+/// </summary>
+public record DllHijackFinding
+{
+    public string Path { get; init; } = "";
+    public string Name { get; init; } = "";
+    public long Size { get; init; }
+    public string Kind { get; init; } = "";
+    public string? ShadowedSystemDll { get; init; }
+    public string[] Reasons { get; init; } = [];
+}
+
+/// <summary>
+/// The result of hunting DLL-hijacking persistence on a mounted Windows volume: the <see cref="Findings"/> and
+/// the number of candidate DLLs examined (<see cref="DllsScanned"/>).
+/// </summary>
+public record DllHijackReport
+{
+    public DllHijackFinding[] Findings { get; init; } = [];
+    public int DllsScanned { get; init; }
+}

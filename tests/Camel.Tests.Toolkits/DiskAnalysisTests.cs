@@ -308,6 +308,33 @@ public class DiskAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("bash", "/tmp/camel_ddsetup.sh", out _, true); // sudo: sfdisk/losetup/mkfs
     }
 
+    [Fact]
+    public async Task CanFindFilesAndHash()
+    {
+        const string d = "/tmp/camel_findfiles";
+        sshenv.ExecuteCommand("rm", $"-rf {d}", out _, false);
+        sshenv.ExecuteCommand("mkdir", $"-p {d}/sub", out _, false);
+        sshenv.ExecuteCommand("bash", $"-c \"printf 'hello' > '{d}/a.dll'; printf 'x' > '{d}/b.txt'; printf 'y' > '{d}/sub/c.dll'\"", out _, false);
+
+        // Glob + recursion finds both .dll files (path/name/size), excluding the .txt.
+        var all = await toolkit.FindFilesAsync(d, "*.dll");
+        Assert.Equal(2, all.Length);
+        Assert.Contains(all, f => f.Name == "a.dll" && f.Size == 5);
+        Assert.DoesNotContain(all, f => f.Name == "b.txt");
+
+        // maxDepth 1 excludes the nested file.
+        var shallow = await toolkit.FindFilesAsync(d, "*.dll", maxDepth: 1);
+        Assert.Equal("a.dll", Assert.Single(shallow).Name);
+
+        // A missing directory yields an empty list rather than an error.
+        Assert.Empty(await toolkit.FindFilesAsync($"{d}/nope", "*.dll"));
+
+        // SHA-256 of known content ("hello").
+        Assert.Equal("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", await toolkit.Sha256Async($"{d}/a.dll"));
+
+        sshenv.ExecuteCommand("rm", $"-rf {d}", out _, false);
+    }
+
     const string Image = "/mnt/artifacts/4Dell Latitude CPi.E01";
     const int NtfsOffset = 63;
 

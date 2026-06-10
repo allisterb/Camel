@@ -235,6 +235,31 @@ public class MemoryAnalysisWorkflowTests : TestsRuntime
         Assert.NotNull(r.Message);
     }
 
+    [Fact]
+    public async Task CanExtractCredentialMaterial()
+    {
+        var r = await workflow.ExtractCredentialMaterialAsync(Image);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.NotEmpty(r.Result.LocalHashes);
+        Assert.Contains(r.Result.LocalHashes, h => h.Rid == 500);             // built-in Administrator
+        Assert.All(r.Result.LocalHashes, h => Assert.NotEmpty(h.User));
+        Assert.NotEmpty(r.Result.LsaSecrets);
+        // At least one LSA secret decodes to printable plaintext (this image has UTF-16 plaintext secrets).
+        Assert.NotEmpty(r.Result.PlaintextSecrets);
+    }
+
+    [Fact]
+    public async Task ExtractCredentialMaterialFailsForMissingImage()
+    {
+        var r = await workflow.ExtractCredentialMaterialAsync("/mnt/artifacts/does_not_exist.raw");
+
+        Assert.False(r.IsSuccess);
+        Assert.Null(r.Result);
+        Assert.NotNull(r.Message);
+    }
+
     const string Image = "/mnt/artifacts/pat-2009-11-19.mddramimage";
     const string Win10Image = "/mnt/artifacts/Rocba-Memory.raw";
 

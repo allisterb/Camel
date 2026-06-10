@@ -246,6 +246,55 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
         sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, false);
     }
 
+    [Fact]
+    public async Task FindsDllHijacking()
+    {
+        // Build a synthetic volume: a Windows-root DLL that shadows a System32 DLL with different bytes
+        // (search-order hijack), a same-size-but-different shadow (exercises the hash path), a DLL in a transient
+        // location, and two benign cases that must NOT flag: a non-shadowing root DLL and a byte-identical shadow.
+        const string v = "/tmp/camel_dllhj";
+        void W(string rel, string content) => sshenv.ExecuteCommand("bash", $"-c \"printf '%s' '{content}' > '{v}/{rel}'\"", out _, false);
+        sshenv.ExecuteCommand("rm", $"-rf {v}", out _, false);
+        sshenv.ExecuteCommand("mkdir", $"-p {v}/Windows/System32 {v}/Windows/Temp", out _, false);
+        W("Windows/System32/ntshrui.dll", "GENUINE-SYSTEM32-NTSHRUI");   // genuine
+        W("Windows/ntshrui.dll", "EVIL");                                 // shadow, different size -> hijack
+        W("Windows/System32/samesize.dll", "AAAA");
+        W("Windows/samesize.dll", "BBBB");                                // shadow, same size diff bytes -> hijack (hash path)
+        W("Windows/System32/identical.dll", "SAME");
+        W("Windows/identical.dll", "SAME");                               // byte-identical copy -> benign
+        W("Windows/twain_32.dll", "no-system32-counterpart");             // non-shadow root DLL -> benign
+        W("Windows/Temp/payload.dll", "dropped");                         // transient-location DLL -> flag
+
+        var r = await workflow.FindDllHijackingAsync(v);
+
+        Assert.True(r.IsSuccess, r.Message);
+        var names = r.Result!.Findings.Select(f => f.Name).ToArray();
+        Assert.Contains("ntshrui.dll", names);
+        Assert.Contains("samesize.dll", names);
+        Assert.Contains("payload.dll", names);
+        Assert.DoesNotContain("identical.dll", names);  // byte-identical -> not a hijack
+        Assert.DoesNotContain("twain_32.dll", names);   // doesn't shadow System32 -> not flagged
+
+        var shadow = Assert.Single(r.Result.Findings, f => f.Name == "ntshrui.dll");
+        Assert.Equal("Search-order shadow", shadow.Kind);
+        Assert.Equal($"{v}/Windows/System32/ntshrui.dll", shadow.ShadowedSystemDll);
+        Assert.Equal("Transient-location DLL", Assert.Single(r.Result.Findings, f => f.Name == "payload.dll").Kind);
+
+        sshenv.ExecuteCommand("rm", $"-rf {v}", out _, false);
+    }
+
+    [Fact]
+    public async Task FindDllHijackingIsCleanForBenignImage()
+    {
+        // The clean modern image has no Windows-root shadows and no DLLs in the transient dirs scanned (user
+        // AppData\Local\Temp DLLs are deliberately not scanned), so a real volume yields zero false positives.
+        var r = await workflow.FindDllHijackingAsync(Modern);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.Empty(r.Result.Findings);
+    }
+
     const string Modern = "/mnt/ewf";
 
     AuditEnvironment sshenv;

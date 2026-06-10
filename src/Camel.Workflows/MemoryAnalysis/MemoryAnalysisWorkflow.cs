@@ -192,6 +192,52 @@ public class MemoryAnalysisWorkflow : Workflow
                 : $"Found {remoteIPs.Length} unique remote IP(s) across {connections.Length} netscan connection(s): {string.Join(", ", remoteIPs)}.");
     }
 
+    /// <summary>
+    /// Extracts the credential material an attacker could harvest from a Windows memory image: local account
+    /// NTLM hashes from the SAM (<c>windows.hashdump</c>), LSA secrets (<c>windows.lsadump</c>) — decoding any
+    /// that are plaintext (service-account passwords, the DefaultPassword auto-logon value, …) — and cached
+    /// domain credentials (<c>windows.cachedump</c>, mscash2). Use it to scope credential exposure: pivot the NT
+    /// hashes for pass-the-hash, crack the cached creds, and read the plaintext secrets directly.
+    /// </summary>
+    /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
+    public async Task<WorkflowResult<CredentialReport>> ExtractCredentialMaterialAsync(string imageFile)
+    {
+        using var op = Begin("Extracting credential material from {0}", imageFile);
+
+        // SAM local-account hashes; if this fails the image is unreadable / its symbols are unavailable.
+        var hashes = await MemoryAnalysis.WindowsHashdumpAsync(imageFile);
+        if (hashes is null)
+            return WorkflowResult<CredentialReport>.Failure(
+                $"windows.hashdump failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
+
+        var lsa = await MemoryAnalysis.WindowsLsadumpAsync(imageFile) ?? [];
+        var cached = await MemoryAnalysis.WindowsCachedumpAsync(imageFile) ?? [];
+
+        // Decode each LSA secret's bytes; plaintext secrets (e.g. UTF-16 passwords) surface, key material doesn't.
+        var secrets = lsa.Select(s => new LsaSecret { Key = s.Key, Hex = s.Hex ?? s.Secret, DecodedText = DecodeSecret(s.Hex ?? s.Secret) }).ToArray();
+
+        op.Complete();
+        var report = new CredentialReport { LocalHashes = hashes, LsaSecrets = secrets, CachedCredentials = cached };
+        return WorkflowResult<CredentialReport>.Success(report,
+            $"Recovered {hashes.Length} local hash(es), {secrets.Length} LSA secret(s) ({report.PlaintextSecrets.Length} plaintext), " +
+            $"and {cached.Length} cached domain credential(s) from '{imageFile}'.");
+    }
+
+    // Decodes an LSA-secret hex byte string ("76 00 46 00 ...") to UTF-16 text, returning it only when the
+    // result is fully printable (a real plaintext secret); binary key material returns null.
+    static string? DecodeSecret(string? hex)
+    {
+        if (string.IsNullOrWhiteSpace(hex)) return null;
+        try
+        {
+            var bytes = hex.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(b => Convert.ToByte(b, 16)).ToArray();
+            if (bytes.Length == 0) return null;
+            var text = System.Text.Encoding.Unicode.GetString(bytes).TrimEnd('\0');
+            return text.Length > 0 && text.All(c => !char.IsControl(c) || c is '\t' or '\n' or '\r') ? text : null;
+        }
+        catch { return null; }
+    }
+
     // A foreign address is a routable remote endpoint when it isn't blank, loopback, unspecified, or a wildcard.
     static bool IsRoutableRemote(string? addr) =>
         !string.IsNullOrWhiteSpace(addr) && addr is not ("0.0.0.0" or "127.0.0.1" or "::" or "::1" or "*");

@@ -194,6 +194,80 @@ public class WindowsAnalysisWorkflow : Workflow
         catch { return null; }
     }
 
+    /// <summary>
+    /// Hunts DLL-hijacking persistence on a mounted Windows volume (<paramref name="volumeRoot"/>, e.g. the
+    /// directory an image is mounted at). DLL hijacking is a file-system artifact, so this looks for the two
+    /// high-precision signals from the methodology: (1) a <c>\Windows</c>-root DLL that <em>shadows</em> a
+    /// System32 DLL of the same name but differs from it — the classic search-order hijack of a Windows-folder
+    /// binary (e.g. a malicious <c>ntshrui.dll</c> loaded by Explorer); and (2) DLLs dropped in transient/
+    /// world-writable locations where DLLs never normally reside. Byte-identical \Windows-root copies and
+    /// non-shadowing Windows-root DLLs (e.g. <c>twain_32.dll</c>) are not flagged. Phantom hijacks and app-local
+    /// side-loading (which need a known-good signature/hash baseline) are out of scope. Findings are leads.
+    /// </summary>
+    /// <param name="volumeRoot">The mounted volume root (its <c>Windows</c> folder and transient dirs are scanned).</param>
+    /// <param name="transientDllDirs">Directories that should not normally contain DLLs. Defaults to
+    /// <c>\Windows\Temp</c>, <c>\Temp</c>, <c>\PerfLogs</c>, <c>\$Recycle.Bin</c> (user temp/AppData are excluded
+    /// as too noisy). Paths are taken as-is when supplied.</param>
+    public async Task<WorkflowResult<DllHijackReport>> FindDllHijackingAsync(string volumeRoot, string[]? transientDllDirs = null)
+    {
+        var root = volumeRoot.TrimEnd('/');
+        var win = $"{root}/Windows";
+        transientDllDirs ??= [$"{win}/Temp", $"{root}/Temp", $"{root}/temp", $"{root}/PerfLogs", $"{root}/$Recycle.Bin"];
+
+        using var op = Begin("Hunting DLL hijacking on {0}", volumeRoot);
+
+        // Build the set of genuine System32/SysWOW64 DLLs (name -> file), used to detect \Windows-root shadows.
+        var systemDlls = (await DiskAnalysis.FindFilesAsync($"{win}/System32", "*.dll", maxDepth: 1))
+            .Concat(await DiskAnalysis.FindFilesAsync($"{win}/SysWOW64", "*.dll", maxDepth: 1))
+            .GroupBy(f => f.Name.ToLowerInvariant())
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var findings = new List<DllHijackFinding>();
+
+        // (1) Search-order shadows: a DLL in the Windows folder root that impersonates a System32 DLL but differs.
+        var rootDlls = await DiskAnalysis.FindFilesAsync(win, "*.dll", maxDepth: 1);
+        int scanned = rootDlls.Length;
+        foreach (var dll in rootDlls)
+        {
+            if (!systemDlls.TryGetValue(dll.Name.ToLowerInvariant(), out var genuine)) continue; // not a shadow (e.g. twain_32.dll)
+            if (!await DiffersFromAsync(dll, genuine)) continue;                                  // byte-identical copy => benign
+            findings.Add(new DllHijackFinding
+            {
+                Path = dll.Path, Name = dll.Name, Size = dll.Size, Kind = "Search-order shadow",
+                ShadowedSystemDll = genuine.Path,
+                Reasons = [$"a DLL in the Windows folder shadows the System32 DLL '{dll.Name}' but differs from it (search-order hijack)"],
+            });
+        }
+
+        // (2) DLLs in transient/world-writable locations (any name) — DLLs do not normally live here.
+        foreach (var dir in transientDllDirs)
+        {
+            var dlls = await DiskAnalysis.FindFilesAsync(dir, "*.dll", maxDepth: 4);
+            scanned += dlls.Length;
+            findings.AddRange(dlls.Select(d => new DllHijackFinding
+            {
+                Path = d.Path, Name = d.Name, Size = d.Size, Kind = "Transient-location DLL",
+                Reasons = [$"DLL found in a transient/world-writable location ('{dir}') where DLLs do not normally reside"],
+            }));
+        }
+
+        op.Complete();
+        var report = new DllHijackReport { Findings = findings.ToArray(), DllsScanned = scanned };
+        return WorkflowResult<DllHijackReport>.Success(report,
+            findings.Count == 0
+                ? $"No DLL-hijacking indicators among {scanned} candidate DLL(s) examined."
+                : $"Found {findings.Count} DLL-hijacking lead(s): " +
+                  string.Join("; ", findings.Select(f => $"{f.Path} [{f.Kind}]")) + ".");
+    }
+
+    // Two filesystem files differ when their sizes differ, or (same size) their SHA-256 digests differ.
+    private async Task<bool> DiffersFromAsync(FsFile a, FsFile b)
+    {
+        if (a.Size != b.Size) return true;
+        var (ha, hb) = (await DiskAnalysis.Sha256Async(a.Path), await DiskAnalysis.Sha256Async(b.Path));
+        return ha is null || hb is null || !ha.Equals(hb, StringComparison.OrdinalIgnoreCase);
+    }
+
     // The persistence mechanism categories this workflow recovers, in report order. These mirror the
     // "Autorunsc Detection: Malware Persistence Mechanisms" methodology (minus DLL hijacking, which is a
     // file-system artifact, and WMI event consumers, which have their own workflow).

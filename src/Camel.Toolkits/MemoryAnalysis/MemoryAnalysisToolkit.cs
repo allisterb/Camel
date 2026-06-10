@@ -65,6 +65,15 @@ public class MemoryAnalysisToolkit : Toolkit
 
     public Task<WindowsRegistryUserAssist[]?> WindowsRegistryUserAssistAsync(string filename) => ExecuteToolAsync<WindowsRegistryUserAssist[]>("Volatility3", $"-f {filename} -r json windows.registry.userassist");
 
+    /// <summary>Dumps local account NTLM hashes from the SAM in <paramref name="filename"/> (<c>windows.hashdump</c>).</summary>
+    public Task<WindowsHashdump[]?> WindowsHashdumpAsync(string filename) => ExecuteToolAsync<WindowsHashdump[]>("Volatility3", $"-f {filename} -r json windows.hashdump");
+
+    /// <summary>Dumps LSA secrets (service-account passwords, DPAPI keys, DefaultPassword, …) from <paramref name="filename"/> (<c>windows.lsadump</c>).</summary>
+    public Task<WindowsLsadump[]?> WindowsLsadumpAsync(string filename) => ExecuteToolAsync<WindowsLsadump[]>("Volatility3", $"-f {filename} -r json windows.lsadump");
+
+    /// <summary>Dumps cached domain credentials (mscash/mscash2) from <paramref name="filename"/> (<c>windows.cachedump</c>).</summary>
+    public Task<WindowsCachedump[]?> WindowsCachedumpAsync(string filename) => ExecuteToolAsync<WindowsCachedump[]>("Volatility3", $"-f {filename} -r json windows.cachedump");
+
     /// <summary>
     /// Dumps the executable image (PE) of the process <paramref name="pid"/> from <paramref name="filename"/>
     /// to <paramref name="outputDir"/> on the workstation, via <c>windows.pslist --pid &lt;pid&gt; --dump</c>.

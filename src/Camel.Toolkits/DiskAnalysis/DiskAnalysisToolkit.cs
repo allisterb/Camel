@@ -128,6 +128,30 @@ public class DiskAnalysisToolkit : Toolkit
     /// </summary>
     public async Task<bool> IcatAsync(string image, long inode, string outputFile, int? offset = null) =>
         await ExecuteToolTextAsync("Icat", Offset(offset) + Q(image) + $" {inode} > {Q(outputFile)}") is not null;
+
+    /// <summary>
+    /// Lists files matching <paramref name="namePattern"/> (a case-insensitive glob, e.g. <c>*.dll</c>) under a
+    /// <em>mounted</em> directory <paramref name="directory"/>, optionally limited to <paramref name="maxDepth"/>
+    /// levels (0 = unlimited). Returns each as an <see cref="FsFile"/> (path/name/size). Returns an empty array
+    /// when the directory is absent or holds no matches (a missing path is normal when probing several locations).
+    /// </summary>
+    public async Task<FsFile[]> FindFilesAsync(string directory, string namePattern = "*", int maxDepth = 0)
+    {
+        var depth = maxDepth > 0 ? $"-maxdepth {maxDepth} " : "";
+        var r = await auditEnvironment.ExecuteCommandAsync("find",
+            $"{Q(directory)} {depth}-type f -iname {Q(namePattern)} -printf '%s\\t%p\\n'", false);
+        return r.IsCompleted
+            ? r.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(FsFile.FromFindLine).Where(f => f is not null).Select(f => f!).ToArray()
+            : [];
+    }
+
+    /// <summary>Returns the SHA-256 hex digest of <paramref name="path"/> on the mounted filesystem, or null on failure.</summary>
+    public async Task<string?> Sha256Async(string path)
+    {
+        var r = await auditEnvironment.ExecuteCommandAsync("sha256sum", Q(path), false);
+        return r.IsCompleted ? r.Output.Split(' ', 2, StringSplitOptions.TrimEntries)[0] : null;
+    }
     #endregion
 
     #region File recovery

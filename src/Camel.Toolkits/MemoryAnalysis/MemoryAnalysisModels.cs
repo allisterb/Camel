@@ -11,6 +11,39 @@ public class WindowsInfo
     public object[] __children { get; set; } = [];
 }
 
+/// <summary>windows.hashdump: a local account's NTLM hashes recovered from the SAM in a memory image.</summary>
+public class WindowsHashdump
+{
+    public string User { get; set; } = "";
+    [JsonPropertyName("rid")] public int Rid { get; set; }
+    [JsonPropertyName("lmhash")] public string? LmHash { get; set; }
+    [JsonPropertyName("nthash")] public string? NtHash { get; set; }
+}
+
+/// <summary>
+/// windows.lsadump: one LSA secret (service-account passwords, DPAPI master keys, DefaultPassword auto-logon,
+/// machine account secret, …). <see cref="Secret"/>/<see cref="Hex"/> are space-separated hex bytes; many
+/// secrets are UTF-16 plaintext once decoded.
+/// </summary>
+public class WindowsLsadump
+{
+    public string Key { get; set; } = "";
+    public string? Secret { get; set; }
+    public string? Hex { get; set; }
+}
+
+/// <summary>
+/// windows.cachedump: a cached domain credential (mscash/mscash2 — crackable offline). NOTE: the field mapping
+/// is schema-derived from the plugin's columns; the validation image held no cached creds to verify against.
+/// </summary>
+public class WindowsCachedump
+{
+    public string? Username { get; set; }
+    public string? Domain { get; set; }
+    [JsonPropertyName("Domain name")] public string? DomainName { get; set; }
+    public string? Hash { get; set; }
+}
+
 /// <summary>
 /// A single row from a Volatility dump plugin (e.g. <c>windows.pslist --dump</c>, <c>windows.memmap --dump</c>):
 /// captures only the <c>File output</c> column, which names the file the plugin wrote to the output directory

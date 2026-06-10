@@ -6,6 +6,29 @@ using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
 
+/// <summary>A file on a mounted filesystem: its full <see cref="Path"/>, <see cref="Name"/>, and <see cref="Size"/> in bytes.</summary>
+public class FsFile
+{
+    public string Path { get; set; } = "";
+    public string Name { get; set; } = "";
+    public long Size { get; set; }
+
+    /// <summary>Parses a <c>find -printf '%s\t%p\n'</c> line ("&lt;size&gt;\t&lt;path&gt;") into an <see cref="FsFile"/>.</summary>
+    public static FsFile? FromFindLine(string line)
+    {
+        int tab = line.IndexOf('\t');
+        if (tab < 0) return null;
+        var path = line[(tab + 1)..].TrimEnd('\r');
+        int slash = path.LastIndexOf('/');
+        return new FsFile
+        {
+            Path = path,
+            Name = slash >= 0 ? path[(slash + 1)..] : path,
+            Size = long.TryParse(line[..tab], out var s) ? s : 0,
+        };
+    }
+}
+
 /// <summary>Shared parsing helpers for The Sleuth Kit / EWF plain-text tool output.</summary>
 internal static class TskParse
 {

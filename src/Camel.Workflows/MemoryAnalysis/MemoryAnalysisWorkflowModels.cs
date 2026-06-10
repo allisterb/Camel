@@ -1,5 +1,7 @@
 namespace Camel.Workflows.Models;
 
+using System.Linq;
+
 using Camel.Toolkits.Models;
 
 /// <summary>
@@ -119,4 +121,33 @@ public record MemoryTimeline
         this.TimelinePath = timelinePath;
         this.BodyfilePath = bodyfilePath;
     }
+}
+
+/// <summary>
+/// One LSA secret recovered from memory: its <see cref="Key"/>, the raw <see cref="Hex"/> bytes, and —
+/// when the bytes decode to printable text (UTF-16) — the <see cref="DecodedText"/>. Many LSA secrets are
+/// plaintext (service-account passwords, the DefaultPassword auto-logon value); binary key material decodes
+/// to null.
+/// </summary>
+public record LsaSecret
+{
+    public string Key { get; init; } = "";
+    public string? Hex { get; init; }
+    public string? DecodedText { get; init; }
+}
+
+/// <summary>
+/// The credential material recovered from a Windows memory image: local account NTLM hashes from the SAM
+/// (<see cref="LocalHashes"/>), <see cref="LsaSecrets"/>, and cached domain credentials
+/// (<see cref="CachedCredentials"/>, mscash/mscash2). This scopes what an attacker who accessed this host could
+/// have harvested — pivot the hashes for pass-the-hash exposure and crack the cached creds / read plaintext secrets.
+/// </summary>
+public record CredentialReport
+{
+    public WindowsHashdump[] LocalHashes { get; init; } = [];
+    public LsaSecret[] LsaSecrets { get; init; } = [];
+    public WindowsCachedump[] CachedCredentials { get; init; } = [];
+
+    /// <summary>LSA secrets whose bytes decoded to printable plaintext (the high-value subset).</summary>
+    public LsaSecret[] PlaintextSecrets => LsaSecrets.Where(s => !string.IsNullOrEmpty(s.DecodedText)).ToArray();
 }
