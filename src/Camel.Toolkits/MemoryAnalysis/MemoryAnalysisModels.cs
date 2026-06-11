@@ -343,3 +343,235 @@ public class WindowsPsTree
     public bool Wow64 { get; set; }
     public WindowsPsTree[] __children { get; set; } = [];
 }
+
+/// <summary>
+/// windows.ldrmodules: one DLL/module mapping in a process, with the three PEB doubly-linked-list flags
+/// (<see cref="InLoad"/>, <see cref="InInit"/>, <see cref="InMem"/>) and the VAD-tree-derived
+/// <see cref="MappedPath"/>. Stealthy injection unlinks the DLL from one or more lists (an entry present in
+/// VAD but missing in the PEB lists, or with no MappedPath, is the injection indicator).
+/// </summary>
+public class WindowsLdrModules
+{
+    public long Base { get; set; }
+    public bool InInit { get; set; }
+    public bool InLoad { get; set; }
+    public bool InMem { get; set; }
+    public string? MappedPath { get; set; }
+    [JsonPropertyName("Pid")] public int PID { get; set; }
+    public string Process { get; set; } = "";
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>
+/// windows.hollowprocesses: a process flagged for hollowing — the PEB's image base doesn't match the in-memory
+/// VAD or the on-disk image. <see cref="Notes"/> describes which check failed.
+/// </summary>
+public class WindowsHollowProcesses
+{
+    public int PID { get; set; }
+    public string Process { get; set; } = "";
+    public string? Notes { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>
+/// windows.threads: one thread in a process. <see cref="StartAddress"/> / <see cref="StartPath"/> identify
+/// the kernel start; <see cref="Win32StartAddress"/> / <see cref="Win32StartPath"/> the user-mode start
+/// (where an injected thread typically diverges from a host-process baseline).
+/// </summary>
+public class WindowsThreads
+{
+    public DateTime? CreateTime { get; set; }
+    public DateTime? ExitTime { get; set; }
+    public long Offset { get; set; }
+    public int PID { get; set; }
+    public long StartAddress { get; set; }
+    public string? StartPath { get; set; }
+    public int TID { get; set; }
+    public long Win32StartAddress { get; set; }
+    public string? Win32StartPath { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>
+/// windows.ssdt: one System Service Descriptor Table entry. Entries legitimately point into
+/// <c>ntoskrnl</c> / <c>win32k</c>; any other <see cref="Module"/> is a kernel SSDT hook (rootkit indicator).
+/// </summary>
+public class WindowsSsdt
+{
+    public long Address { get; set; }
+    public int Index { get; set; }
+    public string Module { get; set; } = "";
+    public string? Symbol { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>
+/// windows.callbacks: one registered kernel callback (image/thread/process/registry notify routines, Bug-check
+/// callbacks, …). <see cref="Module"/> identifies who registered it; foreign (non-MS) modules registering
+/// callbacks are common rootkit / EDR indicators.
+/// </summary>
+public class WindowsCallbacks
+{
+    public long Callback { get; set; }
+    public string? Detail { get; set; }
+    public string? Module { get; set; }
+    public string? Symbol { get; set; }
+    public string Type { get; set; } = "";
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>
+/// windows.driverirp: one Major Function entry in a driver's IRP_MJ table. Entries legitimately resolve to
+/// the owning driver or <c>ntoskrnl</c>; any other <see cref="Module"/> is an IRP-table hook.
+/// </summary>
+public class WindowsDriverIrp
+{
+    public long Address { get; set; }
+    [JsonPropertyName("Driver Name")] public string DriverName { get; set; } = "";
+    public string IRP { get; set; } = "";
+    public string Module { get; set; } = "";
+    public long Offset { get; set; }
+    public string? Symbol { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>
+/// windows.psxview: a process viewed by four enumeration sources (<see cref="PsList"/>, <see cref="PsScan"/>,
+/// <see cref="ThrdScan"/>, <see cref="Csrss"/>). A process visible in some sources but not others — beyond the
+/// legitimate "exited but not yet freed" case — is the cross-view hidden-process indicator.
+/// </summary>
+public class WindowsPsxView
+{
+    [JsonPropertyName("Exit Time")] public string? ExitTime { get; set; }
+    public string Name { get; set; } = "";
+    [JsonPropertyName("Offset(Virtual)")] public long OffsetVirtual { get; set; }
+    public int PID { get; set; }
+    [JsonPropertyName("csrss")] public bool Csrss { get; set; }
+    [JsonPropertyName("pslist")] public bool PsList { get; set; }
+    [JsonPropertyName("psscan")] public bool PsScan { get; set; }
+    [JsonPropertyName("thrdscan")] public bool ThrdScan { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>
+/// windows.mutantscan: one mutant (mutex) object found by pool-tag scanning. Named mutexes are the
+/// canonical malware-family IOC (single-instance markers; e.g. <c>Global\ZeusMutex</c>).
+/// </summary>
+public class WindowsMutantScan
+{
+    public string? Name { get; set; }
+    public long Offset { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>
+/// windows.cmdscan: one COMMAND_HISTORY buffer recovered from a console host (cmd.exe / conhost.exe), with
+/// the typed command lines.
+/// </summary>
+public class WindowsCmdScan
+{
+    [JsonPropertyName("CommandHistory")] public long CommandHistory { get; set; }
+    [JsonPropertyName("CommandCountMax")] public int? CommandCountMax { get; set; }
+    [JsonPropertyName("LastAdded")] public int? LastAdded { get; set; }
+    [JsonPropertyName("LastDisplayed")] public int? LastDisplayed { get; set; }
+    [JsonPropertyName("ProcessHandle")] public long? ProcessHandle { get; set; }
+    public int PID { get; set; }
+    public string Process { get; set; } = "";
+    public string? Application { get; set; }
+    [JsonPropertyName("Cmd")] public string? Cmd { get; set; }
+    [JsonPropertyName("Data")] public string? Data { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>
+/// windows.consoles: one CONSOLE_INFORMATION buffer — what was displayed in the console (typed commands plus
+/// the output written back). More comprehensive than cmdscan: includes program output.
+/// </summary>
+public class WindowsConsoles
+{
+    public int PID { get; set; }
+    public string Process { get; set; } = "";
+    [JsonPropertyName("ConsoleProcess")] public string? ConsoleProcess { get; set; }
+    public int? ConsolePid { get; set; }
+    [JsonPropertyName("ScreenBuffer")] public long? ScreenBuffer { get; set; }
+    [JsonPropertyName("Data")] public string? Data { get; set; }
+    [JsonPropertyName("Cmd")] public string? Cmd { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>
+/// windows.shimcachemem: one Application Compatibility Cache entry recovered from kernel memory (i.e. before
+/// it would be flushed to the SYSTEM hive at shutdown). <see cref="FilePath"/> + <see cref="LastModified"/>
+/// are the canonical execution-evidence pair.
+/// </summary>
+public class WindowsShimcacheMem
+{
+    [JsonPropertyName("Exec Flag")] public string? ExecFlag { get; set; }
+    [JsonPropertyName("File Path")] public string FilePath { get; set; } = "";
+    [JsonPropertyName("File Size")] public long? FileSize { get; set; }
+    [JsonPropertyName("Last Modified")] public DateTime? LastModified { get; set; }
+    [JsonPropertyName("Last Update")] public DateTime? LastUpdate { get; set; }
+    public int Order { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>
+/// windows.skeleton_key_check: an LSASS-resident Skeleton Key implant indicator on a Domain Controller —
+/// when a patched <c>CDLocateCSystem</c> is detected the row carries the implant details. Empty result = clean.
+/// </summary>
+public class WindowsSkeletonKeyCheck
+{
+    public int? PID { get; set; }
+    public string? Process { get; set; }
+    [JsonPropertyName("Skeleton Key Found")] public bool? SkeletonKeyFound { get; set; }
+    [JsonPropertyName("rc4HmacInitialize")] public long? Rc4HmacInitialize { get; set; }
+    [JsonPropertyName("rc4HmacDecrypt")] public long? Rc4HmacDecrypt { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>
+/// windows.processghosting: a process whose backing file was deleted before <c>NtCreateProcessEx</c> — the
+/// Process Ghosting evasion. Empty result = clean.
+/// </summary>
+public class WindowsProcessGhosting
+{
+    public int PID { get; set; }
+    public string Process { get; set; } = "";
+    [JsonPropertyName("DeletePending")] public int? DeletePending { get; set; }
+    [JsonPropertyName("FILE_OBJECT")] public long? FileObject { get; set; }
+    public string? Path { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>
+/// windows.verinfo: PE version-info for a loaded module/EXE/DLL. <see cref="Product"/> typically carries the
+/// company/product strings; signed Microsoft binaries report consistent values, masquerades often don't.
+/// </summary>
+public class WindowsVerInfo
+{
+    public long Base { get; set; }
+    public int? Build { get; set; }
+    public int? Major { get; set; }
+    public int? Minor { get; set; }
+    public string Name { get; set; } = "";
+    public int? PID { get; set; }
+    public string? Process { get; set; }
+    public string? Product { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>
+/// windows.vadyarascan: one YARA rule match found inside a process's VAD region. <see cref="Rule"/> is the
+/// matching rule's name; <see cref="Offset"/> is where in the region the match starts.
+/// </summary>
+public class WindowsVadYaraScan
+{
+    public long Offset { get; set; }
+    public string Rule { get; set; } = "";
+    public string Component { get; set; } = "";
+    public string? Value { get; set; }
+    public int? PID { get; set; }
+    public string? Process { get; set; }
+    public object[] __children { get; set; } = [];
+}

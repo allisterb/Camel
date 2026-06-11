@@ -151,3 +151,176 @@ public record CredentialReport
     /// <summary>LSA secrets whose bytes decoded to printable plaintext (the high-value subset).</summary>
     public LsaSecret[] PlaintextSecrets => LsaSecrets.Where(s => !string.IsNullOrEmpty(s.DecodedText)).ToArray();
 }
+
+/// <summary>
+/// The result of hunting code injection across a Windows memory image. Three orthogonal sources are merged:
+/// <list type="bullet">
+/// <item><see cref="UnlinkedDlls"/> — DLLs visible in the VAD tree but missing from one or more PEB lists
+/// (the <c>ldrmodules</c> signal). Includes DLLs with no <c>MappedPath</c> (loaded outside the Windows API,
+/// i.e. reflective DLL injection).</item>
+/// <item><see cref="HollowedProcesses"/> — processes whose PEB image base disagrees with the in-memory VAD
+/// or on-disk image (the <c>hollowprocesses</c> signal).</item>
+/// <item><see cref="AnomalousRegions"/> — the underlying <c>malfind</c> report (MZ-headed and RWX regions).</item>
+/// </list>
+/// <see cref="SuspectPids"/> aggregates the distinct PIDs flagged by any source, ranked by total signals.
+/// </summary>
+public record CodeInjectionReport
+{
+    public WindowsLdrModules[] UnlinkedDlls { get; init; } = [];
+    public WindowsHollowProcesses[] HollowedProcesses { get; init; } = [];
+    public AnomalousMemoryReport AnomalousRegions { get; init; } = new([], [], []);
+
+    /// <summary>Distinct PIDs flagged by any source, with the per-PID signal count, ordered by count desc.</summary>
+    public (int Pid, string Process, int SignalCount)[] SuspectPids
+    {
+        get
+        {
+            var rows = UnlinkedDlls.Select(u => (u.PID, u.Process))
+                .Concat(HollowedProcesses.Select(h => (h.PID, h.Process)))
+                .Concat(AnomalousRegions.SuspectRegions.Select(r => (r.PID, r.Process)));
+            return rows
+                .GroupBy(r => r.PID)
+                .Select(g => (Pid: g.Key, Process: g.First().Process, SignalCount: g.Count()))
+                .OrderByDescending(g => g.SignalCount)
+                .ThenBy(g => g.Pid)
+                .ToArray();
+        }
+    }
+}
+
+/// <summary>
+/// The result of hunting kernel rootkit hooks across a Windows memory image. Each row identifies a hook in
+/// one of the three kernel hooking surfaces (<see cref="HookSurface"/>): <c>SSDT</c>, <c>Callback</c>, or
+/// <c>IRP</c>. Legitimate entries owned by the canonical Microsoft kernel modules (<c>ntoskrnl</c>,
+/// <c>win32k</c>, <c>hal</c>) are filtered out; what's left is rootkit, EDR, or third-party AV hooking — leads
+/// to triage, not verdicts.
+/// </summary>
+public record KernelRootkitReport
+{
+    public KernelHook[] Hooks { get; init; } = [];
+    public int SsdtScanned { get; init; }
+    public int CallbacksScanned { get; init; }
+    public int DriverIrpScanned { get; init; }
+
+    /// <summary>Distinct foreign modules registering hooks, ordered by hook count.</summary>
+    public (string Module, int HookCount)[] ForeignModules =>
+        Hooks
+            .GroupBy(h => h.Module ?? "?", StringComparer.OrdinalIgnoreCase)
+            .Select(g => (Module: g.Key, HookCount: g.Count()))
+            .OrderByDescending(g => g.HookCount)
+            .ThenBy(g => g.Module, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+}
+
+/// <summary>
+/// One kernel hook found by <see cref="KernelRootkitReport"/>: the source <see cref="HookSurface"/> that
+/// reported it, the hooked <see cref="Target"/> (SSDT symbol, callback type, or IRP major function), and the
+/// foreign <see cref="Module"/> that owns the implementation.
+/// </summary>
+public record KernelHook
+{
+    public string HookSurface { get; init; } = "";
+    public string Target { get; init; } = "";
+    public string? Module { get; init; }
+    public string? Symbol { get; init; }
+    public long Address { get; init; }
+}
+
+/// <summary>
+/// The result of a cross-view hidden-process scan via <c>windows.psxview</c>. Each row of the report names a
+/// process and which of four enumeration sources (<see cref="HiddenProcessSighting.PsList"/>,
+/// <see cref="HiddenProcessSighting.PsScan"/>, <see cref="HiddenProcessSighting.ThrdScan"/>,
+/// <see cref="HiddenProcessSighting.Csrss"/>) saw it. <see cref="HiddenSightings"/> is the subset that exhibits
+/// a visibility gap beyond the legitimate "exited but not yet freed" case (any process missing from
+/// <c>psscan</c>, or missing from <c>pslist</c> while still running).
+/// </summary>
+public record CrossViewHiddenProcessReport
+{
+    public HiddenProcessSighting[] AllSightings { get; init; } = [];
+    public HiddenProcessSighting[] HiddenSightings { get; init; } = [];
+}
+
+/// <summary>One row of a cross-view hidden-process report (see <see cref="CrossViewHiddenProcessReport"/>).</summary>
+public record HiddenProcessSighting
+{
+    public int Pid { get; init; }
+    public string Name { get; init; } = "";
+    public string? ExitTime { get; init; }
+    public bool PsList { get; init; }
+    public bool PsScan { get; init; }
+    public bool ThrdScan { get; init; }
+    public bool Csrss { get; init; }
+
+    public bool HasExited => !string.IsNullOrWhiteSpace(ExitTime);
+    /// <summary>Sources that saw this process (the "True" columns).</summary>
+    public string[] SeenBy =>
+        new[] { PsList ? "pslist" : null, PsScan ? "psscan" : null, ThrdScan ? "thrdscan" : null, Csrss ? "csrss" : null }
+            .Where(s => s is not null).ToArray()!;
+    /// <summary>Sources that did NOT see this process (the "False" columns).</summary>
+    public string[] MissedBy =>
+        new[] { PsList ? null : "pslist", PsScan ? null : "psscan", ThrdScan ? null : "thrdscan", Csrss ? null : "csrss" }
+            .Where(s => s is not null).ToArray()!;
+}
+
+/// <summary>
+/// The result of reconstructing interactive-attacker console activity from a Windows memory image via
+/// <c>windows.cmdscan</c> (typed commands) and <c>windows.consoles</c> (typed + program output). The
+/// <see cref="ConsoleSessions"/> aggregate every recovered buffer per (PID, console process); the
+/// <see cref="TypedCommands"/> flatten just the command history for quick triage.
+/// </summary>
+public record ConsoleHistoryReport
+{
+    public ConsoleSession[] ConsoleSessions { get; init; } = [];
+    public TypedCommand[] TypedCommands { get; init; } = [];
+}
+
+/// <summary>One console buffer recovered from memory: which process hosted it, the typed command lines, and
+/// (when <c>consoles</c> recovered it) the screen-buffer output.</summary>
+public record ConsoleSession
+{
+    public int Pid { get; init; }
+    public string Process { get; init; } = "";
+    public string? Application { get; init; }
+    public string[] TypedCommands { get; init; } = [];
+    public string? ScreenOutput { get; init; }
+}
+
+/// <summary>One command typed in a console — its hosting PID and process, and the command line itself.</summary>
+public record TypedCommand
+{
+    public int Pid { get; init; }
+    public string Process { get; init; } = "";
+    public string Command { get; init; } = "";
+}
+
+/// <summary>
+/// The result of scanning every process's VAD regions for YARA-rule matches via <c>windows.vadyarascan</c>.
+/// <see cref="Matches"/> is the raw match rows; <see cref="MatchesByRule"/> / <see cref="MatchesByProcess"/>
+/// pivot for triage. Bring your own rules file — anything compatible with <c>yara</c>.
+/// </summary>
+public record MemoryYaraReport
+{
+    public WindowsVadYaraScan[] Matches { get; init; } = [];
+    public string RulesFile { get; init; } = "";
+
+    public (string Rule, int Count)[] MatchesByRule =>
+        Matches.GroupBy(m => m.Rule).Select(g => (Rule: g.Key, Count: g.Count()))
+            .OrderByDescending(g => g.Count).ThenBy(g => g.Rule).ToArray();
+    public (int Pid, string Process, int Count)[] MatchesByProcess =>
+        Matches.Where(m => m.PID is not null)
+            .GroupBy(m => m.PID!.Value)
+            .Select(g => (Pid: g.Key, Process: g.First().Process ?? "?", Count: g.Count()))
+            .OrderByDescending(g => g.Count).ThenBy(g => g.Pid).ToArray();
+}
+
+/// <summary>
+/// The result of a Skeleton Key check against an LSASS-bearing DC memory image
+/// (<c>windows.skeleton_key_check</c>). On a clean DC the <see cref="Findings"/> are empty and
+/// <see cref="IsCompromised"/> is false; a finding indicates a patched <c>CDLocateCSystem</c>, the canonical
+/// implant signature.
+/// </summary>
+public record SkeletonKeyReport
+{
+    public WindowsSkeletonKeyCheck[] Findings { get; init; } = [];
+    public bool IsCompromised => Findings.Any(f => f.SkeletonKeyFound == true);
+}

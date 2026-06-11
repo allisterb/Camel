@@ -312,4 +312,273 @@ public class MemoryAnalysisWorkflow : Workflow
     static bool IsReadWriteExecute(string protection) =>
         protection.Contains("EXECUTE", StringComparison.OrdinalIgnoreCase) &&
         protection.Contains("WRITE", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Hunts code injection in a Windows memory image by merging three orthogonal Volatility signals from the
+    /// FOR508.3 methodology's Step 4: <c>windows.ldrmodules</c> (DLLs visible in the VAD tree but missing from
+    /// one or more PEB doubly-linked lists, or with no <c>MappedPath</c> — the reflective-DLL / unlinked-DLL
+    /// indicator), <c>windows.hollowprocesses</c> (PEB image base disagrees with the VAD or on-disk image —
+    /// process hollowing), and <c>windows.malfind</c> (private, executable regions with no file backing — MZ-
+    /// headed = injected image, RWX = shellcode), via <see cref="FindAnomalousMemoryIndicatorsAsync"/>. The
+    /// report aggregates suspect PIDs and ranks them by total signal count across the three sources.
+    /// </summary>
+    /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
+    public async Task<WorkflowResult<CodeInjectionReport>> FindCodeInjectionAsync(string imageFile)
+    {
+        using var op = Begin("Hunting code injection in {0}", imageFile);
+
+        // Per-process PEB↔VAD DLL list comparison: an entry with no MappedPath, or absent from one of the
+        // three PEB lists despite being in VAD, signals injection / unlinking. Process executables are
+        // legitimately absent from InInit (svchost.exe etc.) so we exclude that single-flag case.
+        var ldr = await MemoryAnalysis.WindowsLdrModulesAsync(imageFile);
+        if (ldr is null)
+            return WorkflowResult<CodeInjectionReport>.Failure(
+                $"windows.ldrmodules failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
+        var unlinked = ldr.Where(IsLdrUnlinked).ToArray();
+
+        // Per-process PEB-vs-VAD-vs-disk image-base check. Empty on clean images.
+        var hollow = await MemoryAnalysis.WindowsHollowProcessesAsync(imageFile) ?? [];
+
+        // Reuse the existing malfind workflow for the third signal — same data the methodology surfaces here.
+        var malfind = await FindAnomalousMemoryIndicatorsAsync(imageFile);
+        if (!malfind.IsSuccess)
+            return WorkflowResult<CodeInjectionReport>.Failure(malfind.Message ?? "windows.malfind failed.");
+
+        op.Complete();
+        var report = new CodeInjectionReport
+        {
+            UnlinkedDlls = unlinked,
+            HollowedProcesses = hollow,
+            AnomalousRegions = malfind.Result!,
+        };
+        return WorkflowResult<CodeInjectionReport>.Success(report,
+            $"Hunted code injection across {ldr.Length} DLL mapping(s): {unlinked.Length} unlinked/orphan, " +
+            $"{hollow.Length} hollowed process(es), {report.AnomalousRegions.SuspectRegions.Length} malfind region(s); " +
+            $"{report.SuspectPids.Length} suspect PID(s).");
+    }
+
+    // ldrmodules flags injection when a DLL has no MappedPath (loaded outside the Windows API — reflective)
+    // OR is unlinked from all three PEB lists despite being present in VAD. Excludes the legitimate case of a
+    // process executable being absent only from InInit.
+    static bool IsLdrUnlinked(WindowsLdrModules m) =>
+        string.IsNullOrEmpty(m.MappedPath) || (!m.InLoad && !m.InInit && !m.InMem);
+
+    /// <summary>
+    /// Hunts kernel rootkit hooks in a Windows memory image by walking the three kernel hooking surfaces
+    /// FOR508.3 Step 5 calls out: the System Service Descriptor Table (<c>windows.ssdt</c>), the registered
+    /// kernel callbacks (<c>windows.callbacks</c> — image/thread/process/registry notify routines and
+    /// Bug-check callbacks), and the per-driver IRP major-function tables (<c>windows.driverirp</c>). Entries
+    /// owned by the canonical Microsoft kernel modules (<c>ntoskrnl</c>, <c>win32k</c>, <c>hal</c>) are
+    /// filtered out as legitimate; what's left is rootkit, EDR, or third-party AV hooking — leads to triage.
+    /// IRP entries are kept only when the implementation module differs from the driver that owns the table.
+    /// </summary>
+    /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
+    public async Task<WorkflowResult<KernelRootkitReport>> DetectKernelRootkitAsync(string imageFile)
+    {
+        using var op = Begin("Detecting kernel rootkit hooks in {0}", imageFile);
+
+        var ssdt = await MemoryAnalysis.WindowsSsdtAsync(imageFile);
+        if (ssdt is null)
+            return WorkflowResult<KernelRootkitReport>.Failure(
+                $"windows.ssdt failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
+        var callbacks = await MemoryAnalysis.WindowsCallbacksAsync(imageFile) ?? [];
+        var driverIrp = await MemoryAnalysis.WindowsDriverIrpAsync(imageFile) ?? [];
+
+        var ssdtHooks = ssdt.Where(e => !IsCanonicalKernelModule(e.Module)).Select(e => new KernelHook
+        {
+            HookSurface = "SSDT",
+            Target = e.Symbol ?? $"index {e.Index}",
+            Module = e.Module,
+            Symbol = e.Symbol,
+            Address = e.Address,
+        });
+        var cbHooks = callbacks.Where(c => !IsCanonicalKernelModule(c.Module)).Select(c => new KernelHook
+        {
+            HookSurface = "Callback",
+            Target = c.Type,
+            Module = c.Module,
+            Symbol = c.Symbol,
+            Address = c.Callback,
+        });
+        // An IRP entry is a hook when its implementation module is neither ntoskrnl nor the driver itself.
+        var irpHooks = driverIrp.Where(e => !IsCanonicalKernelModule(e.Module)
+                && !string.Equals(e.Module, e.DriverName, StringComparison.OrdinalIgnoreCase))
+            .Select(e => new KernelHook
+            {
+                HookSurface = "IRP",
+                Target = $"{e.DriverName}.{e.IRP}",
+                Module = e.Module,
+                Symbol = e.Symbol,
+                Address = e.Address,
+            });
+
+        var hooks = ssdtHooks.Concat(cbHooks).Concat(irpHooks).ToArray();
+        op.Complete();
+        var report = new KernelRootkitReport
+        {
+            Hooks = hooks,
+            SsdtScanned = ssdt.Length,
+            CallbacksScanned = callbacks.Length,
+            DriverIrpScanned = driverIrp.Length,
+        };
+        return WorkflowResult<KernelRootkitReport>.Success(report,
+            hooks.Length == 0
+                ? $"No foreign-module hooks across {ssdt.Length} SSDT entries, {callbacks.Length} callbacks, {driverIrp.Length} IRP entries."
+                : $"Found {hooks.Length} foreign-module hook(s) across SSDT/callbacks/IRP from {report.ForeignModules.Length} module(s): " +
+                  string.Join(", ", report.ForeignModules.Take(5).Select(m => $"{m.Module}×{m.HookCount}")) + ".");
+    }
+
+    // The canonical kernel modules that legitimately own SSDT entries, callbacks, and IRP routines.
+    static bool IsCanonicalKernelModule(string? module) =>
+        module is not null && (
+            module.Equals("ntoskrnl", StringComparison.OrdinalIgnoreCase) ||
+            module.Equals("win32k", StringComparison.OrdinalIgnoreCase) ||
+            module.Equals("hal", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Cross-view hidden-process scan via <c>windows.psxview</c>, the canonical FOR508.3 Step 5 detector. The
+    /// plugin reports each process viewed by four enumeration sources (pslist, psscan, thrdscan, csrss); a
+    /// process visible in some but not others — beyond the legitimate "exited but not yet freed" case — is
+    /// the cross-view hidden-process indicator. Sightings still flagged as hidden are: any process missing
+    /// from <c>psscan</c> (a hidden process should not survive pool scanning), or any still-running process
+    /// (no exit time) missing from <c>pslist</c> (an unlinked EPROCESS — the DKOM signature).
+    /// </summary>
+    /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
+    public async Task<WorkflowResult<CrossViewHiddenProcessReport>> CrossViewHiddenProcessAsync(string imageFile)
+    {
+        using var op = Begin("Cross-view hidden-process scan in {0}", imageFile);
+
+        var rows = await MemoryAnalysis.WindowsPsxViewAsync(imageFile);
+        if (rows is null)
+            return WorkflowResult<CrossViewHiddenProcessReport>.Failure(
+                $"windows.psxview failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
+
+        var sightings = rows.Select(r => new HiddenProcessSighting
+        {
+            Pid = r.PID,
+            Name = r.Name,
+            ExitTime = r.ExitTime,
+            PsList = r.PsList,
+            PsScan = r.PsScan,
+            ThrdScan = r.ThrdScan,
+            Csrss = r.Csrss,
+        }).ToArray();
+
+        var hidden = sightings.Where(s => !s.PsScan || (!s.HasExited && !s.PsList)).ToArray();
+
+        op.Complete();
+        var report = new CrossViewHiddenProcessReport { AllSightings = sightings, HiddenSightings = hidden };
+        return WorkflowResult<CrossViewHiddenProcessReport>.Success(report,
+            hidden.Length == 0
+                ? $"No cross-view hidden processes among {sightings.Length} sighting(s)."
+                : $"Found {hidden.Length} hidden-process sighting(s) across {sightings.Length} scanned: " +
+                  string.Join(", ", hidden.Take(10).Select(h => $"{h.Name} (PID {h.Pid}, missed by {string.Join("/", h.MissedBy)})")) + ".");
+    }
+
+    /// <summary>
+    /// Reconstructs interactive-attacker console activity from a Windows memory image — the FOR508.3 Step 6
+    /// "what did they type" question. Merges <c>windows.cmdscan</c> (typed command lines from
+    /// <c>COMMAND_HISTORY</c> buffers) with <c>windows.consoles</c> (the broader <c>CONSOLE_INFORMATION</c>
+    /// buffers that capture typed commands plus the output the console wrote back). Returns one
+    /// <see cref="ConsoleSession"/> per (PID, console process) plus the flattened command list.
+    /// </summary>
+    /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
+    public async Task<WorkflowResult<ConsoleHistoryReport>> ReconstructConsoleHistoryAsync(string imageFile)
+    {
+        using var op = Begin("Reconstructing console history from {0}", imageFile);
+
+        var cmd = await MemoryAnalysis.WindowsCmdScanAsync(imageFile);
+        if (cmd is null)
+            return WorkflowResult<ConsoleHistoryReport>.Failure(
+                $"windows.cmdscan failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
+        var consoles = await MemoryAnalysis.WindowsConsolesAsync(imageFile) ?? [];
+
+        // Aggregate per (PID, process). cmdscan provides typed lines via Cmd; consoles provides screen-buffer Data.
+        var byPid = cmd.Select(c => (c.PID, c.Process, App: c.Application, Cmd: c.Cmd, Data: (string?)null))
+            .Concat(consoles.Select(c => (c.PID, c.Process, App: c.ConsoleProcess, Cmd: c.Cmd, Data: c.Data)))
+            .GroupBy(r => (r.PID, r.Process));
+
+        var sessions = byPid.Select(g =>
+        {
+            var typed = g.Select(r => r.Cmd).Where(s => !string.IsNullOrWhiteSpace(s))
+                .SelectMany(s => s!.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .ToArray();
+            var output = string.Join('\n', g.Select(r => r.Data).Where(s => !string.IsNullOrWhiteSpace(s))!);
+            return new ConsoleSession
+            {
+                Pid = g.Key.PID,
+                Process = g.Key.Process,
+                Application = g.Select(r => r.App).FirstOrDefault(a => !string.IsNullOrEmpty(a)),
+                TypedCommands = typed,
+                ScreenOutput = string.IsNullOrEmpty(output) ? null : output,
+            };
+        }).ToArray();
+
+        var typedCommands = sessions
+            .SelectMany(s => s.TypedCommands.Select(c => new TypedCommand { Pid = s.Pid, Process = s.Process, Command = c }))
+            .ToArray();
+
+        op.Complete();
+        var report = new ConsoleHistoryReport { ConsoleSessions = sessions, TypedCommands = typedCommands };
+        return WorkflowResult<ConsoleHistoryReport>.Success(report,
+            typedCommands.Length == 0 && sessions.Length == 0
+                ? "No console history recovered (no cmdscan/consoles buffers found)."
+                : $"Recovered {sessions.Length} console session(s), {typedCommands.Length} typed command(s) " +
+                  $"({cmd.Length} cmdscan buffer(s), {consoles.Length} consoles buffer(s)).");
+    }
+
+    /// <summary>
+    /// Scans every process's VAD regions in a Windows memory image against the YARA rules at
+    /// <paramref name="yaraRulesFile"/> (<c>windows.vadyarascan</c>) — the FOR508.3 IOC/scaling layer.
+    /// Use this with a curated rule pack to triage at scale (Mandiant Capa, the YARA-rules community
+    /// repository, family-specific rules from previous engagements, etc.). The result groups matches per
+    /// rule and per process for fast triage.
+    /// </summary>
+    /// <param name="imageFile">Path to the Windows memory image to scan.</param>
+    /// <param name="yaraRulesFile">Workstation path to a YARA rules file (compiled or source).</param>
+    /// <param name="pid">Optional: limit the scan to one process.</param>
+    /// <param name="wide">When true, also match UTF-16 strings (YARA <c>wide</c> modifier).</param>
+    public async Task<WorkflowResult<MemoryYaraReport>> ScanMemoryWithYaraAsync(
+        string imageFile, string yaraRulesFile, int? pid = null, bool wide = false)
+    {
+        using var op = Begin("YARA-scanning {0} with rules {1}", imageFile, yaraRulesFile);
+
+        var matches = await MemoryAnalysis.WindowsVadYaraScanAsync(imageFile, yaraRulesFile, pid, wide);
+        if (matches is null)
+            return WorkflowResult<MemoryYaraReport>.Failure(
+                $"windows.vadyarascan failed for '{imageFile}' with rules '{yaraRulesFile}'; check the rules file and image.");
+
+        op.Complete();
+        var report = new MemoryYaraReport { Matches = matches, RulesFile = yaraRulesFile };
+        return WorkflowResult<MemoryYaraReport>.Success(report,
+            matches.Length == 0
+                ? $"No YARA matches in '{imageFile}' for rules '{yaraRulesFile}'."
+                : $"Found {matches.Length} YARA match(es) across {report.MatchesByRule.Length} rule(s) " +
+                  $"and {report.MatchesByProcess.Length} process(es): top rules — " +
+                  string.Join(", ", report.MatchesByRule.Take(5).Select(r => $"{r.Rule}×{r.Count}")) + ".");
+    }
+
+    /// <summary>
+    /// DC-only: detects a Skeleton Key implant in LSASS by running <c>windows.skeleton_key_check</c>. Empty
+    /// result = clean. The plugin flags a patched <c>CDLocateCSystem</c>, the canonical implant signature
+    /// that lets the attacker authenticate as any AD user with a master password.
+    /// </summary>
+    /// <param name="imageFile">Path to a Domain Controller's memory image.</param>
+    public async Task<WorkflowResult<SkeletonKeyReport>> DetectSkeletonKeyAsync(string imageFile)
+    {
+        using var op = Begin("Checking {0} for Skeleton Key", imageFile);
+
+        var findings = await MemoryAnalysis.WindowsSkeletonKeyCheckAsync(imageFile);
+        if (findings is null)
+            return WorkflowResult<SkeletonKeyReport>.Failure(
+                $"windows.skeleton_key_check failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
+
+        op.Complete();
+        var report = new SkeletonKeyReport { Findings = findings };
+        return WorkflowResult<SkeletonKeyReport>.Success(report,
+            report.IsCompromised
+                ? $"SKELETON KEY DETECTED in '{imageFile}' — patched CDLocateCSystem in LSASS."
+                : $"No Skeleton Key implant detected in '{imageFile}'.");
+    }
 }

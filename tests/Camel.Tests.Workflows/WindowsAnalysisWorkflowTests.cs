@@ -18,17 +18,17 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
     }
 
     [Fact]
-    public async Task CanExtractKeyArtifacts()
+    public async Task CanGetKeyArtifacts()
     {
         // SYSTEM/SOFTWARE/SAM/SECURITY hives from the mounted Windows image (no NTUSER.DAT or Amcache.hve here).
-        var r = await workflow.ExtractKeyArtifactsAsync($"{Modern}/Windows/System32/config");
+        var r = await workflow.GetKeyRegistryArtifactsAsync($"{Modern}/Windows/System32/config");
 
         Assert.True(r.IsSuccess, r.Message);
         Assert.NotNull(r.Result);
         Assert.NotEmpty(r.Result.AllEntries);
         Assert.Equal(16, r.Result.Artifacts.Length); // one bucket per Key Registry Artifact category
 
-        KeyArtifact Get(string name) => Assert.Single(r.Result!.Artifacts, a => a.Name == name);
+        KeyRegistryArtifact Get(string name) => Assert.Single(r.Result!.Artifacts, a => a.Name == name);
 
         // Artifacts that live in the SYSTEM/SOFTWARE hives are present in this mount.
         Assert.NotEmpty(Get("Shimcache").Entries);
@@ -45,11 +45,11 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
     }
 
     [Fact]
-    public async Task ExtractKeyArtifactsIsEmptyForNoHives()
+    public async Task GetKeyArtifactsIsEmptyForNoHives()
     {
         // RECmd is lenient — a directory with no hives parses successfully but yields nothing, so the report
         // is well-formed (all 16 buckets present) but every bucket is empty.
-        var r = await workflow.ExtractKeyArtifactsAsync("/mnt/does_not_exist/config");
+        var r = await workflow.GetKeyRegistryArtifactsAsync("/mnt/does_not_exist/config");
 
         Assert.True(r.IsSuccess, r.Message);
         Assert.NotNull(r.Result);
@@ -61,7 +61,7 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
     [Fact]
     public async Task CanGetKnownExecutables()
     {
-        var r = await workflow.GetKnownExecutablesAsync($"{Modern}/Windows/System32/config/SYSTEM");
+        var r = await workflow.GetKnownExecutablesFromShimcacheAsync($"{Modern}/Windows/System32/config/SYSTEM");
 
         Assert.True(r.IsSuccess, r.Message);
         Assert.NotNull(r.Result);
@@ -75,7 +75,7 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
     {
         // AppCompatCacheParser exits cleanly but produces no output for a missing hive, so the workflow
         // succeeds with an empty inventory rather than failing.
-        var r = await workflow.GetKnownExecutablesAsync("/mnt/does_not_exist/SYSTEM");
+        var r = await workflow.GetKnownExecutablesFromShimcacheAsync("/mnt/does_not_exist/SYSTEM");
 
         Assert.True(r.IsSuccess, r.Message);
         Assert.NotNull(r.Result);
@@ -85,7 +85,7 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
     [Fact]
     public async Task CanGetExecutedBinaries()
     {
-        var r = await workflow.GetExecutedBinariesAsync($"{Modern}/Windows/appcompat/Programs/Amcache.hve");
+        var r = await workflow.GetExecutedBinariesFromAmcacheAsync($"{Modern}/Windows/appcompat/Programs/Amcache.hve");
 
         Assert.True(r.IsSuccess, r.Message);
         Assert.NotNull(r.Result);
@@ -99,7 +99,7 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
     {
         // AmcacheParser exits cleanly but produces no output for a missing hive, so the workflow succeeds
         // with an empty list rather than failing.
-        var r = await workflow.GetExecutedBinariesAsync("/mnt/does_not_exist/Amcache.hve");
+        var r = await workflow.GetExecutedBinariesFromAmcacheAsync("/mnt/does_not_exist/Amcache.hve");
 
         Assert.True(r.IsSuccess, r.Message);
         Assert.NotNull(r.Result);
@@ -110,7 +110,7 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
     public async Task CanFindPersistenceMechanisms()
     {
         const string config = $"{Modern}/Windows/System32/config";
-        var r = await workflow.FindPersistenceMechanismsAsync(
+        var r = await workflow.FindRegistryPersistenceMechanismsAsync(
             softwareHive: $"{config}/SOFTWARE",
             systemHive: $"{config}/SYSTEM",
             ntuserHive: $"{Modern}/Users/fredr/NTUSER.DAT");
@@ -120,7 +120,7 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
         Assert.NotEmpty(r.Result.AllEntries);
         Assert.Equal(5, r.Result.Mechanisms.Length); // one bucket per persistence category
 
-        PersistenceMechanism Get(string cat) => Assert.Single(r.Result!.Mechanisms, m => m.Category == cat);
+        RegistryPersistenceMechanism Get(string cat) => Assert.Single(r.Result!.Mechanisms, m => m.Category == cat);
 
         // Run keys: the SOFTWARE hive's HKLM Run holds SecurityHealth on this image.
         var runKeys = Get(WindowsAnalysisWorkflow.CatRunKeys);
@@ -142,7 +142,7 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
     {
         // rip.pl is lenient — it exits cleanly on a missing hive and yields no findings, so the workflow
         // succeeds with a well-formed but empty report (all 5 categories present, none populated).
-        var r = await workflow.FindPersistenceMechanismsAsync("/mnt/does_not_exist/SOFTWARE", "/mnt/does_not_exist/SYSTEM");
+        var r = await workflow.FindRegistryPersistenceMechanismsAsync("/mnt/does_not_exist/SOFTWARE", "/mnt/does_not_exist/SYSTEM");
 
         Assert.True(r.IsSuccess, r.Message);
         Assert.NotNull(r.Result);
@@ -170,7 +170,7 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
         sshenv.ExecuteCommand("echo", $"{b64} | base64 -d | iconv -f UTF-8 -t UTF-16 > '{dir}/Collect Background Statistics'", out _, false);
 
         const string cfg = $"{Modern}/Windows/System32/config";
-        var r = await workflow.FindPersistenceMechanismsAsync($"{cfg}/SOFTWARE", $"{cfg}/SYSTEM", tasksDirectory: dir);
+        var r = await workflow.FindRegistryPersistenceMechanismsAsync($"{cfg}/SOFTWARE", $"{cfg}/SYSTEM", tasksDirectory: dir);
 
         Assert.True(r.IsSuccess, r.Message);
         var tasks = Assert.Single(r.Result!.Mechanisms, m => m.Category == WindowsAnalysisWorkflow.CatScheduledTasks);
@@ -202,7 +202,7 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
         sshenv.ExecuteCommand("echo", $"{b64} | base64 -d | iconv -f UTF-8 -t UTF-16 > '{dir}/Updater'", out _, false);
 
         const string cfg = $"{Modern}/Windows/System32/config";
-        var r = await workflow.FindPersistenceMechanismsAsync($"{cfg}/SOFTWARE", $"{cfg}/SYSTEM", tasksDirectory: dir);
+        var r = await workflow.FindRegistryPersistenceMechanismsAsync($"{cfg}/SOFTWARE", $"{cfg}/SYSTEM", tasksDirectory: dir);
 
         Assert.True(r.IsSuccess, r.Message);
         var evil = Assert.Single(r.Result!.SuspiciousEntries, e => e.Name == @"\Updater");
@@ -459,13 +459,115 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
     {
         // CFREDS Data Leakage case (ART-005): the informant mapped \\10.11.11.128\secured_drive to copy data out.
         // The evidence is in the dirty NTUSER's transaction logs (RegRipper/strings miss it; RECmd replays them).
-        var r = await workflow.AnalyzeExternalConnectionsAsync("/mnt/dlpc/Users/informant/NTUSER.DAT");
+        var r = await workflow.AnalyzeExternalShareConnectionsAsync("/mnt/dlpc/Users/informant/NTUSER.DAT");
 
         Assert.True(r.IsSuccess, r.Message);
         var share = Assert.Single(r.Result!.RemoteShares, s => s.Server == "10.11.11.128");
         Assert.Equal(@"\\10.11.11.128\secured_drive", share.Unc);
         Assert.Equal("secured_drive", share.Share);
         Assert.Equal("MountPoints2", share.Source);
+    }
+
+    [Fact]
+    public async Task DetectsKerberosAttacks()
+    {
+        // The compromised SHIELDBASE DC's Security log records a real Kerberoasting attack against the SharePoint
+        // service accounts (spfarm, spcontent) and a substantial pre-auth failure burst from one source IP — both
+        // the canonical methodology signals. AS-REP roasting was not used in this scenario.
+        var r = await workflow.DetectKerberosAttacksAsync("/mnt/dc/Windows/System32/winevt/Logs/Security.evtx");
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotEmpty(r.Result!.Events);
+        Assert.All(r.Result.Events, e => Assert.Contains(e.EventId, new[] { 4768, 4769, 4771 }));
+
+        // Kerberoasting: 14 RC4 (0x17) 4769s for spcontent/spfarm — and nothing for krbtgt (it is excluded).
+        var k = r.Result.KerberoastingAttempts;
+        Assert.NotEmpty(k);
+        Assert.All(k, e => { Assert.Equal(4769, e.EventId); Assert.Equal("0x17", e.TicketEncryptionType); Assert.Equal("RC4-HMAC", e.TicketEncryptionName); });
+        var roastedSpns = k.Select(e => e.ServiceName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        Assert.Contains("spfarm", roastedSpns, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("spcontent", roastedSpns, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain(k, e => e.ServiceName?.StartsWith("krbtgt", StringComparison.OrdinalIgnoreCase) == true);
+        Assert.All(k, e => Assert.Contains(e.Reasons, s => s.Contains("Kerberoasting", StringComparison.OrdinalIgnoreCase)));
+
+        // AS-REP roasting was not used in this scenario; expect zero.
+        Assert.Empty(r.Result.AsRepRoastingAttempts);
+
+        // The 4771 pre-auth failures cluster heavily on one source IP (112 from 172.16.5.21).
+        Assert.NotEmpty(r.Result.PreAuthFailureBursts);
+        var topBurst = r.Result.PreAuthFailureBursts.First();
+        Assert.Equal("::ffff:172.16.5.21", topBurst.SourceIp);
+        Assert.True(topBurst.FailureCount >= 100, $"expected a heavy 4771 burst from 172.16.5.21, got {topBurst.FailureCount}");
+        Assert.NotEmpty(topBurst.AffectedAccounts);
+    }
+
+    [Fact]
+    public async Task TriagesSuspiciousExecutables()
+    {
+        // Synthetic volume exercising both detections and every benign/excluded case that must NOT flag:
+        // canonical system processes (System32, SysWOW64, the Windows-root explorer, IE), a component-store
+        // (WinSxS) copy, an svchost masquerade in \Temp, two transient-location executables, and an
+        // AppData\Local\Temp executable plus a recycle-bin executable that are deliberately out of the default scope.
+        const string v = "/tmp/camel_triage";
+        void T(string rel)
+        {
+            var full = $"{v}/{rel}";
+            int slash = full.LastIndexOf('/');
+            sshenv.ExecuteCommand("mkdir", $"-p '{full[..slash]}'", out _, false);
+            sshenv.ExecuteCommand("bash", $"-c \"printf 'x' > '{full}'\"", out _, false);
+        }
+        sshenv.ExecuteCommand("rm", $"-rf {v}", out _, false);
+        T("Windows/System32/svchost.exe");                            // canonical -> benign
+        T("Windows/System32/lsass.exe");                              // canonical -> benign
+        T("Windows/SysWOW64/svchost.exe");                            // canonical (WOW64) -> benign
+        T("Windows/explorer.exe");                                    // canonical (Windows root) -> benign
+        T("Windows/WinSxS/amd64_svchost/svchost.exe");                // component store -> excluded
+        T("Program Files/Internet Explorer/iexplore.exe");            // canonical -> benign
+        T("Windows/Temp/svchost.exe");                                // svchost outside System32 -> masquerade
+        T("Windows/Temp/p.exe");                                      // transient-location executable
+        T("ProgramData/Temp/installer.scr");                          // transient-location executable
+        T("Users/evil/AppData/Local/Temp/dropper.exe");              // user temp -> out of default scope, must NOT flag
+        T("Recycler/S-1-5-21/deleted.exe");                          // recycle bin -> out of default scope, must NOT flag
+
+        var r = await workflow.TriageSuspiciousExecutablesAsync(v);
+
+        Assert.True(r.IsSuccess, r.Message);
+        var byPath = r.Result!.Findings.ToDictionary(f => f.Path);
+
+        // The masquerade: svchost.exe in \Temp, reported as a masquerade (not a transient dup) impersonating svchost.
+        var masq = Assert.Contains($"{v}/Windows/Temp/svchost.exe", byPath);
+        Assert.Equal(WindowsAnalysisWorkflow.KindMasquerade, masq.Kind);
+        Assert.Equal("svchost.exe", masq.Impersonates);
+
+        // The two transient-location executables.
+        Assert.Equal(WindowsAnalysisWorkflow.KindTransient, Assert.Contains($"{v}/Windows/Temp/p.exe", byPath).Kind);
+        Assert.Equal(WindowsAnalysisWorkflow.KindTransient, Assert.Contains($"{v}/ProgramData/Temp/installer.scr", byPath).Kind);
+
+        // Exactly those three: no canonical/component-store copy, and not the AppData or recycle-bin executables.
+        Assert.Equal(3, r.Result.Findings.Length);
+        Assert.DoesNotContain(r.Result.Findings, f => f.Path.Contains("AppData", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(r.Result.Findings, f => f.Path.Contains("WinSxS", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(r.Result.Findings, f => f.Path.Contains("Recycler", StringComparison.OrdinalIgnoreCase));
+
+        // The recycle bin is scannable when requested explicitly (disguised deleted tools, XP RECYCLER dumps).
+        var explicitScan = await workflow.TriageSuspiciousExecutablesAsync(v, [$"{v}/Recycler"]);
+        Assert.True(explicitScan.IsSuccess, explicitScan.Message);
+        Assert.Contains(explicitScan.Result!.Findings, f => f.Path == $"{v}/Recycler/S-1-5-21/deleted.exe");
+
+        sshenv.ExecuteCommand("rm", $"-rf {v}", out _, false);
+    }
+
+    [Fact]
+    public async Task TriageSuspiciousExecutablesIsCleanForBenignImage()
+    {
+        // The clean modern image keeps every system-process binary in System32/SysWOW64 (its component-store copies
+        // live under \servicing and \WinSxS, both excluded) and drops nothing in the transient dirs scanned, so a
+        // real volume yields zero false positives.
+        var r = await workflow.TriageSuspiciousExecutablesAsync(Modern);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.Empty(r.Result.Findings);
     }
 
     const string Modern = "/mnt/ewf";

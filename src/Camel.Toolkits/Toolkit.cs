@@ -223,7 +223,7 @@ public abstract class Toolkit : Runtime
     private static readonly System.Text.Json.JsonSerializerOptions JsonLineOptions = new() { PropertyNameCaseInsensitive = true };
 
     /// <summary>Parses newline-delimited JSON (one object per line) into <typeparamref name="T"/>[].</summary>
-    private static T[] ParseJsonLines<T>(string json) =>
+    protected static T[] ParseJsonLines<T>(string json) =>
         json.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(l => l.TrimStart('﻿'))   // some tools (e.g. EvtxECmd) prefix the file with a BOM
             .Where(l => l.StartsWith('{'))

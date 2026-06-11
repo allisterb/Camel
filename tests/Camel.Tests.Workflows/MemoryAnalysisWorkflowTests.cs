@@ -275,6 +275,126 @@ public class MemoryAnalysisWorkflowTests : TestsRuntime
         Assert.NotNull(r.Message);
     }
 
+    [Fact]
+    public async Task CanFindCodeInjection()
+    {
+        // Win10 image: clean baseline. The workflow should run all three sources end-to-end (ldrmodules,
+        // hollowprocesses, malfind) and produce a well-formed report. Clean image => no hollowed processes;
+        // ldrmodules legitimately surfaces orphan entries (mui/locale resources). The SuspectPids aggregation
+        // must be internally consistent.
+        var r = await workflow.FindCodeInjectionAsync(Win10Image);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.NotNull(r.Result.UnlinkedDlls);
+        Assert.NotNull(r.Result.HollowedProcesses);
+        Assert.NotNull(r.Result.AnomalousRegions);
+        Assert.All(r.Result.SuspectPids, p => Assert.True(p.SignalCount > 0));
+        // Every suspect PID must be sourced from at least one of the three signals.
+        var sources = r.Result.UnlinkedDlls.Select(u => u.PID)
+            .Concat(r.Result.HollowedProcesses.Select(h => h.PID))
+            .Concat(r.Result.AnomalousRegions.SuspectRegions.Select(rg => rg.PID))
+            .ToHashSet();
+        Assert.All(r.Result.SuspectPids, p => Assert.Contains(p.Pid, sources));
+    }
+
+    [Fact]
+    public async Task FindCodeInjectionFailsForMissingImage()
+    {
+        var r = await workflow.FindCodeInjectionAsync("/mnt/artifacts/does_not_exist.raw");
+
+        Assert.False(r.IsSuccess);
+        Assert.Null(r.Result);
+        Assert.NotNull(r.Message);
+    }
+
+    [Fact]
+    public async Task CanDetectKernelRootkit()
+    {
+        // Win10 image: clean baseline. All three hook surfaces must enumerate (the scanned counts go up);
+        // foreign-module hooks may exist legitimately (Windows Defender's WdFilter installs callbacks), so we
+        // assert structure rather than zero hooks, and that every reported hook is genuinely non-canonical.
+        var r = await workflow.DetectKernelRootkitAsync(Win10Image);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.True(r.Result.SsdtScanned > 0);
+        Assert.True(r.Result.CallbacksScanned > 0);
+        Assert.True(r.Result.DriverIrpScanned > 0);
+        string[] canonical = ["ntoskrnl", "win32k", "hal"];
+        Assert.All(r.Result.Hooks, h =>
+            Assert.DoesNotContain(canonical, c => string.Equals(c, h.Module, StringComparison.OrdinalIgnoreCase)));
+        Assert.All(r.Result.Hooks, h => Assert.Contains(h.HookSurface, new[] { "SSDT", "Callback", "IRP" }));
+    }
+
+    [Fact]
+    public async Task CanCrossViewHiddenProcess()
+    {
+        // psxview enumerates every process across four sources. The hidden set is a subset; structurally,
+        // every "hidden" sighting must actually be missing from psscan, OR (still running AND missing from
+        // pslist). All sightings must carry a PID and a non-empty name.
+        var r = await workflow.CrossViewHiddenProcessAsync(Win10Image);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.NotEmpty(r.Result.AllSightings);
+        Assert.All(r.Result.AllSightings, s => Assert.NotEmpty(s.Name));
+        Assert.All(r.Result.HiddenSightings, s =>
+            Assert.True(!s.PsScan || (!s.HasExited && !s.PsList)));
+    }
+
+    [Fact]
+    public async Task CanReconstructConsoleHistory()
+    {
+        // The plugins return empty on most images (no live console host at capture). The workflow must still
+        // succeed gracefully — empty session list and empty typed-command list, both non-null.
+        var r = await workflow.ReconstructConsoleHistoryAsync(Win10Image);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.NotNull(r.Result.ConsoleSessions);
+        Assert.NotNull(r.Result.TypedCommands);
+        // Every typed command must trace back to a real session.
+        var sessionPids = r.Result.ConsoleSessions.Select(s => s.Pid).ToHashSet();
+        Assert.All(r.Result.TypedCommands, c => Assert.Contains(c.Pid, sessionPids));
+    }
+
+    [Fact]
+    public async Task CanDetectSkeletonKey()
+    {
+        // Non-DC image: skeleton_key_check should find nothing. The workflow must succeed with IsCompromised
+        // false and an empty findings list.
+        var r = await workflow.DetectSkeletonKeyAsync(Win10Image);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.False(r.Result.IsCompromised);
+        Assert.Empty(r.Result.Findings);
+    }
+
+    [Fact]
+    public async Task CanScanMemoryWithYara()
+    {
+        // Bring our own minimal rules file (one rule matching a common Windows-API string), upload it to the
+        // workstation, then scan. The workflow must run vadyarascan, parse the matches, and pivot per-rule.
+        const string rulesPath = "/tmp/camel_yara_test.yar";
+        const string rule = "rule kernel32_marker { strings: $a = \"kernel32.dll\" condition: $a }";
+        // Bypass nested-quote hell by base64-piping the rule body to the SIFT box.
+        var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(rule));
+        await sshenv.ExecuteCommandAsync("bash", $"-c \"echo {b64} | base64 -d > {rulesPath}\"", false);
+
+        var r = await workflow.ScanMemoryWithYaraAsync(Win10Image, rulesPath);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.Equal(rulesPath, r.Result.RulesFile);
+        // kernel32.dll string is ubiquitous in a Windows memory image, so we expect at least one match.
+        Assert.NotEmpty(r.Result.Matches);
+        // vol3 namespaces rule names ("default.kernel32_marker"); just assert the rule body is the source.
+        Assert.All(r.Result.Matches, m => Assert.EndsWith("kernel32_marker", m.Rule));
+        Assert.NotEmpty(r.Result.MatchesByRule);
+    }
+
     const string Image = "/mnt/artifacts/pat-2009-11-19.mddramimage";
     const string Win10Image = "/mnt/artifacts/Rocba-Memory.raw";
 

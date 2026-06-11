@@ -14,31 +14,9 @@ public class WindowsAnalysisWorkflow : Workflow
 {
     public WindowsAnalysisWorkflow(CamelApi api) : base(api) {}
 
-    // The DFIR batch file the WindowsAnalysisToolkit constructor installs alongside RECmd.
-    public const string DfirBatchFile = "/opt/zimmermantools/RECmd/DFIRBatch.reb";
+    #region Methods
 
-    // The key forensic registry artifacts from the methodology, each matched by a distinctive (case-insensitive)
-    // fragment of its registry key path — directly mirroring the reference's Key Registry Artifacts table.
-    private static readonly (string Name, string KeyPathFragment)[] Artifacts =
-    [
-        ("Run/RunOnce",   @"currentversion\run"),
-        ("UserAssist",    "userassist"),
-        ("RecentDocs",    "recentdocs"),
-        ("TypedPaths",    "typedpaths"),
-        ("MRU Lists",     "mru"),
-        ("BAM/DAM",       @"\bam\"),
-        ("USBSTOR",       @"enum\usbstor"),
-        ("USB VID/PID",   @"enum\usb\"),
-        ("MountedDevices", "mounteddevices"),
-        ("MountPoints2",  "mountpoints2"),
-        ("Services",      @"\services\"),
-        ("Shimcache",     "appcompatcache"),
-        ("Timezone",      "timezoneinformation"),
-        ("Computer name", @"computername\computername"),
-        ("Last shutdown", @"control\windows"),
-        ("Amcache programs", "inventoryapplicationfile"),
-    ];
-
+    #region Workflow methods
     /// <summary>
     /// Batch-parses every registry hive in <paramref name="hiveDirectory"/> with RECmd's DFIR batch file
     /// (which runs the whole community-maintained query collection in one pass) and buckets the results into
@@ -49,24 +27,24 @@ public class WindowsAnalysisWorkflow : Workflow
     /// </summary>
     /// <param name="hiveDirectory">Directory of extracted/mounted registry hives (SYSTEM, SOFTWARE, NTUSER.DAT, …).</param>
     /// <param name="batchFile">RECmd batch file to use (defaults to the toolkit-installed DFIRBatch.reb).</param>
-    public async Task<WorkflowResult<KeyArtifactsReport>> ExtractKeyArtifactsAsync(string hiveDirectory, string batchFile = DfirBatchFile)
+    public async Task<WorkflowResult<KeyRegistryArtifactsReport>> GetKeyRegistryArtifactsAsync(string hiveDirectory, string batchFile = DfirBatchFile)
     {
         using var op = Begin("Extracting key registry artifacts from {0}", hiveDirectory);
 
         var entries = await WindowsAnalysis.RECmdAsync(hiveDirectory, batchFile);
         if (entries is null)
-            return WorkflowResult<KeyArtifactsReport>.Failure(
+            return WorkflowResult<KeyRegistryArtifactsReport>.Failure(
                 $"RECmd batch parse failed for hive directory '{hiveDirectory}'; check the hives exist and the batch file '{batchFile}' is installed.");
 
-        var buckets = Artifacts
-            .Select(a => new KeyArtifact(a.Name,
+        var buckets = KeyRegistryArtifacts
+            .Select(a => new KeyRegistryArtifact(a.Name,
                 entries.Where(e => e.KeyPath is { } k && k.Contains(a.KeyPathFragment, StringComparison.OrdinalIgnoreCase)).ToArray()))
             .ToArray();
 
         op.Complete();
         int populated = buckets.Count(b => b.Entries.Length > 0);
-        return WorkflowResult<KeyArtifactsReport>.Success(
-            new KeyArtifactsReport(buckets, entries),
+        return WorkflowResult<KeyRegistryArtifactsReport>.Success(
+            new KeyRegistryArtifactsReport(buckets, entries),
             $"Parsed {entries.Length} registry entries; populated {populated} of {buckets.Length} key artifact categories.");
     }
 
@@ -80,7 +58,7 @@ public class WindowsAnalysisWorkflow : Workflow
     /// </summary>
     /// <param name="systemHive">Path to the SYSTEM hive (e.g. .../Windows/System32/config/SYSTEM).</param>
     /// <param name="ignoreTransactionLogs">Ignore registry transaction logs (<c>--nl</c>); default true (faster).</param>
-    public async Task<WorkflowResult<ShimcacheEntry[]>> GetKnownExecutablesAsync(string systemHive, bool ignoreTransactionLogs = true)
+    public async Task<WorkflowResult<ShimcacheEntry[]>> GetKnownExecutablesFromShimcacheAsync(string systemHive, bool ignoreTransactionLogs = true)
     {
         using var op = Begin("Getting known executables (Shimcache) from {0}", systemHive);
 
@@ -103,7 +81,7 @@ public class WindowsAnalysisWorkflow : Workflow
     /// </summary>
     /// <param name="amcacheHive">Path to Amcache.hve (e.g. .../Windows/appcompat/Programs/Amcache.hve).</param>
     /// <param name="ignoreTransactionLogs">Ignore registry transaction logs (<c>--nl</c>); default false (replays logs).</param>
-    public async Task<WorkflowResult<AmcacheEntry[]>> GetExecutedBinariesAsync(string amcacheHive, bool ignoreTransactionLogs = false)
+    public async Task<WorkflowResult<AmcacheEntry[]>> GetExecutedBinariesFromAmcacheAsync(string amcacheHive, bool ignoreTransactionLogs = false)
     {
         using var op = Begin("Getting executed binaries (Amcache) from {0}", amcacheHive);
 
@@ -127,16 +105,16 @@ public class WindowsAnalysisWorkflow : Workflow
     /// </summary>
     /// <param name="ntuserHive">Path to the user's NTUSER.DAT (its transaction logs alongside are replayed).</param>
     /// <param name="batchFile">RECmd batch file (defaults to the toolkit-installed DFIRBatch.reb).</param>
-    public async Task<WorkflowResult<ExternalConnectionReport>> AnalyzeExternalConnectionsAsync(string ntuserHive, string batchFile = DfirBatchFile)
+    public async Task<WorkflowResult<ExternalShareConnectionsReport>> AnalyzeExternalShareConnectionsAsync(string ntuserHive, string batchFile = DfirBatchFile)
     {
         using var op = Begin("Analyzing external connections (mapped drives) in {0}", ntuserHive);
 
         var entries = await WindowsAnalysis.RECmdSingleHiveAsync(ntuserHive, batchFile);
         if (entries is null)
-            return WorkflowResult<ExternalConnectionReport>.Failure(
+            return WorkflowResult<ExternalShareConnectionsReport>.Failure(
                 $"RECmd failed for hive '{ntuserHive}'; check the hive exists and the batch file '{batchFile}' is installed.");
 
-        var found = new List<ExternalConnection>();
+        var found = new List<ExternalShareConnection>();
         foreach (var e in entries)
         {
             // MountPoints2: the connected share is the "##server#share" subkey name in the key path.
@@ -145,12 +123,12 @@ public class WindowsAnalysisWorkflow : Workflow
                 var token = kp[(kp.IndexOf(@"MountPoints2\", StringComparison.OrdinalIgnoreCase) + "MountPoints2\\".Length)..];
                 int bs = token.IndexOf('\\');                    // cut any deeper subkey (shell\open\…)
                 if (bs >= 0) token = token[..bs];
-                found.Add(MakeConnection(token.Replace('#', '\\'), "MountPoints2", e.LastWriteTimestamp));
+                found.Add(MakeExternalShareConnection(token.Replace('#', '\\'), "MountPoints2", e.LastWriteTimestamp));
             }
             // Map Network Drive MRU: the value data is the UNC path the user mapped.
             else if (e.Description is { } d && d.Contains("Network Drive MRU", StringComparison.OrdinalIgnoreCase)
                      && e.ValueData is { } vd && vd.TrimStart().StartsWith(@"\\"))
-                found.Add(MakeConnection(vd.Trim(), "Map Network Drive MRU", e.LastWriteTimestamp));
+                found.Add(MakeExternalShareConnection(vd.Trim(), "Map Network Drive MRU", e.LastWriteTimestamp));
         }
 
         // One entry per distinct share (MountPoints2 yields a row per value), keeping the most recent timestamp.
@@ -160,17 +138,18 @@ public class WindowsAnalysisWorkflow : Workflow
             .OrderBy(c => c.Unc, StringComparer.OrdinalIgnoreCase).ToArray();
 
         op.Complete();
-        return WorkflowResult<ExternalConnectionReport>.Success(new ExternalConnectionReport { RemoteShares = remoteShares },
+        return WorkflowResult<ExternalShareConnectionsReport>.Success(new ExternalShareConnectionsReport { RemoteShares = remoteShares },
             remoteShares.Length == 0
                 ? "No remote network shares (mapped drives) found in the user's registry."
                 : $"Found {remoteShares.Length} remote share connection(s): {string.Join(", ", remoteShares.Select(s => s.Unc))}.");
     }
+    #endregion
 
     // Splits a "\\server\share[\…]" UNC into an ExternalConnection.
-    private static ExternalConnection MakeConnection(string unc, string source, DateTime? lastWrite)
+    private static ExternalShareConnection MakeExternalShareConnection(string unc, string source, DateTime? lastWrite)
     {
         var parts = unc.TrimStart('\\').Split('\\', 2);
-        return new ExternalConnection
+        return new ExternalShareConnection
         {
             Unc = unc,
             Server = parts.Length > 0 && parts[0].Length > 0 ? parts[0] : null,
@@ -252,36 +231,13 @@ public class WindowsAnalysisWorkflow : Workflow
             (report.SuspiciousExecutables.Length == 0 ? "." : $"(e.g. {string.Join(", ", report.SuspiciousExecutables.Take(5).Select(e => e.Name))})."));
     }
 
-    // Scores an executable for the high-precision execution anomalies: suspicious location, a watchlisted tool, or
-    // a LOLBin run from a non-canonical path (masquerading).
-    private static string[] ScoreExecution(string path, string name, string[] suspiciousPaths, string[] watchlist, LolbasReference? lolbas)
-    {
-        var reasons = new List<string>();
-        var loc = suspiciousPaths.FirstOrDefault(f => path.Contains(f, StringComparison.OrdinalIgnoreCase));
-        if (loc is not null) reasons.Add($"executed from a suspicious location ('{loc.Trim('\\')}')");
-        var tool = watchlist.FirstOrDefault(w => name.Contains(w, StringComparison.OrdinalIgnoreCase));
-        if (tool is not null) reasons.Add($"matches a notable hacking/anti-forensic/recon tool ('{tool}')");
-        if (lolbas is not null && lolbas.IsLolbin(name) && HasDirectory(path) && !lolbas.IsCanonicalPath(name, path))
-            reasons.Add($"living-off-the-land binary '{name}' run from a non-canonical path (possible masquerading)");
-        return reasons.ToArray();
-    }
-
-    // WMI consumer/filter names that are benign-but-noisy (stock OS / vendor subscriptions), per the methodology's
-    // false-positive list. Names are matched case-insensitively as substrings.
-    private static readonly string[] DefaultWmiAllowlist =
-        ["BVTFilter", "SCM Event Log Consumer", "SCM Event Log Filter", "TSLogonEvents.vbs", "TSLogonFilter",
-         "RAevent.vbs", "RmAssistEventFilter", "KernCap.vbs", "WSCEAA.exe", "NTEventLogConsumer"];
-
-    // The two consumer types the methodology says account for essentially all malicious WMI persistence.
-    private static readonly string[] WmiAttackerConsumerTypes = ["CommandLineEventConsumer", "ActiveScriptEventConsumer"];
-
     /// <summary>
     /// Hunts WMI event-consumer persistence in a repository's <c>OBJECTS.DATA</c> (<paramref name="objectsDataPath"/>).
     /// WMI persistence binds an event filter (trigger) to an event consumer (action); the methodology focuses on
     /// the two consumer types attackers use — <c>CommandLineEventConsumer</c> and <c>ActiveScriptEventConsumer</c>.
     /// This recovers the subscriptions, drops the benign/noisy stock subscriptions via an allow-list, and flags the
     /// rest, decoding any encoded-PowerShell action to expose its real intent (e.g. a download cradle). Findings are
-    /// leads to triage. DLL/registry persistence is covered by <see cref="FindPersistenceMechanismsAsync"/>.
+    /// leads to triage. DLL/registry persistence is covered by <see cref="FindRegistryPersistenceMechanismsAsync"/>.
     /// </summary>
     /// <param name="objectsDataPath">Path to the WMI repository file, <c>\Windows\System32\wbem\Repository\OBJECTS.DATA</c>.</param>
     /// <param name="allowlistNames">Consumer/filter name substrings to treat as benign. Defaults to the methodology's known-good list.</param>
@@ -313,8 +269,12 @@ public class WindowsAnalysisWorkflow : Workflow
                 reasons.Add("encoded / obfuscated or remote-download payload");
             suspicious.Add(new WmiPersistenceEntry
             {
-                Type = c.Type, Name = c.Name, Command = c.Command,
-                DecodedCommand = decoded, FilterName = filter, Reasons = reasons.ToArray(),
+                Type = c.Type,
+                Name = c.Name,
+                Command = c.Command,
+                DecodedCommand = decoded,
+                FilterName = filter,
+                Reasons = reasons.ToArray(),
             });
         }
 
@@ -334,8 +294,20 @@ public class WindowsAnalysisWorkflow : Workflow
                       $"{s.Name} ({s.Type})" + (s.FilterName is not null ? $" <- filter '{s.FilterName}'" : ""))) + ".");
     }
 
-    // PowerShell -EncodedCommand / -e / -ec payloads are base64 of a UTF-16LE string; decode to reveal the intent.
-    private static readonly Regex EncodedPsRegex = new(@"-e(c|nc|ncodedcommand)?\s+([A-Za-z0-9+/=]{16,})", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // Scores an executable for the high-precision execution anomalies: suspicious location, a watchlisted tool, or
+    // a LOLBin run from a non-canonical path (masquerading).
+    private static string[] ScoreExecution(string path, string name, string[] suspiciousPaths, string[] watchlist, LolbasReference? lolbas)
+    {
+        var reasons = new List<string>();
+        var loc = suspiciousPaths.FirstOrDefault(f => path.Contains(f, StringComparison.OrdinalIgnoreCase));
+        if (loc is not null) reasons.Add($"executed from a suspicious location ('{loc.Trim('\\')}')");
+        var tool = watchlist.FirstOrDefault(w => name.Contains(w, StringComparison.OrdinalIgnoreCase));
+        if (tool is not null) reasons.Add($"matches a notable hacking/anti-forensic/recon tool ('{tool}')");
+        if (lolbas is not null && lolbas.IsLolbin(name) && HasDirectory(path) && !lolbas.IsCanonicalPath(name, path))
+            reasons.Add($"living-off-the-land binary '{name}' run from a non-canonical path (possible masquerading)");
+        return reasons.ToArray();
+    }
+
     private static string? DecodeEncodedPowerShell(string command)
     {
         var m = EncodedPsRegex.Match(command);
@@ -478,6 +450,84 @@ public class WindowsAnalysisWorkflow : Workflow
 
     private static CredentialDumpFinding Cred(FsFile f, string kind, string reason) =>
         new() { Path = f.Path, Name = f.Name, Size = f.Size, Kind = kind, Reasons = [reason] };
+
+    // The two hiding-in-plain-sight executable anomaly kinds this workflow recovers.
+    public const string KindMasquerade = "System-process masquerade";
+    public const string KindTransient = "Transient-location executable";
+
+    /// <summary>
+    /// Triages a mounted Windows volume (<paramref name="volumeRoot"/>) for executables "hiding in plain sight" —
+    /// the file-system half of the methodology's adversary-hunting matrix. It surfaces two high-precision signals:
+    /// (1) a <em>system-process masquerade</em> — a file named like a core Windows process (svchost.exe, lsass.exe,
+    /// services.exe, winlogon.exe, csrss.exe, …) located outside that process's canonical directory (the classic
+    /// <c>svchost.exe</c>-in-<c>\Temp</c> trick); and (2) a <em>transient-location executable</em> — any
+    /// <c>.exe/.scr/.com/.pif</c> dropped in a Temp / PerfLogs location where executables do not normally reside.
+    /// Component-store copies (<c>\WinSxS</c>, <c>\servicing</c>, <c>\DriverStore</c>, <c>\Windows.old</c>) are
+    /// excluded from the masquerade check. Findings are leads to triage (cross-reference execution evidence,
+    /// hashes, and signatures), not verdicts.
+    /// </summary>
+    /// <param name="volumeRoot">The mounted volume root to scan (e.g. an image's mount point).</param>
+    /// <param name="transientExecDirs">Directories that should not normally contain executables. Defaults to
+    /// <c>\Windows\Temp</c>, <c>\Temp</c>, <c>\PerfLogs</c>, <c>\ProgramData\Temp</c>. (The recycle bin —
+    /// <c>\$Recycle.Bin</c> / <c>\RECYCLER</c> — and per-user <c>AppData\Local\Temp</c> are deliberately not
+    /// scanned by default: deleted/extracted executables there are routine on a live host. Pass the recycle bin
+    /// explicitly when hunting disguised deleted tools, e.g. an XP <c>\RECYCLER</c> Dc-file dump.) Paths are taken
+    /// as-is when supplied.</param>
+    public async Task<WorkflowResult<SuspiciousExecutableReport>> TriageSuspiciousExecutablesAsync(
+        string volumeRoot, string[]? transientExecDirs = null)
+    {
+        var root = volumeRoot.TrimEnd('/');
+        var win = $"{root}/Windows";
+        transientExecDirs ??= [$"{win}/Temp", $"{root}/Temp", $"{root}/temp", $"{root}/PerfLogs",
+                               $"{root}/ProgramData/Temp"];
+
+        using var op = Begin("Triaging suspicious executables on {0}", volumeRoot);
+
+        var findings = new List<SuspiciousExecutable>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // (1) System-process masquerades: a file named like a core Windows process, found outside its canonical home.
+        var processFiles = await DiskAnalysis.FindFilesAsync(root, [.. SystemProcessHomes.Keys]); // one traversal
+        int scanned = processFiles.Length;
+        foreach (var f in processFiles)
+        {
+            var p = f.Path.Replace('\\', '/').ToLowerInvariant();
+            if (MasqueradeExcludedPaths.Any(p.Contains)) continue;                  // component store / previous-OS copies
+            var name = f.Name.ToLowerInvariant();
+            if (!SystemProcessHomes.TryGetValue(name, out var homes)) continue;
+            if (homes.Any(h => p.EndsWith($"{h}/{name}"))) continue;                // in a canonical location => benign
+            findings.Add(new SuspiciousExecutable
+            {
+                Path = f.Path, Name = f.Name, Size = f.Size, Kind = KindMasquerade, Impersonates = name,
+                Reasons = [$"named like the core Windows process '{name}' but located outside its canonical directory ({string.Join(" or ", homes)})"],
+            });
+            seen.Add(f.Path);
+        }
+
+        // (2) Transient-location executables: any executable in a Temp / recycle-bin / PerfLogs location.
+        foreach (var dir in transientExecDirs)
+        {
+            var exes = await DiskAnalysis.FindFilesAsync(dir, SuspiciousExecExtensions, maxDepth: 5);
+            scanned += exes.Length;
+            foreach (var e in exes)
+            {
+                if (!seen.Add(e.Path)) continue;                                    // already flagged (e.g. a masquerade)
+                findings.Add(new SuspiciousExecutable
+                {
+                    Path = e.Path, Name = e.Name, Size = e.Size, Kind = KindTransient,
+                    Reasons = [$"executable in a transient/world-writable location ('{dir}') where executables do not normally reside"],
+                });
+            }
+        }
+
+        op.Complete();
+        var report = new SuspiciousExecutableReport { Findings = findings.ToArray(), FilesScanned = scanned };
+        return WorkflowResult<SuspiciousExecutableReport>.Success(report,
+            findings.Count == 0
+                ? $"No hiding-in-plain-sight executables among {scanned} candidate file(s) examined."
+                : $"Found {findings.Count} suspicious executable(s): " +
+                  string.Join("; ", findings.Select(x => $"{x.Path} [{x.Kind}]")) + ".");
+    }
 
     // The Security-log authentication events the methodology focuses on.
     private const string LogonEventIds = "4624,4625,4634,4647,4648,4672";
@@ -669,6 +719,145 @@ public class WindowsAnalysisWorkflow : Workflow
     private static bool IsAdminShare(string? share) =>
         share is not null && (share.Contains(@"\C$", StringComparison.OrdinalIgnoreCase) || share.Contains(@"\ADMIN$", StringComparison.OrdinalIgnoreCase));
 
+    // The Kerberos events this workflow correlates: TGT request (4768), service-ticket request (4769), pre-auth
+    // failure (4771). These live almost exclusively on Domain Controllers.
+    // 4769 (TGS-REQ) dominates a busy DC's Security log by 2-3 orders of magnitude — on the SHIELDBASE DC it
+    // accounted for ~199k of ~200k Kerberos events. Pulling the full stream back over SSH OOMs the test runner,
+    // so 4769 is server-side grep-filtered to the RC4 (0x17) signal — the only 4769 fact the detector uses.
+    private const string SmallKerberosEventIds = "4768,4771";
+    // Filters the JSON-lines stream to RC4 4769s. The hex code (0x17) lives in the Payload column inside escaped
+    // JSON, which can't be quoted safely through bash -c; PayloadData4 carries the same fact as a human-readable
+    // string ("TicketEncryptionType: RC4-HMAC") with no quotes, so we match that. AES256/Audit are the only other
+    // values on this DC's 4769 stream — the substring uniquely identifies RC4 tickets.
+    private const string Rc4PayloadFilter = "TicketEncryptionType: RC4-HMAC";
+
+    /// <summary>
+    /// Hunts Kerberos attacks in a Domain Controller's Security event log (<paramref name="securityEvtxPath"/>) by
+    /// correlating the three signature artifacts the methodology calls out:
+    /// (1) <em>Kerberoasting</em> — 4769 service-ticket requests with RC4-HMAC (<c>TicketEncryptionType=0x17</c>),
+    /// the offline-cracking precondition (an attacker downgrades the ticket encryption so the response can be
+    /// brute-forced against the service account's NT hash); (2) <em>AS-REP roasting</em> — 4768 successes against
+    /// accounts where pre-authentication is disabled (<c>PreAuthType=0</c>), letting the attacker obtain an
+    /// encrypted blob crackable offline without authenticating; and (3) <em>pre-auth-failure bursts</em> — 4771
+    /// failures clustered on one source IP (<paramref name="preauthFailureThreshold"/>+ failures), a brute-force
+    /// (one account, many tries) or password-spray (many accounts, one try each) signal. Service-ticket requests
+    /// for <c>krbtgt</c> are excluded from the Kerberoasting view (TGT renewals are not roastable). The report's
+    /// <see cref="KerberosReport.Events"/> holds every parsed event for context; the computed views surface the
+    /// auto-flagged subsets — leads to triage, not verdicts.
+    /// </summary>
+    /// <param name="securityEvtxPath">Path to the DC's Security event log (<c>…\winevt\Logs\Security.evtx</c>).</param>
+    /// <param name="preauthFailureThreshold">Minimum 4771 failures from one source IP to flag a burst (default 20).</param>
+    public async Task<WorkflowResult<KerberosReport>> DetectKerberosAttacksAsync(string securityEvtxPath, int preauthFailureThreshold = 20)
+    {
+        using var op = Begin("Detecting Kerberos attacks in {0}", securityEvtxPath);
+
+        // 4768 + 4771 are bounded; pull them in full. 4769 dominates the log on a busy DC, so server-side filter it
+        // to RC4 only (the sole 4769 signal we score) before transferring — keeps the workflow tractable at DC scale.
+        var smallEvents = await WindowsAnalysis.EvtxECmdAsync(file: securityEvtxPath, includeIds: SmallKerberosEventIds);
+        if (smallEvents is null)
+            return WorkflowResult<KerberosReport>.Failure(
+                $"EvtxECmd failed to parse '{securityEvtxPath}'; check the path points to a Security.evtx.");
+        var rc4Tgs = await WindowsAnalysis.EvtxECmdServerFilteredAsync(
+            payloadGrepPattern: Rc4PayloadFilter, file: securityEvtxPath, includeIds: "4769") ?? [];
+
+        var parsed = smallEvents.Concat(rc4Tgs).Select(ToKerberosEvent).ToArray();
+
+        // Pre-auth-failure bursts: per source IP, count + distinct targets + time window.
+        var bursts = parsed.Where(e => e.EventId == 4771 && !string.IsNullOrEmpty(e.ClientIp))
+            .GroupBy(e => e.ClientIp!)
+            .Where(g => g.Count() >= preauthFailureThreshold)
+            .Select(g => new KerberosPreAuthBurst
+            {
+                SourceIp = g.Key,
+                FailureCount = g.Count(),
+                AffectedAccounts = g.Select(e => e.TargetUser ?? "?").Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(s => s).ToArray(),
+                FirstSeen = g.Min(e => e.Time),
+                LastSeen = g.Max(e => e.Time),
+            })
+            .OrderByDescending(b => b.FailureCount)
+            .ToArray();
+
+        op.Complete();
+        var report = new KerberosReport { Events = parsed, PreAuthFailureBursts = bursts };
+        return WorkflowResult<KerberosReport>.Success(report,
+            $"Parsed {parsed.Length} Kerberos event(s): {report.KerberoastingAttempts.Length} Kerberoasting (RC4 4769), " +
+            $"{report.AsRepRoastingAttempts.Length} AS-REP-roastable (4768 PreAuth=0), {bursts.Length} pre-auth-failure burst source(s).");
+    }
+
+    // Builds a KerberosEvent from a 4768/4769/4771 record and scores Kerberoasting / AS-REP roasting.
+    private static KerberosEvent ToKerberosEvent(EventLogEntry e)
+    {
+        var d = ParseEventData(e.Payload);
+        var enc = d.GetValueOrDefault("TicketEncryptionType");
+        var status = d.GetValueOrDefault("Status");
+        var service = d.GetValueOrDefault("ServiceName");
+        var preauth = d.GetValueOrDefault("PreAuthType");
+        var reasons = new List<string>();
+
+        // Kerberoasting: 4769 success with RC4-HMAC (0x17) for a non-krbtgt SPN.
+        if (e.EventId == 4769 && enc == "0x17" && status == "0x0"
+            && !string.IsNullOrEmpty(service) && !service!.StartsWith("krbtgt", StringComparison.OrdinalIgnoreCase))
+        {
+            reasons.Add($"service ticket (4769) requested with RC4-HMAC for '{service}' — offline-cracking precondition (Kerberoasting)");
+        }
+
+        // AS-REP roasting: 4768 success where pre-authentication was not required.
+        if (e.EventId == 4768 && status == "0x0" && preauth == "0")
+        {
+            var who = d.GetValueOrDefault("TargetUserName") ?? "?";
+            reasons.Add($"TGT (4768) issued for '{who}' without pre-authentication — AS-REP-roastable (offline-crackable response)");
+        }
+
+        return new KerberosEvent
+        {
+            Time = e.TimeCreated,
+            EventId = e.EventId,
+            TargetUser = d.GetValueOrDefault("TargetUserName"),
+            TargetDomain = d.GetValueOrDefault("TargetDomainName"),
+            ServiceName = service,
+            ClientIp = d.GetValueOrDefault("IpAddress"),
+            TicketEncryptionType = enc,
+            TicketEncryptionName = KerberosEncryptionName(enc),
+            Status = status,
+            StatusName = KerberosStatusName(status),
+            PreAuthType = preauth,
+            Computer = e.Computer,
+            Suspicious = reasons.Count > 0,
+            Reasons = reasons.ToArray(),
+        };
+    }
+
+    // Maps a Kerberos encryption-type code (TicketEncryptionType hex, RFC 3961) to its human-readable name.
+    // 0x17 (RC4-HMAC) is the Kerberoasting / AS-REP-roasting target — crackable offline without strong KDFs.
+    private static string? KerberosEncryptionName(string? hex) => hex?.ToLowerInvariant() switch
+    {
+        null => null, "" => null,
+        "0x1"  => "DES-CBC-CRC",
+        "0x3"  => "DES-CBC-MD5",
+        "0x11" => "AES128-CTS-HMAC-SHA1-96",
+        "0x12" => "AES256-CTS-HMAC-SHA1-96",
+        "0x17" => "RC4-HMAC",
+        "0x18" => "RC4-HMAC-EXP",
+        "0x19" => "AES128-CTS-HMAC-SHA256-128",
+        "0x1a" => "AES256-CTS-HMAC-SHA384-192",
+        "0xffffffff" => "none/error",
+        _ => hex,
+    };
+
+    // Maps a Kerberos Status hex code (4768/4769/4771 Status field) to its name. 0x18 = pre-auth fail (bad pwd),
+    // 0x6 = client not found (account enumeration), 0x12 = account disabled/locked/expired.
+    private static string? KerberosStatusName(string? hex) => hex?.ToLowerInvariant() switch
+    {
+        null => null, "" => null,
+        "0x0"  => "Success",
+        "0x6"  => "Client not found in Kerberos database",
+        "0x12" => "Account disabled/locked/expired",
+        "0x17" => "Password has expired",
+        "0x18" => "Pre-authentication failed (bad password)",
+        "0x25" => "Clock skew too great",
+        _ => hex,
+    };
+
     /// <summary>
     /// Detects event-log clearing — a high-signal anti-forensics action — in a host's logs: the Security audit
     /// log cleared (1102) and, when <paramref name="systemEvtxPath"/> is supplied, any log cleared as recorded in
@@ -779,27 +968,7 @@ public class WindowsAnalysisWorkflow : Workflow
             Reasons = reasons.ToArray(),
         };
     }
-
-    // The persistence mechanism categories this workflow recovers, in report order. These mirror the
-    // "Autorunsc Detection: Malware Persistence Mechanisms" methodology (minus DLL hijacking, which is a
-    // file-system artifact, and WMI event consumers, which have their own workflow).
-    public const string CatRunKeys = "Run Keys (Autostart)";
-    public const string CatServices = "Services";
-    public const string CatScheduledTasks = "Scheduled Tasks";
-    public const string CatAppInitDlls = "AppInit DLLs";
-    public const string CatShellCommands = "Shell Open Commands";
-    private static readonly string[] CategoryOrder =
-        [CatRunKeys, CatServices, CatScheduledTasks, CatAppInitDlls, CatShellCommands];
-
-    // Directories legitimate persistence almost never executes from — the "common malware locations" from the
-    // methodology, restricted to transient/world-writable paths that stay high-precision even for per-user Run
-    // keys. (Bare \AppData\ is deliberately excluded: modern per-user software — OneDrive, Dashlane, Teams, … —
-    // legitimately autostarts from there, so it is too noisy to flag by location alone. Pass it explicitly via
-    // suspiciousPathFragments when hunting machine-level ASEPs where an AppData binary really is anomalous.)
-    private static readonly string[] DefaultSuspiciousPaths =
-        [@"\temp\", @"\tmp\", @"\users\public\", @"\$recycle", @"\recycler\", @"\perflogs\",
-         @"\windows\fonts\", @"\windows\temp\", @"\windows\debug\", @"\programdata\temp\"];
-
+    
     /// <summary>
     /// Hunts a Windows system's registry hives for malware-persistence mechanisms, using RegRipper's purpose-
     /// built AutoStart Extension Point plugins and classifying the results into the persistence categories from
@@ -807,7 +976,7 @@ public class WindowsAnalysisWorkflow : Workflow
     /// (<c>svc</c>, from SYSTEM), Scheduled Tasks (<c>tasks</c> / TaskCache), AppInit_DLLs (<c>appinitdlls</c>),
     /// and shell open-command hijacks (<c>cmd_shell</c>). Each recovered entry is scored for suspicion against
     /// the common malware-location set and LOLBin/encoded-command indicators; the report exposes every entry
-    /// (<see cref="PersistenceReport.AllEntries"/>) plus the flagged subset (<see cref="PersistenceReport.SuspiciousEntries"/>).
+    /// (<see cref="RegistryPersistenceReport.AllEntries"/>) plus the flagged subset (<see cref="RegistryPersistenceReport.SuspiciousEntries"/>).
     /// DLL search-order hijacking (a file-system artifact) and WMI event consumers are out of scope here — they
     /// have their own workflows.
     /// </summary>
@@ -820,7 +989,7 @@ public class WindowsAnalysisWorkflow : Workflow
     /// When omitted, scheduled tasks fall back to the TaskCache (existence only, no command).</param>
     /// <param name="suspiciousPathFragments">Path substrings (case-insensitive) that mark a command as running
     /// from a suspicious location. Defaults to the common user-writable/transient malware locations.</param>
-    public async Task<WorkflowResult<PersistenceReport>> FindPersistenceMechanismsAsync(
+    public async Task<WorkflowResult<RegistryPersistenceReport>> FindRegistryPersistenceMechanismsAsync(
         string softwareHive, string systemHive, string? ntuserHive = null,
         string? tasksDirectory = null, string[]? suspiciousPathFragments = null)
     {
@@ -837,7 +1006,7 @@ public class WindowsAnalysisWorkflow : Workflow
         var runUser = ntuserHive is not null ? await WindowsAnalysis.RegRipperAsync(ntuserHive, "run") : null;
 
         if (runSoftware is null && svc is null)
-            return WorkflowResult<PersistenceReport>.Failure(
+            return WorkflowResult<RegistryPersistenceReport>.Failure(
                 $"RegRipper could not run against '{softwareHive}' / '{systemHive}'; check the hive paths and that rip.pl is installed.");
 
         // Scheduled tasks: prefer the on-disk Task XML (which carries the action/command line) when a Tasks
@@ -861,12 +1030,12 @@ public class WindowsAnalysisWorkflow : Workflow
 
         // Bucket into the fixed category order so the report always has one mechanism per category.
         var mechanisms = CategoryOrder
-            .Select(c => new PersistenceMechanism(c, entries.Where(e => e.Category == c).ToArray()))
+            .Select(c => new RegistryPersistenceMechanism(c, entries.Where(e => e.Category == c).ToArray()))
             .ToArray();
-        var report = new PersistenceReport(mechanisms);
+        var report = new RegistryPersistenceReport(mechanisms);
 
         op.Complete();
-        return WorkflowResult<PersistenceReport>.Success(report,
+        return WorkflowResult<RegistryPersistenceReport>.Success(report,
             report.SuspiciousEntries.Length == 0
                 ? $"Enumerated {report.AllEntries.Length} persistence entr(ies) across {mechanisms.Length} mechanism categories; none scored suspicious."
                 : $"Enumerated {report.AllEntries.Length} persistence entr(ies); {report.SuspiciousEntries.Length} scored suspicious: " +
@@ -981,10 +1150,7 @@ public class WindowsAnalysisWorkflow : Workflow
         !line.TrimEnd().EndsWith("not found.", StringComparison.OrdinalIgnoreCase) &&
         !line.Contains(" has no ", StringComparison.OrdinalIgnoreCase);
 
-    // High-confidence obfuscation/download indicators in a command line (encoded PowerShell, base64, remote fetch).
-    private static readonly Regex EncodedRegex = new(
-        @"(-enc\b|-encodedcommand|-e\s+[A-Za-z0-9+/=]{20,}|-w\s+hidden|-windowstyle\s+hidden|frombase64string|downloadstring|downloadfile|invoke-expression|\biex\b|https?://)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    
 
     // Scores a persistence entry for suspicion, returning a reason per indicator. Only high-precision signals set
     // the verdict — a suspicious execution location, an obfuscated/download command line, a populated AppInit_DLLs
@@ -1036,4 +1202,103 @@ public class WindowsAnalysisWorkflow : Workflow
 
     // True when the program token specifies a directory (a full/relative path) rather than a bare binary name.
     private static bool HasDirectory(string program) => program.Contains('\\') || program.Contains('/');
+
+    #endregion
+
+    #region Fields
+    // The DFIR batch file the WindowsAnalysisToolkit constructor installs alongside RECmd.
+    public const string DfirBatchFile = "/opt/zimmermantools/RECmd/DFIRBatch.reb";
+
+    // The key forensic registry artifacts from the methodology, each matched by a distinctive (case-insensitive)
+    // fragment of its registry key path — directly mirroring the reference's Key Registry Artifacts table.
+    private static readonly (string Name, string KeyPathFragment)[] KeyRegistryArtifacts =
+    [
+        ("Run/RunOnce",   @"currentversion\run"),
+        ("UserAssist",    "userassist"),
+        ("RecentDocs",    "recentdocs"),
+        ("TypedPaths",    "typedpaths"),
+        ("MRU Lists",     "mru"),
+        ("BAM/DAM",       @"\bam\"),
+        ("USBSTOR",       @"enum\usbstor"),
+        ("USB VID/PID",   @"enum\usb\"),
+        ("MountedDevices", "mounteddevices"),
+        ("MountPoints2",  "mountpoints2"),
+        ("Services",      @"\services\"),
+        ("Shimcache",     "appcompatcache"),
+        ("Timezone",      "timezoneinformation"),
+        ("Computer name", @"computername\computername"),
+        ("Last shutdown", @"control\windows"),
+        ("Amcache programs", "inventoryapplicationfile"),
+    ];
+
+    // The persistence mechanism categories this workflow recovers, in report order.These mirror the
+    // "Autorunsc Detection: Malware Persistence Mechanisms" methodology (minus DLL hijacking, which is a
+    // file-system artifact, and WMI event consumers, which have their own workflow).
+    public const string CatRunKeys = "Run Keys (Autostart)";
+    public const string CatServices = "Services";
+    public const string CatScheduledTasks = "Scheduled Tasks";
+    public const string CatAppInitDlls = "AppInit DLLs";
+    public const string CatShellCommands = "Shell Open Commands";
+    private static readonly string[] CategoryOrder =
+        [CatRunKeys, CatServices, CatScheduledTasks, CatAppInitDlls, CatShellCommands];
+
+    // Directories legitimate persistence almost never executes from — the "common malware locations" from the
+    // methodology, restricted to transient/world-writable paths that stay high-precision even for per-user Run
+    // keys. (Bare \AppData\ is deliberately excluded: modern per-user software — OneDrive, Dashlane, Teams, … —
+    // legitimately autostarts from there, so it is too noisy to flag by location alone. Pass it explicitly via
+    // suspiciousPathFragments when hunting machine-level ASEPs where an AppData binary really is anomalous.)
+    private static readonly string[] DefaultSuspiciousPaths =
+        [@"\temp\", @"\tmp\", @"\users\public\", @"\$recycle", @"\recycler\", @"\perflogs\",
+         @"\windows\fonts\", @"\windows\temp\", @"\windows\debug\", @"\programdata\temp\"];
+
+    // High-confidence obfuscation/download indicators in a command line (encoded PowerShell, base64, remote fetch).
+    private static readonly Regex EncodedRegex = new(
+        @"(-enc\b|-encodedcommand|-e\s+[A-Za-z0-9+/=]{20,}|-w\s+hidden|-windowstyle\s+hidden|frombase64string|downloadstring|downloadfile|invoke-expression|\biex\b|https?://)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // WMI consumer/filter names that are benign-but-noisy (stock OS / vendor subscriptions), per the methodology's
+    // false-positive list. Names are matched case-insensitively as substrings.
+    private static readonly string[] DefaultWmiAllowlist =
+        ["BVTFilter", "SCM Event Log Consumer", "SCM Event Log Filter", "TSLogonEvents.vbs", "TSLogonFilter",
+         "RAevent.vbs", "RmAssistEventFilter", "KernCap.vbs", "WSCEAA.exe", "NTEventLogConsumer"];
+
+    // The two consumer types the methodology says account for essentially all malicious WMI persistence.
+    private static readonly string[] WmiAttackerConsumerTypes = ["CommandLineEventConsumer", "ActiveScriptEventConsumer"];
+
+    // PowerShell -EncodedCommand / -e / -ec payloads are base64 of a UTF-16LE string; decode to reveal the intent.
+    private static readonly Regex EncodedPsRegex = new(@"-e(c|nc|ncodedcommand)?\s+([A-Za-z0-9+/=]{16,})", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Core Windows processes whose name is a favourite masquerade, mapped to the (volume-relative, lowercased,
+    // forward-slash) directories they legitimately live in. A file so named found anywhere else is a masquerade
+    // lead — directly mirroring the methodology's "known good" system-process path table (svchost outside
+    // System32, etc.). A file's path is canonical when it ends with "<home>/<name>".
+    private const string Sys32 = "/windows/system32";
+    private const string SysWow = "/windows/syswow64";
+    private static readonly Dictionary<string, string[]> SystemProcessHomes = new()
+    {
+        ["svchost.exe"]   = [Sys32, SysWow],
+        ["lsass.exe"]     = [Sys32],
+        ["services.exe"]  = [Sys32],
+        ["winlogon.exe"]  = [Sys32],
+        ["csrss.exe"]     = [Sys32],
+        ["smss.exe"]      = [Sys32],
+        ["wininit.exe"]   = [Sys32],
+        ["lsm.exe"]       = [Sys32],
+        ["spoolsv.exe"]   = [Sys32],
+        ["taskhost.exe"]  = [Sys32],
+        ["taskhostw.exe"] = [Sys32],
+        ["dwm.exe"]       = [Sys32],
+        ["conhost.exe"]   = [Sys32],
+        ["explorer.exe"]  = ["/windows", SysWow],
+        ["iexplore.exe"]  = ["/program files/internet explorer", "/program files (x86)/internet explorer"],
+    };
+
+    // Paths that legitimately hold process-named copies (component store, servicing payloads, the driver store,
+    // and a previous-OS backup) — these are excluded from the masquerade check to keep it high-precision.
+    private static readonly string[] MasqueradeExcludedPaths =
+        ["/winsxs/", "/servicing/", "/driverstore/", "/windows.old/"];
+
+    // Executable extensions worth flagging when found in a transient/world-writable location.
+    private static readonly string[] SuspiciousExecExtensions = ["*.exe", "*.scr", "*.com", "*.pif"];
+    #endregion
 }

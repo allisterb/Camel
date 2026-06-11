@@ -135,6 +135,39 @@ public class WindowsAnalysisToolkit : Toolkit
     }
 
     /// <summary>
+    /// As <see cref="EvtxECmdAsync"/> but server-side <c>grep</c>-filters the produced JSON-lines for
+    /// <paramref name="payloadGrepPattern"/> before transferring them — for event sources that produce hundreds of
+    /// thousands of rows (e.g. a DC's 4769 stream) where the analyst only cares about lines matching a specific
+    /// payload signal (e.g. RC4 service tickets). The grep pattern is a fixed string passed to <c>grep -F</c>,
+    /// matched against each whole JSON-lines record. Returns null if EvtxECmd failed; empty array on no matches.
+    /// </summary>
+    public async Task<EventLogEntry[]?> EvtxECmdServerFilteredAsync(
+        string payloadGrepPattern,
+        string? file = null, string? directory = null,
+        string? includeIds = null, string? excludeIds = null,
+        string? startDate = null, string? endDate = null)
+    {
+        if (file is null && directory is null)
+            throw new ArgumentException("EvtxECmdServerFilteredAsync requires either a file (-f) or a directory (-d).");
+
+        var dir = "/tmp/camel_ez_" + Guid.NewGuid().ToString("N");
+        await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {dir}", false);
+        try
+        {
+            var args = EvtxArgs(file, directory, includeIds, excludeIds, startDate, endDate)
+                + $"--json {Q(dir)} --jsonf raw.json --maps {Q(EvtxMapsDir)}";
+            if (await ExecuteToolTextAsync("EvtxECmd", args) is null) return null;
+            // Server-side filter: emit only lines containing the pattern (grep -F = literal, no regex meta to escape).
+            await auditEnvironment.ExecuteCommandAsync("bash",
+                $"-c \"grep -F {Q(payloadGrepPattern)} {dir}/raw.json > {dir}/filtered.json || true\"", false);
+            var r = await auditEnvironment.ExecuteCommandAsync("cat", $"{dir}/filtered.json", false);
+            if (!r.IsCompleted) return [];
+            return ParseJsonLines<EventLogEntry>(r.Output);
+        }
+        finally { try { auditEnvironment.ExecuteCommand("rm", $"-rf {dir}", out _, false); } catch { } }
+    }
+
+    /// <summary>
     /// Parses Windows event logs with EvtxECmd to a CSV file (rather than reading the events back), taking the
     /// same source/filter args as <see cref="EvtxECmdAsync"/> plus <paramref name="outputDir"/> (<c>--csv</c>)
     /// and <paramref name="outputFile"/> (<c>--csvf</c>) to control where the CSV is written. Always uses the

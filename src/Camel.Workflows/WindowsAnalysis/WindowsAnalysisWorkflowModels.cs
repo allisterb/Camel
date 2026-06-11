@@ -11,11 +11,11 @@ using Camel.Toolkits.Models;
 /// matched it. <see cref="Entries"/> is empty when the parsed hives contained no such artifact (e.g. an
 /// NTUSER-only artifact when only SYSTEM/SOFTWARE hives were parsed).
 /// </summary>
-public record KeyArtifact
+public record KeyRegistryArtifact
 {
     public string Name { get; }
     public RegistryEntry[] Entries { get; }
-    public KeyArtifact(string name, RegistryEntry[] entries)
+    public KeyRegistryArtifact(string name, RegistryEntry[] entries)
     {
         this.Name = name;
         this.Entries = entries;
@@ -24,15 +24,15 @@ public record KeyArtifact
 
 /// <summary>
 /// The result of batch-parsing a directory of registry hives with RECmd's DFIR batch file and bucketing the
-/// output into the key forensic artifacts. <see cref="Artifacts"/> holds one <see cref="KeyArtifact"/> per
+/// output into the key forensic artifacts. <see cref="Artifacts"/> holds one <see cref="KeyRegistryArtifact"/> per
 /// artifact category (Run keys, UserAssist, USBSTOR, Shimcache, …); <see cref="AllEntries"/> is the complete
 /// RECmd output for anything not covered by a named bucket.
 /// </summary>
-public record KeyArtifactsReport
+public record KeyRegistryArtifactsReport
 {
-    public KeyArtifact[] Artifacts { get; }
+    public KeyRegistryArtifact[] Artifacts { get; }
     public RegistryEntry[] AllEntries { get; }
-    public KeyArtifactsReport(KeyArtifact[] artifacts, RegistryEntry[] allEntries)
+    public KeyRegistryArtifactsReport(KeyRegistryArtifact[] artifacts, RegistryEntry[] allEntries)
     {
         this.Artifacts = artifacts;
         this.AllEntries = allEntries;
@@ -61,11 +61,11 @@ public record PersistenceEntry
 }
 
 /// <summary>One malware-persistence mechanism category and the <see cref="PersistenceEntry"/> entries found in it.</summary>
-public record PersistenceMechanism
+public record RegistryPersistenceMechanism
 {
     public string Category { get; }
     public PersistenceEntry[] Entries { get; }
-    public PersistenceMechanism(string category, PersistenceEntry[] entries)
+    public RegistryPersistenceMechanism(string category, PersistenceEntry[] entries)
     {
         this.Category = category;
         this.Entries = entries;
@@ -78,12 +78,12 @@ public record PersistenceMechanism
 /// <see cref="AllEntries"/> is every entry found across all categories; <see cref="SuspiciousEntries"/> is the
 /// actionable subset that scored at least one suspicion reason.
 /// </summary>
-public record PersistenceReport
+public record RegistryPersistenceReport
 {
-    public PersistenceMechanism[] Mechanisms { get; }
+    public RegistryPersistenceMechanism[] Mechanisms { get; }
     public PersistenceEntry[] AllEntries { get; }
     public PersistenceEntry[] SuspiciousEntries { get; }
-    public PersistenceReport(PersistenceMechanism[] mechanisms)
+    public RegistryPersistenceReport(RegistryPersistenceMechanism[] mechanisms)
     {
         this.Mechanisms = mechanisms;
         this.AllEntries = mechanisms.SelectMany(m => m.Entries).ToArray();
@@ -353,12 +353,100 @@ public record ExecutionReport
 }
 
 /// <summary>
+/// One Kerberos authentication event parsed from a Domain Controller's Security log: a TGT request (4768),
+/// a service-ticket request (4769), or a pre-auth failure (4771). <see cref="TicketEncryptionType"/> is the raw
+/// hex encryption-type code from the event (<c>0x17</c> = RC4-HMAC, <c>0x12</c> = AES256, …) and
+/// <see cref="TicketEncryptionName"/> its human-readable name — the key Kerberoasting/AS-REP-roasting discriminator
+/// (an attacker requests RC4 so the response can be cracked offline). <see cref="Status"/> is the raw Kerberos
+/// status (<c>0x0</c> = success, <c>0x18</c> = bad password / pre-auth fail, …); <see cref="PreAuthType"/> on a 4768
+/// is <c>"0"</c> only when pre-authentication was not required — the AS-REP-roasting precondition. When
+/// <see cref="Suspicious"/> is true, <see cref="Reasons"/> explains why (Kerberoasting / AS-REP roasting).
+/// </summary>
+public record KerberosEvent
+{
+    public DateTime? Time { get; init; }
+    public int EventId { get; init; }
+    public string? TargetUser { get; init; }
+    public string? TargetDomain { get; init; }
+    public string? ServiceName { get; init; }
+    public string? ClientIp { get; init; }
+    public string? TicketEncryptionType { get; init; }
+    public string? TicketEncryptionName { get; init; }
+    public string? Status { get; init; }
+    public string? StatusName { get; init; }
+    public string? PreAuthType { get; init; }
+    public string? Computer { get; init; }
+    public bool Suspicious { get; init; }
+    public string[] Reasons { get; init; } = [];
+}
+
+/// <summary>
+/// A burst of Kerberos pre-authentication failures (4771) from a single <see cref="SourceIp"/>: how many failures
+/// (<see cref="FailureCount"/>), against which accounts (<see cref="AffectedAccounts"/>), and the time window
+/// (<see cref="FirstSeen"/> … <see cref="LastSeen"/>). A burst targeting many accounts is a password spray; one
+/// targeting a single account is a brute-force attempt.
+/// </summary>
+public record KerberosPreAuthBurst
+{
+    public string SourceIp { get; init; } = "";
+    public int FailureCount { get; init; }
+    public string[] AffectedAccounts { get; init; } = [];
+    public DateTime? FirstSeen { get; init; }
+    public DateTime? LastSeen { get; init; }
+}
+
+/// <summary>
+/// The result of hunting Kerberos attacks in a Security event log. <see cref="Events"/> holds every parsed
+/// Kerberos event; the computed views surface the high-precision attacks the methodology calls out —
+/// <see cref="KerberoastingAttempts"/> (4769 RC4 service-ticket requests, the offline-cracking precondition),
+/// <see cref="AsRepRoastingAttempts"/> (4768 successes against accounts where pre-auth is disabled), and
+/// <see cref="PreAuthFailureBursts"/> (4771 brute-force / password-spray sources).
+/// </summary>
+public record KerberosReport
+{
+    public KerberosEvent[] Events { get; init; } = [];
+    public KerberosPreAuthBurst[] PreAuthFailureBursts { get; init; } = [];
+
+    public KerberosEvent[] KerberoastingAttempts => Events.Where(e => e.EventId == 4769 && e.Suspicious).ToArray();
+    public KerberosEvent[] AsRepRoastingAttempts => Events.Where(e => e.EventId == 4768 && e.Suspicious).ToArray();
+    public KerberosEvent[] SuspiciousEvents => Events.Where(e => e.Suspicious).ToArray();
+}
+
+/// <summary>
+/// An executable surfaced by the "adversary hiding in plain sight" file-system triage. <see cref="Kind"/>
+/// distinguishes a <em>system-process masquerade</em> — a file named like a core Windows process (svchost.exe,
+/// lsass.exe, services.exe, …; <see cref="Impersonates"/> names it) found outside that process's canonical
+/// directory — from a <em>transient-location executable</em> — an <c>.exe/.scr/.com/.pif</c> dropped in a
+/// Temp / PerfLogs location where executables do not normally reside. Component-store copies (<c>\WinSxS</c>,
+/// <c>\servicing</c>, <c>\DriverStore</c>, <c>\Windows.old</c>) are excluded from the masquerade check. Leads to triage.
+/// </summary>
+public record SuspiciousExecutable
+{
+    public string Path { get; init; } = "";
+    public string Name { get; init; } = "";
+    public long Size { get; init; }
+    public string Kind { get; init; } = "";
+    public string? Impersonates { get; init; }
+    public string[] Reasons { get; init; } = [];
+}
+
+/// <summary>
+/// The result of triaging a mounted Windows volume for executables hiding in plain sight: the
+/// <see cref="Findings"/> and the number of candidate files examined (<see cref="FilesScanned"/>).
+/// </summary>
+public record SuspiciousExecutableReport
+{
+    public SuspiciousExecutable[] Findings { get; init; } = [];
+    public int FilesScanned { get; init; }
+}
+
+/// <summary>
 /// One remote network share a user connected to (a mapped drive or browsed UNC path), recovered from the
 /// registry. <see cref="Unc"/> is the full <c>\\server\share</c>, split into <see cref="Server"/> and
 /// <see cref="Share"/>; <see cref="Source"/> names the artifact it came from (MountPoints2, Map Network Drive
 /// MRU). These are the file-copy / exfiltration channels in insider and lateral-movement cases.
 /// </summary>
-public record ExternalConnection
+public record ExternalShareConnection
 {
     public string Unc { get; init; } = "";
     public string? Server { get; init; }
@@ -372,7 +460,7 @@ public record ExternalConnection
 /// relevant keys frequently live in unreplayed transaction logs of a dirty hive (especially after anti-forensic
 /// MRU cleaning), so this is sourced via RECmd, which replays the logs — RegRipper would miss them.
 /// </summary>
-public record ExternalConnectionReport
+public record ExternalShareConnectionsReport
 {
-    public ExternalConnection[] RemoteShares { get; init; } = [];
+    public ExternalShareConnection[] RemoteShares { get; init; } = [];
 }

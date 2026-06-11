@@ -75,6 +75,131 @@ public class MemoryAnalysisToolkit : Toolkit
     public Task<WindowsCachedump[]?> WindowsCachedumpAsync(string filename) => ExecuteToolAsync<WindowsCachedump[]>("Volatility3", $"-f {filename} -r json windows.cachedump");
 
     /// <summary>
+    /// Lists each process's loaded DLLs from <paramref name="filename"/> (<c>windows.ldrmodules</c>), reporting
+    /// for each entry whether it appears in the three PEB doubly-linked lists (InLoad/InInit/InMem) and the
+    /// VAD-tree MappedPath. A DLL present in VAD but missing from one or more PEB lists, or with no
+    /// MappedPath, indicates injection / unlinking.
+    /// </summary>
+    public Task<WindowsLdrModules[]?> WindowsLdrModulesAsync(string filename, int? pid = null) =>
+        ExecuteToolAsync<WindowsLdrModules[]>("Volatility3", $"-f {filename} -r json windows.ldrmodules" + (pid is not null ? $" --pid {pid}" : ""));
+
+    /// <summary>
+    /// Detects process-hollowing victims in <paramref name="filename"/> (<c>windows.hollowprocesses</c>): a
+    /// process whose PEB image base disagrees with the in-memory VAD or the on-disk image.
+    /// </summary>
+    public Task<WindowsHollowProcesses[]?> WindowsHollowProcessesAsync(string filename) =>
+        ExecuteToolAsync<WindowsHollowProcesses[]>("Volatility3", $"-f {filename} -r json windows.hollowprocesses");
+
+    /// <summary>
+    /// Lists every thread in every process from <paramref name="filename"/> (<c>windows.threads</c>) with its
+    /// kernel and Win32 start addresses — the data the thread-based hollowing / injection detector consumes.
+    /// </summary>
+    public Task<WindowsThreads[]?> WindowsThreadsAsync(string filename, int? pid = null) =>
+        ExecuteToolAsync<WindowsThreads[]>("Volatility3", $"-f {filename} -r json windows.threads" + (pid is not null ? $" --pid {pid}" : ""));
+
+    /// <summary>
+    /// Lists every System Service Descriptor Table entry from <paramref name="filename"/> (<c>windows.ssdt</c>).
+    /// Entries owned by anything other than <c>ntoskrnl</c> / <c>win32k</c> are kernel SSDT hooks.
+    /// </summary>
+    public Task<WindowsSsdt[]?> WindowsSsdtAsync(string filename) => ExecuteToolAsync<WindowsSsdt[]>("Volatility3", $"-f {filename} -r json windows.ssdt");
+
+    /// <summary>
+    /// Lists registered kernel callbacks from <paramref name="filename"/> (<c>windows.callbacks</c>) — image-,
+    /// thread-, process-, and registry-notify routines, plus Bug-check callbacks. Foreign-module entries are
+    /// rootkit / EDR indicators.
+    /// </summary>
+    public Task<WindowsCallbacks[]?> WindowsCallbacksAsync(string filename) => ExecuteToolAsync<WindowsCallbacks[]>("Volatility3", $"-f {filename} -r json windows.callbacks");
+
+    /// <summary>
+    /// Lists every Major Function entry in every driver's IRP_MJ table from <paramref name="filename"/>
+    /// (<c>windows.driverirp</c>). Entries pointing into a module other than the owning driver or
+    /// <c>ntoskrnl</c> are IRP-table hooks.
+    /// </summary>
+    public Task<WindowsDriverIrp[]?> WindowsDriverIrpAsync(string filename) => ExecuteToolAsync<WindowsDriverIrp[]>("Volatility3", $"-f {filename} -r json windows.driverirp");
+
+    /// <summary>
+    /// Cross-view process enumeration from <paramref name="filename"/> (<c>windows.psxview</c>): each process
+    /// reported with which of four sources (pslist / psscan / thrdscan / csrss) saw it. Visibility gaps are
+    /// the cross-view hidden-process indicator.
+    /// </summary>
+    public Task<WindowsPsxView[]?> WindowsPsxViewAsync(string filename) => ExecuteToolAsync<WindowsPsxView[]>("Volatility3", $"-f {filename} -r json windows.psxview");
+
+    /// <summary>
+    /// Pool-tag scan for mutant (mutex) objects from <paramref name="filename"/> (<c>windows.mutantscan</c>).
+    /// Named mutexes are canonical malware-family IOCs (single-instance markers).
+    /// </summary>
+    public Task<WindowsMutantScan[]?> WindowsMutantScanAsync(string filename) => ExecuteToolAsync<WindowsMutantScan[]>("Volatility3", $"-f {filename} -r json windows.mutantscan");
+
+    /// <summary>
+    /// Recovers <c>COMMAND_HISTORY</c> buffers (typed command lines) from console hosts in
+    /// <paramref name="filename"/> (<c>windows.cmdscan</c>).
+    /// </summary>
+    public Task<WindowsCmdScan[]?> WindowsCmdScanAsync(string filename) => ExecuteToolAsync<WindowsCmdScan[]>("Volatility3", $"-f {filename} -r json windows.cmdscan");
+
+    /// <summary>
+    /// Recovers <c>CONSOLE_INFORMATION</c> buffers (typed commands plus the output written back) from
+    /// <paramref name="filename"/> (<c>windows.consoles</c>).
+    /// </summary>
+    public Task<WindowsConsoles[]?> WindowsConsolesAsync(string filename) => ExecuteToolAsync<WindowsConsoles[]>("Volatility3", $"-f {filename} -r json windows.consoles");
+
+    /// <summary>
+    /// Extracts Application Compatibility Cache entries from kernel memory in <paramref name="filename"/>
+    /// (<c>windows.shimcachemem</c>) — including entries not yet flushed to the SYSTEM hive at shutdown.
+    /// </summary>
+    public Task<WindowsShimcacheMem[]?> WindowsShimcacheMemAsync(string filename) => ExecuteToolAsync<WindowsShimcacheMem[]>("Volatility3", $"-f {filename} -r json windows.shimcachemem");
+
+    /// <summary>
+    /// DC-only: scans LSASS for a Skeleton Key implant in <paramref name="filename"/>
+    /// (<c>windows.skeleton_key_check</c>). Empty result = clean.
+    /// </summary>
+    public Task<WindowsSkeletonKeyCheck[]?> WindowsSkeletonKeyCheckAsync(string filename) =>
+        ExecuteToolAsync<WindowsSkeletonKeyCheck[]>("Volatility3", $"-f {filename} -r json windows.skeleton_key_check");
+
+    /// <summary>
+    /// Detects Process Ghosting evasion in <paramref name="filename"/> (<c>windows.processghosting</c>) — a
+    /// process whose backing file was deleted before <c>NtCreateProcessEx</c>. Empty result = clean.
+    /// </summary>
+    public Task<WindowsProcessGhosting[]?> WindowsProcessGhostingAsync(string filename) =>
+        ExecuteToolAsync<WindowsProcessGhosting[]>("Volatility3", $"-f {filename} -r json windows.processghosting");
+
+    /// <summary>
+    /// Extracts PE version-info (company / product / version strings) for loaded modules in
+    /// <paramref name="filename"/> (<c>windows.verinfo</c>). Signed Microsoft binaries report consistent
+    /// values; masquerades and packed binaries frequently don't.
+    /// </summary>
+    public Task<WindowsVerInfo[]?> WindowsVerInfoAsync(string filename, int? pid = null) =>
+        ExecuteToolAsync<WindowsVerInfo[]>("Volatility3", $"-f {filename} -r json windows.verinfo" + (pid is not null ? $" --pid {pid}" : ""));
+
+    /// <summary>
+    /// YARA-scans every process's VAD regions in <paramref name="filename"/> (<c>windows.vadyarascan</c>)
+    /// against the rules in <paramref name="yaraRulesFile"/> (passed via <c>--yara-file</c>). Returns a row
+    /// per match. When <paramref name="pid"/> is set, only that process is scanned. <paramref name="wide"/>
+    /// matches UTF-16 strings (mirroring YARA's <c>wide</c> modifier).
+    /// </summary>
+    public Task<WindowsVadYaraScan[]?> WindowsVadYaraScanAsync(string filename, string yaraRulesFile, int? pid = null, bool wide = false) =>
+        ExecuteToolAsync<WindowsVadYaraScan[]>("Volatility3",
+            $"-f {filename} -r json windows.vadyarascan --yara-file {Q(yaraRulesFile)}" +
+            (pid is not null ? $" --pid {pid}" : "") + (wide ? " --wide" : ""));
+
+    /// <summary>
+    /// Extracts cached file contents from <paramref name="filename"/> to <paramref name="outputDir"/> on the
+    /// workstation (<c>windows.dumpfiles</c>). Pass <paramref name="virtualAddress"/> / <paramref name="physicalAddress"/>
+    /// (from a <c>filescan</c> result) to extract a single FILE_OBJECT, or <paramref name="pid"/> to extract
+    /// every cached file backing that process, or <paramref name="filterRegex"/> to extract every cached file
+    /// whose name matches the regex. The directory is created if missing. Returns the full path(s) of the
+    /// dumped file(s), or null if the plugin failed.
+    /// </summary>
+    public Task<string[]?> DumpFilesAsync(string filename, string outputDir,
+        long? virtualAddress = null, long? physicalAddress = null, int? pid = null, string? filterRegex = null) =>
+        DumpAsync($"-o {outputDir} -f {filename} -r json windows.dumpfiles" +
+            (virtualAddress is not null ? $" --virtaddr {virtualAddress}" : "") +
+            (physicalAddress is not null ? $" --physaddr {physicalAddress}" : "") +
+            (pid is not null ? $" --pid {pid}" : "") +
+            (filterRegex is not null ? $" --filter {Q(filterRegex)}" : ""), outputDir);
+
+    static string Q(string s) => $"'{s.Replace("'", "'\\''")}'";
+
+    /// <summary>
     /// Dumps the executable image (PE) of the process <paramref name="pid"/> from <paramref name="filename"/>
     /// to <paramref name="outputDir"/> on the workstation, via <c>windows.pslist --pid &lt;pid&gt; --dump</c>.
     /// The directory is created if missing. Returns the full path(s) of the dumped file(s) (empty if the
