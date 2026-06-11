@@ -10,12 +10,28 @@ public class YaraToolkit : Toolkit
     public YaraToolkit(AuditEnvironment auditEnvironment, IConfigurationRoot? config = null) : base("Yara", auditEnvironment, config) { }
 
     /// <summary>
+    /// Workstation install directory for the bundled Yara-Rules community rules pack
+    /// (<see href="https://github.com/Yara-Rules/rules"/>). Populated lazily by <see cref="InstallMissingTools"/>
+    /// and structured per rule category: <c>malware/</c>, <c>cve_rules/</c>, <c>webshells/</c>, etc. Workflows
+    /// pass a category subdirectory (or the master <c>index.yar</c>) to <see cref="ScanAsync"/> /
+    /// <c>ScanMemoryWithYaraAsync</c>.
+    /// </summary>
+    public const string RulesRepoPath = "/opt/yara-rules";
+
+    /// <summary>
     /// Installs the <c>yara</c> apt package (providing both the <c>yara</c> scanner and <c>yarac</c>
-    /// compiler) when the latest SIFT image omits it. No-op when it is already present.
+    /// compiler) when the latest SIFT image omits it, plus the Yara-Rules community rules pack at
+    /// <see cref="RulesRepoPath"/> — a curated reference set spanning malware families, exploit kits,
+    /// webshells, CVEs, and packers, suitable as default IOC rules for the YARA workflows. No-op for either
+    /// when it is already present.
     /// </summary>
     protected override void InstallMissingTools()
     {
         InstallAptPackage("yara", "/usr/bin/yara");
+        // index.yar is the top-level aggregator the repo ships; if it's there the pack is installed.
+        InstallGithubRepoZip("yara-rules",
+            "https://github.com/Yara-Rules/rules/archive/refs/heads/master.zip",
+            RulesRepoPath, $"{RulesRepoPath}/index.yar");
     }
 
     /// <summary>

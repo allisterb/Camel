@@ -132,6 +132,41 @@ public abstract class Toolkit : Runtime
     /// on the PATH (so the tool resolves its sibling rules/config directories from the install dir). Skipped
     /// when <paramref name="linkPath"/> already exists. Returns true when the tool is present afterwards.
     /// </summary>
+    /// <summary>
+    /// Clones a GitHub repository's default-branch contents into <paramref name="installDir"/> by downloading
+    /// its codeload zip (<c>https://github.com/&lt;owner&gt;/&lt;repo&gt;/archive/refs/heads/&lt;branch&gt;.zip</c>),
+    /// extracting it, and moving the contents of the single top-level <c>&lt;repo&gt;-&lt;branch&gt;</c> folder
+    /// the archive contains into the install directory (so callers see <c>installDir/&lt;file&gt;</c> rather
+    /// than <c>installDir/&lt;repo&gt;-&lt;branch&gt;/&lt;file&gt;</c>). Skipped when <paramref name="checkPath"/>
+    /// already exists. Use this for reference datasets shipped as a GitHub repo (rules packs, signature
+    /// databases, indicator collections). Returns true when the install is present afterwards.
+    /// </summary>
+    protected bool InstallGithubRepoZip(string name, string url, string installDir, string checkPath)
+    {
+        if (auditEnvironment.ExecuteCommand("test", $"-e {checkPath}", out _, false))
+            return true; // already installed — nothing to do
+
+        Info($"Installing missing repo {name} from {url} ...");
+        string zip = $"/tmp/camel_repo_{name}.zip", extract = $"/tmp/camel_repo_{name}";
+        try
+        {
+            if (!auditEnvironment.ExecuteCommand("wget", $"-q {url} -O {zip}", out string dl, false))
+            { Error($"Failed to download {name}: {dl}"); return false; }
+            auditEnvironment.ExecuteCommand("rm", $"-rf {extract}", out _, false);
+            if (!auditEnvironment.ExecuteCommand("unzip", $"-o -q {zip} -d {extract}", out string uz, false))
+            { Error($"Failed to unzip {name}: {uz}"); return false; }
+            auditEnvironment.ExecuteCommand("mkdir", $"-p {installDir}", out _, true);
+            // GitHub codeload archives contain a single top-level <repo>-<branch>/ folder; flatten it into
+            // installDir so callers don't have to know the branch name. Glob expansion happens in the shell.
+            if (!auditEnvironment.ExecuteCommand("bash",
+                    $"-c \"mv -f {extract}/*/* {installDir}/\"", out string mv, true))
+            { Error($"Failed to install {name}: {mv}"); return false; }
+            Info($"Installed {name} to {installDir}.");
+            return auditEnvironment.ExecuteCommand("test", $"-e {checkPath}", out _, false);
+        }
+        finally { auditEnvironment.ExecuteCommand("rm", $"-rf {zip} {extract}", out _, false); }
+    }
+
     protected bool InstallZipRelease(string name, string url, string installDir, string binary, string linkPath)
     {
         if (auditEnvironment.ExecuteCommand("test", $"-e {linkPath}", out _, false))

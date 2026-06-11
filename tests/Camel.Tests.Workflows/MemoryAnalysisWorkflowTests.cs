@@ -395,6 +395,65 @@ public class MemoryAnalysisWorkflowTests : TestsRuntime
         Assert.NotEmpty(r.Result.MatchesByRule);
     }
 
+    [Fact]
+    public async Task CanFindMalwareEndToEnd()
+    {
+        // The full six-step methodology against the clean Win10 baseline. This orchestrates psxview + netscan +
+        // ldrmodules + hollowprocesses + malfind + ssdt + callbacks + driverirp + cmdline + getsids, so it runs
+        // long. We assert the orchestration is structurally sound rather than expecting specific positives:
+        //  - all four sub-reports populated;
+        //  - every suspect carries at least one signal and is sourced from a real methodology category;
+        //  - high-confidence = ≥2 categories, and that subset is consistent;
+        //  - no dump/YARA requested, so those stay empty/null.
+        var r = await workflow.FindMalwareAsync(Win10Image);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.NotNull(r.Result.RogueProcesses);
+        Assert.NotNull(r.Result.NetworkArtifacts);
+        Assert.NotNull(r.Result.CodeInjection);
+        Assert.NotNull(r.Result.KernelRootkit);
+
+        string[] validCategories = ["rogue-process", "code-injection", "network"];
+        Assert.All(r.Result.Suspects, s =>
+        {
+            Assert.NotEmpty(s.Signals);
+            Assert.Equal(s.Signals.Length, s.SignalCount);
+            Assert.NotEmpty(s.Categories);
+            Assert.All(s.Categories, c => Assert.Contains(c, validCategories));
+            Assert.Equal(s.Categories.Length >= 2, s.IsHighConfidence);
+        });
+
+        // Suspects are ranked: category count is non-increasing down the list.
+        for (int i = 1; i < r.Result.Suspects.Length; i++)
+            Assert.True(r.Result.Suspects[i - 1].Categories.Length >= r.Result.Suspects[i].Categories.Length);
+
+        // The high-confidence subset is exactly the ≥2-category suspects.
+        Assert.Equal(r.Result.Suspects.Count(s => s.IsHighConfidence), r.Result.HighConfidenceSuspects.Length);
+        Assert.All(r.Result.HighConfidenceSuspects, s => Assert.True(s.Categories.Length >= 2));
+
+        // A network signal only ever appears alongside another category (network never nominates alone).
+        Assert.All(r.Result.Suspects, s =>
+        {
+            if (s.Categories.Contains("network"))
+                Assert.True(s.Categories.Length >= 2, $"PID {s.Pid} flagged by network only");
+        });
+
+        // No Step-6 work requested.
+        Assert.Empty(r.Result.DumpedArtifacts);
+        Assert.Null(r.Result.YaraScan);
+    }
+
+    [Fact]
+    public async Task FindMalwareFailsForMissingImage()
+    {
+        var r = await workflow.FindMalwareAsync("/mnt/artifacts/does_not_exist.raw");
+
+        Assert.False(r.IsSuccess);
+        Assert.Null(r.Result);
+        Assert.NotNull(r.Message);
+    }
+
     const string Image = "/mnt/artifacts/pat-2009-11-19.mddramimage";
     const string Win10Image = "/mnt/artifacts/Rocba-Memory.raw";
 

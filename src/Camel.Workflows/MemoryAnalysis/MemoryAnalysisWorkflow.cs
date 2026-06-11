@@ -327,20 +327,24 @@ public class MemoryAnalysisWorkflow : Workflow
     {
         using var op = Begin("Hunting code injection in {0}", imageFile);
 
-        // Per-process PEB↔VAD DLL list comparison: an entry with no MappedPath, or absent from one of the
-        // three PEB lists despite being in VAD, signals injection / unlinking. Process executables are
-        // legitimately absent from InInit (svchost.exe etc.) so we exclude that single-flag case.
-        var ldr = await MemoryAnalysis.WindowsLdrModulesAsync(imageFile);
+        // The three injection signals are independent plugins, so run them concurrently (the environment's
+        // limiter bounds total fan-out). (1) Per-process PEB↔VAD DLL list comparison: an entry with no
+        // MappedPath, or absent from one of the three PEB lists despite being in VAD, signals injection /
+        // unlinking — process executables are legitimately absent from InInit (svchost.exe etc.) so we exclude
+        // that single-flag case. (2) Per-process PEB-vs-VAD-vs-disk image-base check (empty on clean images).
+        // (3) The malfind workflow (private executable regions with no file backing).
+        var ldrTask = MemoryAnalysis.WindowsLdrModulesAsync(imageFile);
+        var hollowTask = MemoryAnalysis.WindowsHollowProcessesAsync(imageFile);
+        var malfindTask = FindAnomalousMemoryIndicatorsAsync(imageFile);
+        await Task.WhenAll(ldrTask, hollowTask, malfindTask);
+
+        var ldr = ldrTask.Result;
         if (ldr is null)
             return WorkflowResult<CodeInjectionReport>.Failure(
                 $"windows.ldrmodules failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
         var unlinked = ldr.Where(IsLdrUnlinked).ToArray();
-
-        // Per-process PEB-vs-VAD-vs-disk image-base check. Empty on clean images.
-        var hollow = await MemoryAnalysis.WindowsHollowProcessesAsync(imageFile) ?? [];
-
-        // Reuse the existing malfind workflow for the third signal — same data the methodology surfaces here.
-        var malfind = await FindAnomalousMemoryIndicatorsAsync(imageFile);
+        var hollow = hollowTask.Result ?? [];
+        var malfind = malfindTask.Result;
         if (!malfind.IsSuccess)
             return WorkflowResult<CodeInjectionReport>.Failure(malfind.Message ?? "windows.malfind failed.");
 
@@ -377,12 +381,19 @@ public class MemoryAnalysisWorkflow : Workflow
     {
         using var op = Begin("Detecting kernel rootkit hooks in {0}", imageFile);
 
-        var ssdt = await MemoryAnalysis.WindowsSsdtAsync(imageFile);
+        // The three hooking surfaces are independent plugins — fan them out concurrently (the environment's
+        // limiter bounds total fan-out).
+        var ssdtTask = MemoryAnalysis.WindowsSsdtAsync(imageFile);
+        var callbacksTask = MemoryAnalysis.WindowsCallbacksAsync(imageFile);
+        var driverIrpTask = MemoryAnalysis.WindowsDriverIrpAsync(imageFile);
+        await Task.WhenAll(ssdtTask, callbacksTask, driverIrpTask);
+
+        var ssdt = ssdtTask.Result;
         if (ssdt is null)
             return WorkflowResult<KernelRootkitReport>.Failure(
                 $"windows.ssdt failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
-        var callbacks = await MemoryAnalysis.WindowsCallbacksAsync(imageFile) ?? [];
-        var driverIrp = await MemoryAnalysis.WindowsDriverIrpAsync(imageFile) ?? [];
+        var callbacks = callbacksTask.Result ?? [];
+        var driverIrp = driverIrpTask.Result ?? [];
 
         var ssdtHooks = ssdt.Where(e => !IsCanonicalKernelModule(e.Module)).Select(e => new KernelHook
         {
@@ -580,5 +591,169 @@ public class MemoryAnalysisWorkflow : Workflow
             report.IsCompromised
                 ? $"SKELETON KEY DETECTED in '{imageFile}' — patched CDLocateCSystem in LSASS."
                 : $"No Skeleton Key implant detected in '{imageFile}'.");
+    }
+
+    /// <summary>
+    /// Runs the six-step "Finding the First Hit" memory-analysis methodology (FOR508.3) end-to-end against a
+    /// Windows memory image, orchestrating the lower-level workflows and correlating their findings into a
+    /// single ranked suspect list. The steps:
+    /// <list type="number">
+    /// <item><b>Identify rogue processes</b> — <see cref="CrossViewHiddenProcessAsync"/> (psxview cross-view).</item>
+    /// <item><b>Analyze process DLLs and handles</b> — each suspect is enriched with its command line, owning
+    /// SIDs, and orphan/unlinked DLLs (a per-process deep-dive, pulled in two image-wide plugin calls).</item>
+    /// <item><b>Review network artifacts</b> — <see cref="FindAllUniqueRemoteIPsAsync"/>; a suspect's routable
+    /// remote connections corroborate it (but network alone does not nominate, to keep browsers/updaters out).</item>
+    /// <item><b>Look for code injection</b> — <see cref="FindCodeInjectionAsync"/> (unlinked DLLs + hollowing + malfind).</item>
+    /// <item><b>Check for signs of a rootkit</b> — <see cref="DetectKernelRootkitAsync"/> (SSDT/callback/IRP hooks;
+    /// module-level, reported alongside the per-process suspects rather than folded into them).</item>
+    /// <item><b>Dump suspicious processes</b> — when <paramref name="dumpDir"/> is set, each high-confidence
+    /// suspect's executable image is extracted; when <paramref name="yaraRulesFile"/> is set, the image is
+    /// YARA-scanned. Both are optional and non-fatal.</item>
+    /// </list>
+    /// Steps 1 and 4 nominate per-process suspects; a process flagged by ≥2 independent steps is high-confidence
+    /// — the "first hit". Suspects are ranked by distinct-category count, then raw signal count, then PID.
+    /// </summary>
+    /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
+    /// <param name="dumpDir">Optional: when set, Step 6 extracts each high-confidence suspect's executable image
+    /// to this workstation directory (falling back to the top 5 suspects if none are high-confidence).</param>
+    /// <param name="yaraRulesFile">Optional: when set, Step 6 YARA-scans the image's VAD regions with these rules
+    /// (a failed scan is recorded as a null <see cref="FindMalwareReport.YaraScan"/>, not a workflow failure).</param>
+    public async Task<WorkflowResult<FindMalwareReport>> FindMalwareAsync(
+        string imageFile, string? dumpDir = null, string? yaraRulesFile = null)
+    {
+        using var op = Begin("Finding malware (6-step memory analysis) in {0}", imageFile);
+
+        // Steps 1/3/4/5 plus the Step-2 enrichment reads are independent — each only needs the image, none
+        // consumes another's output — so fan them out concurrently rather than serializing ~10 sequential vol3
+        // runs. The environment's concurrency limiter (MaxConcurrentExecutions) bounds the SSH channel fan-out,
+        // and SSH.NET gives each command its own channel, so this is safe. A failure in any broad scan means the
+        // image is unreadable / its symbols are unavailable, so the whole analysis fails (the message names it).
+        var rogueTask = CrossViewHiddenProcessAsync(imageFile);
+        var networkTask = FindAllUniqueRemoteIPsAsync(imageFile);
+        var injectionTask = FindCodeInjectionAsync(imageFile);
+        var rootkitTask = DetectKernelRootkitAsync(imageFile);
+        var cmdlinesTask = MemoryAnalysis.WindowsCmdLineAsync(imageFile);
+        var sidsTask = MemoryAnalysis.WindowsGetSidsAsync(imageFile);
+        await Task.WhenAll(rogueTask, networkTask, injectionTask, rootkitTask, cmdlinesTask, sidsTask);
+
+        var rogue = rogueTask.Result;
+        if (!rogue.IsSuccess) return WorkflowResult<FindMalwareReport>.Failure(rogue.Message ?? "rogue-process scan failed.");
+        var network = networkTask.Result;
+        if (!network.IsSuccess) return WorkflowResult<FindMalwareReport>.Failure(network.Message ?? "network-artifact scan failed.");
+        var injection = injectionTask.Result;
+        if (!injection.IsSuccess) return WorkflowResult<FindMalwareReport>.Failure(injection.Message ?? "code-injection scan failed.");
+        var rootkit = rootkitTask.Result;
+        if (!rootkit.IsSuccess) return WorkflowResult<FindMalwareReport>.Failure(rootkit.Message ?? "rootkit scan failed.");
+
+        // Step 2 enrichment data — pulled image-wide (cheaper than per-PID), indexed by PID below.
+        var cmdlines = cmdlinesTask.Result ?? [];
+        var sids = sidsTask.Result ?? [];
+
+        var inj = injection.Result!;
+
+        // Per-PID signal accumulator. Each Flag records a human-readable reason plus its methodology category;
+        // a PID flagged across multiple categories is the cross-corroborated "first hit".
+        var reasons = new Dictionary<int, List<string>>();
+        var cats = new Dictionary<int, HashSet<string>>();
+        var names = new Dictionary<int, string>();
+        void Flag(int pid, string process, string category, string reason)
+        {
+            if (!reasons.TryGetValue(pid, out var list)) reasons[pid] = list = [];
+            list.Add(reason);
+            if (!cats.TryGetValue(pid, out var set)) cats[pid] = set = [];
+            set.Add(category);
+            if (!names.TryGetValue(pid, out var n) || string.IsNullOrEmpty(n)) names[pid] = process;
+        }
+
+        // Step 1 nominations: cross-view hidden processes.
+        foreach (var h in rogue.Result!.HiddenSightings)
+            Flag(h.Pid, h.Name, "rogue-process", $"rogue process: missed by {string.Join("/", h.MissedBy)} (cross-view)");
+
+        // Step 4 nominations: each code-injection sub-signal, broken out per PID.
+        foreach (var g in inj.UnlinkedDlls.GroupBy(u => u.PID))
+            Flag(g.Key, g.First().Process, "code-injection", $"unlinked/orphan DLL ×{g.Count()}");
+        foreach (var hp in inj.HollowedProcesses)
+            Flag(hp.PID, hp.Process, "code-injection", $"process hollowing{(string.IsNullOrEmpty(hp.Notes) ? "" : $": {hp.Notes}")}");
+        foreach (var g in inj.AnomalousRegions.MzHeaderRegions.GroupBy(r => r.PID))
+            Flag(g.Key, g.First().Process, "code-injection", $"injected PE image (MZ) ×{g.Count()}");
+        foreach (var g in inj.AnomalousRegions.RwxRegions.GroupBy(r => r.PID))
+            Flag(g.Key, g.First().Process, "code-injection", $"RWX region (shellcode) ×{g.Count()}");
+
+        // Enrichment indexes (Step 2 + Step 3 data), keyed by PID.
+        var cmdByPid = cmdlines.GroupBy(c => c.PID).ToDictionary(g => g.Key, g => g.First().Args);
+        var sidsByPid = sids.GroupBy(s => s.PID)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Name).Where(n => !string.IsNullOrEmpty(n)).Distinct().ToArray());
+        var orphanByPid = inj.UnlinkedDlls.GroupBy(u => u.PID)
+            .ToDictionary(g => g.Key, g => g.Select(u => string.IsNullOrEmpty(u.MappedPath) ? "<no MappedPath>" : u.MappedPath!).Distinct().ToArray());
+        var connByPid = network.Result!.Connections
+            .Where(c => c.PID is not null && IsRoutableRemote(c.ForeignAddr))
+            .GroupBy(c => c.PID!.Value)
+            .ToDictionary(g => g.Key, g => g.ToArray());
+
+        // Step 3 corroboration: attach routable remote connections to already-nominated suspects only.
+        foreach (var pid in reasons.Keys.ToArray())
+            if (connByPid.GetValueOrDefault(pid, []) is { Length: > 0 } conns)
+                Flag(pid, names.GetValueOrDefault(pid, ""), "network",
+                    $"remote connection(s): {string.Join(", ", conns.Select(c => $"{c.ForeignAddr}:{c.ForeignPort}").Distinct().Take(3))}");
+
+        var suspects = reasons.Select(kv => new MalwareSuspect
+        {
+            Pid = kv.Key,
+            Process = names.GetValueOrDefault(kv.Key, ""),
+            Categories = cats[kv.Key].OrderBy(c => c).ToArray(),
+            Signals = kv.Value.ToArray(),
+            CommandLine = cmdByPid.GetValueOrDefault(kv.Key),
+            Sids = sidsByPid.GetValueOrDefault(kv.Key, []),
+            OrphanDlls = orphanByPid.GetValueOrDefault(kv.Key, []),
+            RemoteConnections = connByPid.GetValueOrDefault(kv.Key, []),
+        })
+        .OrderByDescending(s => s.Categories.Length)
+        .ThenByDescending(s => s.SignalCount)
+        .ThenBy(s => s.Pid)
+        .ToArray();
+
+        // Step 6 (optional): dump the high-confidence suspects' executables (fall back to the top 5 by rank).
+        var dumpedAll = new List<string>();
+        if (dumpDir is not null && suspects.Length > 0)
+        {
+            var targets = suspects.Where(s => s.IsHighConfidence).ToArray();
+            if (targets.Length == 0) targets = suspects.Take(5).ToArray();
+            var dumpedByPid = new Dictionary<int, string[]>();
+            foreach (var s in targets)
+            {
+                var files = await MemoryAnalysis.DumpProcessExecutableAsync(imageFile, s.Pid, dumpDir) ?? [];
+                dumpedByPid[s.Pid] = files;
+                dumpedAll.AddRange(files);
+            }
+            suspects = suspects.Select(s => dumpedByPid.TryGetValue(s.Pid, out var f) ? s with { DumpedFiles = f } : s).ToArray();
+        }
+
+        // Step 6 (optional): YARA-scan the image. Non-fatal — a failure leaves YaraScan null.
+        MemoryYaraReport? yara = null;
+        if (yaraRulesFile is not null)
+        {
+            var y = await ScanMemoryWithYaraAsync(imageFile, yaraRulesFile);
+            yara = y.IsSuccess ? y.Result : null;
+        }
+
+        op.Complete();
+        var report = new FindMalwareReport
+        {
+            RogueProcesses = rogue.Result!,
+            NetworkArtifacts = network.Result!,
+            CodeInjection = inj,
+            KernelRootkit = rootkit.Result!,
+            Suspects = suspects,
+            DumpedArtifacts = dumpedAll.ToArray(),
+            YaraScan = yara,
+        };
+        var hi = report.HighConfidenceSuspects;
+        var dumpNote = dumpDir is null ? "" : $" Dumped {dumpedAll.Count} executable(s).";
+        var yaraNote = yara is null ? "" : $" YARA: {yara.Matches.Length} match(es).";
+        return WorkflowResult<FindMalwareReport>.Success(report,
+            $"6-step analysis of '{imageFile}': {suspects.Length} suspect process(es), {hi.Length} high-confidence " +
+            $"(≥2 steps){(hi.Length == 0 ? "" : ": " + string.Join(", ", hi.Take(5).Select(s => $"{s.Process} (PID {s.Pid})")))}. " +
+            $"Plus {rootkit.Result!.Hooks.Length} kernel hook(s) and {network.Result!.RemoteIPs.Length} remote IP(s)." +
+            dumpNote + yaraNote);
     }
 }

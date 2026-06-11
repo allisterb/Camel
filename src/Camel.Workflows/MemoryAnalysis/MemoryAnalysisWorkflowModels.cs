@@ -324,3 +324,60 @@ public record SkeletonKeyReport
     public WindowsSkeletonKeyCheck[] Findings { get; init; } = [];
     public bool IsCompromised => Findings.Any(f => f.SkeletonKeyFound == true);
 }
+
+/// <summary>
+/// One suspect process surfaced by the six-step <c>FindMalware</c> memory-analysis workflow. <see cref="Signals"/>
+/// are the human-readable findings that flagged it; <see cref="Categories"/> are the distinct methodology steps
+/// those signals came from (<c>rogue-process</c>, <c>code-injection</c>, <c>network</c>). A process corroborated
+/// by ≥2 categories (<see cref="IsHighConfidence"/>) is the "first hit" the methodology hunts. The remaining
+/// fields are the Step-2 enrichment (loaded-DLL / handle / SID drill-down): the process command line, its owning
+/// SIDs, any orphan/unlinked DLLs, its routable remote connections, and — when Step 6 dumping was requested —
+/// the paths of the executable images extracted for downstream triage.
+/// </summary>
+public record MalwareSuspect
+{
+    public int Pid { get; init; }
+    public string Process { get; init; } = "";
+    public string[] Categories { get; init; } = [];
+    public string[] Signals { get; init; } = [];
+    public int SignalCount => Signals.Length;
+    /// <summary>Corroborated by at least two independent methodology steps — the high-priority triage subset.</summary>
+    public bool IsHighConfidence => Categories.Length >= 2;
+
+    // Step-2 enrichment (deep-dive on the suspect process).
+    public string? CommandLine { get; init; }
+    public string[] Sids { get; init; } = [];
+    public string[] OrphanDlls { get; init; } = [];
+    public WindowsNetScan[] RemoteConnections { get; init; } = [];
+
+    // Step-6 extraction (when a dump directory was requested).
+    public string[] DumpedFiles { get; init; } = [];
+}
+
+/// <summary>
+/// The result of the six-step "Finding the First Hit" memory-analysis methodology (FOR508.3) run end-to-end by
+/// <c>FindMalwareAsync</c>. Each named report is the output of one methodology step run as its own workflow:
+/// <list type="bullet">
+/// <item>Step 1 — <see cref="RogueProcesses"/> (cross-view hidden-process scan).</item>
+/// <item>Step 3 — <see cref="NetworkArtifacts"/> (unique remote IPs / connections).</item>
+/// <item>Step 4 — <see cref="CodeInjection"/> (unlinked DLLs + hollowing + malfind).</item>
+/// <item>Step 5 — <see cref="KernelRootkit"/> (SSDT / callback / IRP hooks — module-level, not per-process).</item>
+/// </list>
+/// Steps 1 and 4 nominate per-process suspects; Step 3 corroborates them and Step 2 (command line, SIDs, DLLs)
+/// enriches them; the merged, ranked result is <see cref="Suspects"/>. Step 6 (optional) populates
+/// <see cref="DumpedArtifacts"/> with the extracted executable images and, when YARA rules were supplied,
+/// <see cref="YaraScan"/>. <see cref="HighConfidenceSuspects"/> is the cross-corroborated "first hit" subset.
+/// </summary>
+public record FindMalwareReport
+{
+    public CrossViewHiddenProcessReport RogueProcesses { get; init; } = new();
+    public RemoteIpReport NetworkArtifacts { get; init; } = new([], []);
+    public CodeInjectionReport CodeInjection { get; init; } = new();
+    public KernelRootkitReport KernelRootkit { get; init; } = new();
+    public MalwareSuspect[] Suspects { get; init; } = [];
+    public string[] DumpedArtifacts { get; init; } = [];
+    public MemoryYaraReport? YaraScan { get; init; }
+
+    /// <summary>Suspects corroborated by ≥2 independent methodology steps — the highest-priority leads.</summary>
+    public MalwareSuspect[] HighConfidenceSuspects => Suspects.Where(s => s.IsHighConfidence).ToArray();
+}
