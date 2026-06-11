@@ -25,27 +25,89 @@ public class TimelineToolkit : Toolkit
 
     /// <summary>
     /// Parses <paramref name="source"/> (a disk image, mounted path, directory, or file) into the Plaso
-    /// storage file <paramref name="storageFile"/>. Optionally restrict to a <paramref name="parsers"/>
-    /// preset or comma-separated list (e.g. "win7", "winreg,winevtx"). When <paramref name="hash"/> is true,
-    /// passes <c>--hashers md5,sha256</c> so MD5 and SHA-256 of each processed source file are computed and
-    /// stored on the resulting events (NB: this hashes the parsed input files, not the .plaso output).
-    /// Returns true on success.
+    /// storage file <paramref name="storageFile"/>. When <paramref name="storageFile"/> already exists, plaso
+    /// <em>appends</em> to it — this is how a triage timeline is grown one source at a time (e.g. parse the
+    /// event logs, then append a full <c>$MFT</c> bodyfile via <paramref name="parsers"/> = "mactime").
+    /// <para>Scope the run for speed (targeted vs. "kitchen sink" timelines):</para>
+    /// <list type="bullet">
+    /// <item><paramref name="parsers"/> — restrict to a preset or comma-separated list (e.g. "windows",
+    /// "winreg,winevtx", "mactime"); a leading "-" negates one (e.g. "win7,-filestat").</item>
+    /// <item><paramref name="filterFile"/> — a plaso file-filter (<c>-f</c>): only the listed triage files are
+    /// parsed, skipping the rest of the filesystem (the SIFT box ships <c>/usr/share/plaso/filter_windows.yaml</c>).</item>
+    /// <item><paramref name="partitions"/> — limit to specific partitions of a multi-volume image
+    /// (<c>--partitions</c>, e.g. "1,2" or "all").</item>
+    /// <item><paramref name="vssStores"/> — include Volume Shadow Copies (<c>--vss-stores</c>, e.g. "all" or
+    /// "1,2"); psort later de-duplicates the overlap. Null leaves plaso's default VSS handling untouched.</item>
+    /// </list>
+    /// When <paramref name="hash"/> is true, passes <c>--hashers md5,sha256</c> so MD5 and SHA-256 of each
+    /// processed source file are computed and stored on the resulting events (NB: this hashes the parsed input
+    /// files, not the .plaso output). Returns true on success.
     /// </summary>
-    public async Task<bool> Log2TimelineAsync(string source, string storageFile, string? parsers = null, bool hash = false, string timezone = "UTC") =>
+    public async Task<bool> Log2TimelineAsync(string source, string storageFile, string? parsers = null, bool hash = false,
+        string? filterFile = null, string? partitions = null, string? vssStores = null, string timezone = "UTC") =>
         await ExecuteToolTextAsync("Log2Timeline",
             $"-q --status-view none --storage-file {Q(storageFile)}" +
             (parsers is not null ? $" --parsers {parsers}" : "") +
+            (filterFile is not null ? $" -f {Q(filterFile)}" : "") +
+            (partitions is not null ? $" --partitions {partitions}" : "") +
+            (vssStores is not null ? $" --vss-stores {vssStores}" : "") +
             (hash ? " --hashers md5,sha256" : "") +
             $" --timezone {timezone} {Q(source)}") is not null;
 
     /// <summary>
     /// Sorts/exports the events in <paramref name="storageFile"/> (one or more .plaso files) as a timeline.
-    /// An optional Plaso <paramref name="filter"/> expression narrows the output
-    /// (e.g. "date &gt; '2004-01-01 00:00:00' AND message contains 'cmd.exe'").
+    /// An optional Plaso <paramref name="filter"/> expression narrows the output by event attributes
+    /// (e.g. "date &gt; '2004-01-01 00:00:00'", "data_type contains 'appcompatcache'", "tag contains
+    /// 'application_execution'"). NB: <c>message</c> is a formatter-derived field and is <em>not</em> reliably
+    /// filterable — use <see cref="PsortSearchAsync"/> to keyword-search the rendered message text.
+    /// <para>When <paramref name="slice"/> is set (an ISO-8601 timestamp, e.g. "2012-04-03T22:59:00+00:00"),
+    /// psort returns only the events within <paramref name="sliceSize"/> minutes (default 5) either side — a
+    /// "pivot point" mini-timeline. Slice and filter can be combined.</para>
     /// </summary>
-    public Task<TimelineEvent[]?> PsortAsync(string storageFile, string? filter = null) =>
+    public Task<TimelineEvent[]?> PsortAsync(string storageFile, string? filter = null, string? slice = null, int? sliceSize = null) =>
         ExecuteToolJsonLinesFileAsync<TimelineEvent>("Psort",
-            f => $"-o json_line -w {Q(f)} {Q(storageFile)}" + (filter is not null ? $" {Qd(filter)}" : ""));
+            f => $"-o json_line -w {Q(f)}" +
+                 (slice is not null ? $" --slice {Qd(slice)}" : "") +
+                 (sliceSize is not null ? $" --slice_size {sliceSize}" : "") +
+                 $" {Q(storageFile)}" + (filter is not null ? $" {Qd(filter)}" : ""));
+
+    /// <summary>
+    /// Runs psort's <c>tagging</c> analysis plugin over <paramref name="storageFile"/>, labelling events that
+    /// match the rules in <paramref name="taggingFile"/> (the Plaso-shipped <c>tag_windows.txt</c> /
+    /// <c>tag_linux.txt</c> / <c>tag_macos.txt</c>). The tags are <em>persisted back into the storage file</em>
+    /// (written with <c>-o null</c>, no timeline emitted), so a subsequent <see cref="PsortAsync"/> can filter
+    /// on them (<c>"tag contains 'application_execution'"</c>) and each returned event carries its
+    /// <see cref="TimelineEvent.Labels"/>. Idempotent in effect — re-tagging re-applies the same labels.
+    /// Returns true on success.
+    /// </summary>
+    public async Task<bool> PsortTagAsync(string storageFile, string taggingFile) =>
+        await ExecuteToolTextAsync("Psort",
+            $"-q --analysis tagging --tagging-file {Q(taggingFile)} -o null {Q(storageFile)}") is not null;
+
+    /// <summary>
+    /// Keyword-searches the <em>rendered</em> timeline of <paramref name="storageFile"/>: psort writes the full
+    /// json-line export to a temp file on the workstation, which is then <c>grep -i -E</c>'d for
+    /// <paramref name="grepPattern"/> (an extended-regex; case-insensitive) so that only matching events cross
+    /// the wire. Unlike a psort attribute filter this searches the whole serialized event including the
+    /// human-readable <c>message</c>, making it the right tool for free-text / IOC keyword hunting. An optional
+    /// psort <paramref name="filter"/> (e.g. a date range) pre-narrows the export. Returns the matching events,
+    /// or null if psort failed.
+    /// </summary>
+    public async Task<TimelineEvent[]?> PsortSearchAsync(string storageFile, string grepPattern, string? filter = null)
+    {
+        string file = "/tmp/camel_ts_" + Guid.NewGuid().ToString("N") + ".jsonl";
+        try
+        {
+            if (await ExecuteToolTextAsync("Psort",
+                    $"-q -o json_line -w {Q(file)} {Q(storageFile)}" + (filter is not null ? $" {Qd(filter)}" : "")) is null)
+                return null;
+            // grep server-side so only matching lines transfer. grep exits 1 on no match (empty output) — that
+            // is an empty result, not a failure, so we just parse whatever it returned.
+            var r = await auditEnvironment.ExecuteCommandAsync("grep", $"-i -E {Qd(grepPattern)} {Q(file)}", false);
+            return ParseJsonLines<TimelineEvent>(r.Output);
+        }
+        finally { try { auditEnvironment.ExecuteCommand("rm", $"-f {file}", out _, false); } catch { } }
+    }
 
     /// <summary>Inspects a .plaso storage file and returns parser hit statistics and the total event count.</summary>
     public async Task<PlasoInfo?> PinfoAsync(string storageFile) =>

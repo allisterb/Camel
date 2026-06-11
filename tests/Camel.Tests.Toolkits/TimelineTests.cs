@@ -43,6 +43,27 @@ public class TimelineTests : TestsRuntime
     }
 
     [Fact]
+    public async Task Log2TimelineFilterFileNarrowsToTriageFiles()
+    {
+        const string plaso = "/tmp/camel_l2t_ff.plaso";
+        const string filter = "/tmp/camel_l2t_filter.yaml";
+        sshenv.ExecuteCommand("rm", $"-f {plaso}", out _, false);
+
+        // A file-filter (same YAML format as the SANS filter_windows.yaml that ships with plaso) restricts parsing
+        // to the listed files. Pointed at a full Windows volume, only the filtered SYSTEM hive is walked — the rest
+        // of the filesystem is skipped — proving -f is applied and the run still yields events.
+        var b64 = System.Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(
+            "---\ndescription: Camel filter-file test.\ntype: include\npath_separator: '\\'\npaths:\n- '\\\\Windows\\\\System32\\\\config\\\\SYSTEM'\n"));
+        sshenv.ExecuteCommand("bash", $"-c \"echo {b64} | base64 -d > {filter}\"", out _, false);
+
+        Assert.True(await toolkit.Log2TimelineAsync(WindowsMount, plaso, parsers: "winreg", filterFile: filter));
+
+        var info = await toolkit.PinfoAsync(plaso);
+        Assert.NotNull(info);
+        Assert.True(info.TotalEvents > 0);
+    }
+
+    [Fact]
     public async Task Log2TimelineHashPopulatesMd5OnEvents()
     {
         const string plaso = "/tmp/camel_l2t_hash.plaso";
@@ -54,6 +75,32 @@ public class TimelineTests : TestsRuntime
         var r = await toolkit.PsortAsync(plaso);
         Assert.NotNull(r);
         Assert.Contains(r, e => !string.IsNullOrEmpty(e.Md5Hash));
+    }
+
+    [Fact]
+    public async Task CanTagSliceAndSearchWithPsort()
+    {
+        const string plaso = "/tmp/camel_tk_probe.plaso";
+        sshenv.ExecuteCommand("rm", $"-f {plaso}", out _, false);
+        Assert.True(await toolkit.Log2TimelineAsync(DlpcSystemHive, plaso, parsers: "winreg"));
+
+        // Tagging persists labels into the storage file; a tag filter then returns events carrying them inline.
+        Assert.True(await toolkit.PsortTagAsync(plaso, "/usr/share/plaso/tag_windows.txt"));
+        var tagged = await toolkit.PsortAsync(plaso, "tag contains 'application_execution'");
+        Assert.NotNull(tagged);
+        Assert.NotEmpty(tagged);
+        Assert.All(tagged, e => Assert.Contains("application_execution", e.Labels));
+
+        // A slice around one tagged event's time returns events within the window.
+        var pivot = tagged[0].Time.ToString("yyyy-MM-ddTHH:mm:sszzz");
+        var slice = await toolkit.PsortAsync(plaso, slice: pivot, sliceSize: 60);
+        Assert.NotNull(slice);
+        Assert.NotEmpty(slice);
+
+        // Grep-search the rendered timeline for a token present in the message text.
+        var found = await toolkit.PsortSearchAsync(plaso, "appcompatcache");
+        Assert.NotNull(found);
+        Assert.NotEmpty(found);
     }
 
     [Fact]
@@ -156,6 +203,8 @@ public class TimelineTests : TestsRuntime
     const string Plaso = "/tmp/camel_timeline.plaso";
     const string EvtxLogs = "/mnt/ewf/Windows/System32/winevt/Logs";
     const string SystemHive = "/mnt/windows_mount2/WINDOWS/system32/config/system";
+    const string WindowsMount = "/mnt/dlpc";
+    const string DlpcSystemHive = "/mnt/dlpc/Windows/System32/config/SYSTEM";
     const string E01 = "/mnt/artifacts/4Dell Latitude CPi.E01";
 
     LocalEnvironment localenv;

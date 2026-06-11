@@ -25,6 +25,7 @@ public class CamelApi : Runtime
     private readonly AuditEnvironment env;
     private readonly IConfigurationRoot? config;
     private YaraToolkit? _yara;
+    private TimelineToolkit? _timeline;
     #endregion
 
     #region Properties
@@ -38,5 +39,13 @@ public class CamelApi : Runtime
     /// <c>Tools:Yara</c> config requirement. First access requires a <c>Tools:Yara</c> section in the config.
     /// </summary>
     public YaraToolkit Yara => _yara ??= new YaraToolkit(env, config);
+
+    /// <summary>
+    /// The Timeline toolkit (Plaso <c>log2timeline</c>/<c>psort</c>/<c>pinfo</c>/<c>psteal</c>/<c>image_export</c>
+    /// plus hayabusa). Constructed lazily on first use so that callers and configs that never build a timeline
+    /// don't pay its construction cost or its <c>Tools:Timeline</c> config requirement (and so hayabusa is only
+    /// provisioned when actually needed). First access requires a <c>Tools:Timeline</c> section in the config.
+    /// </summary>
+    public TimelineToolkit Timeline => _timeline ??= new TimelineToolkit(env, config);
     #endregion
 }

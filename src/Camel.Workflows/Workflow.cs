@@ -37,4 +37,6 @@ public class Workflow : Runtime
     protected WindowsAnalysisToolkit WindowsAnalysis => api.WindowsAnalysis;
 
     protected YaraToolkit Yara => api.Yara;
+
+    protected TimelineToolkit Timeline => api.Timeline;
 }
