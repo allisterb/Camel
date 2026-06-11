@@ -423,6 +423,51 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
         Assert.All(r.Result.SuspiciousScriptBlocks, s => Assert.NotEmpty(s.Reasons));
     }
 
+    [Fact]
+    public async Task AnalyzeExecutionEvidenceFlagsHackingTools()
+    {
+        // Greg Schardt (NIST Hacking Case) XP image: Shimcache holds the war-driving toolset. No Amcache on XP.
+        var r = await workflow.AnalyzeExecutionEvidenceAsync("/mnt/windows_mount2/WINDOWS/system32/config/system");
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotEmpty(r.Result!.Executables);
+        Assert.NotEmpty(r.Result.SuspiciousExecutables);
+        Assert.All(r.Result.SuspiciousExecutables, e => Assert.NotEmpty(e.Reasons));
+        // NetStumbler (war-driving) and Ethereal (packet capture) are watchlisted tools present in Shimcache.
+        Assert.Contains(r.Result.SuspiciousExecutables, e => e.Name.Contains("netstumbler", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(r.Result.SuspiciousExecutables, e => e.Name.Contains("ethereal", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task AnalyzeExecutionEvidenceMergesShimcacheAndAmcache()
+    {
+        var r = await workflow.AnalyzeExecutionEvidenceAsync(
+            $"{Modern}/Windows/System32/config/SYSTEM",
+            $"{Modern}/Windows/appcompat/Programs/Amcache.hve");
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotEmpty(r.Result!.Executables);
+        // Amcache contributes SHA-1 hashes (for IOC pivoting) to the merged inventory.
+        Assert.Contains(r.Result.Executables, e => e.Sources.Contains("Amcache") && !string.IsNullOrEmpty(e.Sha1));
+        // The clean workstation has no high-confidence hacking tools (no false positives from the watchlist).
+        Assert.DoesNotContain(r.Result.SuspiciousExecutables, e =>
+            e.Name.Contains("mimikatz", StringComparison.OrdinalIgnoreCase) || e.Name.Contains("netstumbler", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task DetectsExfiltrationMappedDrive()
+    {
+        // CFREDS Data Leakage case (ART-005): the informant mapped \\10.11.11.128\secured_drive to copy data out.
+        // The evidence is in the dirty NTUSER's transaction logs (RegRipper/strings miss it; RECmd replays them).
+        var r = await workflow.AnalyzeExternalConnectionsAsync("/mnt/dlpc/Users/informant/NTUSER.DAT");
+
+        Assert.True(r.IsSuccess, r.Message);
+        var share = Assert.Single(r.Result!.RemoteShares, s => s.Server == "10.11.11.128");
+        Assert.Equal(@"\\10.11.11.128\secured_drive", share.Unc);
+        Assert.Equal("secured_drive", share.Share);
+        Assert.Equal("MountPoints2", share.Source);
+    }
+
     const string Modern = "/mnt/ewf";
 
     AuditEnvironment sshenv;

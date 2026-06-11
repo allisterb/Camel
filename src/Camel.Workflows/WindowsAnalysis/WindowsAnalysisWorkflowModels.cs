@@ -320,3 +320,59 @@ public record PowerShellReport
     public PowerShellScriptBlock[] ScriptBlocks { get; init; } = [];
     public PowerShellScriptBlock[] SuspiciousScriptBlocks => ScriptBlocks.Where(s => s.Suspicious).ToArray();
 }
+
+/// <summary>
+/// One executable's evidence of execution, merged across the offline execution-evidence sources: Shimcache
+/// (it existed on disk — <see cref="ShimcacheLastModified"/>) and Amcache (it was present/ran, with its
+/// <see cref="Sha1"/> for threat-intel pivoting, <see cref="AmcacheTimestamp"/>, and PE <see cref="CompileTime"/>).
+/// <see cref="Sources"/> lists which caches it appeared in. When <see cref="Suspicious"/>, <see cref="Reasons"/>
+/// explains why (suspicious execution location, a notable hacking/anti-forensic tool, or a LOLBin masquerade).
+/// </summary>
+public record ExecutionArtifact
+{
+    public string Path { get; init; } = "";
+    public string Name { get; init; } = "";
+    public string? Sha1 { get; init; }
+    public DateTime? ShimcacheLastModified { get; init; }
+    public DateTime? AmcacheTimestamp { get; init; }
+    public DateTime? CompileTime { get; init; }
+    public string[] Sources { get; init; } = [];
+    public bool Suspicious { get; init; }
+    public string[] Reasons { get; init; } = [];
+}
+
+/// <summary>
+/// A unified, scored inventory of evidence of execution for a host, correlated from Shimcache and Amcache.
+/// <see cref="Executables"/> is every executable seen; <see cref="SuspiciousExecutables"/> is the auto-flagged
+/// subset. SHA-1s (from Amcache) are carried for VirusTotal / threat-intel pivoting.
+/// </summary>
+public record ExecutionReport
+{
+    public ExecutionArtifact[] Executables { get; init; } = [];
+    public ExecutionArtifact[] SuspiciousExecutables => Executables.Where(e => e.Suspicious).ToArray();
+}
+
+/// <summary>
+/// One remote network share a user connected to (a mapped drive or browsed UNC path), recovered from the
+/// registry. <see cref="Unc"/> is the full <c>\\server\share</c>, split into <see cref="Server"/> and
+/// <see cref="Share"/>; <see cref="Source"/> names the artifact it came from (MountPoints2, Map Network Drive
+/// MRU). These are the file-copy / exfiltration channels in insider and lateral-movement cases.
+/// </summary>
+public record ExternalConnection
+{
+    public string Unc { get; init; } = "";
+    public string? Server { get; init; }
+    public string? Share { get; init; }
+    public string Source { get; init; } = "";
+    public DateTime? LastWrite { get; init; }
+}
+
+/// <summary>
+/// The remote network shares a user connected to, reconstructed from a user's registry hives. NOTE: the
+/// relevant keys frequently live in unreplayed transaction logs of a dirty hive (especially after anti-forensic
+/// MRU cleaning), so this is sourced via RECmd, which replays the logs — RegRipper would miss them.
+/// </summary>
+public record ExternalConnectionReport
+{
+    public ExternalConnection[] RemoteShares { get; init; } = [];
+}

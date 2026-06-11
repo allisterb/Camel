@@ -211,6 +211,25 @@ public class WindowsAnalysisToolkit : Toolkit
     /// </summary>
     public Task<RegistryEntry[]?> RECmdAsync(string hiveDirectory, string batchFile) =>
         ExecuteToolCsvAsync("RECmd", $"-d {Q(hiveDirectory)} --bn {Q(batchFile)}", RegistryEntry.FromRow, "*Output.csv");
+
+    /// <summary>
+    /// Runs the RECmd batch over a <em>single</em> hive <paramref name="hiveFile"/>. RECmd batch mode (<c>--bn</c>)
+    /// only accepts a directory (<c>-d</c>), so the hive and its transaction logs are staged into a temp directory
+    /// first — which means RECmd replays the logs (recovering dirty-hive data, e.g. MRU keys wiped by anti-forensic
+    /// tools) without the cost of parsing every hive in a user profile.
+    /// </summary>
+    public async Task<RegistryEntry[]?> RECmdSingleHiveAsync(string hiveFile, string batchFile)
+    {
+        string dir = "/tmp/camel_recmd_" + Guid.NewGuid().ToString("N");
+        await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {dir}", false);
+        try
+        {
+            // Copy the hive plus any sibling transaction logs ("<hive>*") so RECmd can replay them.
+            await auditEnvironment.ExecuteCommandAsync("cp", $"{Q(hiveFile)}* {dir}/", false);
+            return await RECmdAsync(dir, batchFile);
+        }
+        finally { try { auditEnvironment.ExecuteCommand("rm", $"-rf {dir}", out _, false); } catch { } }
+    }
     #endregion
 
     #region Stdout tools

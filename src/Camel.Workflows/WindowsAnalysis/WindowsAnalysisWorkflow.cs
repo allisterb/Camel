@@ -117,6 +117,155 @@ public class WindowsAnalysisWorkflow : Workflow
             $"Found {entries.Length} binary record(s) in Amcache (with SHA-1 hashes for IOC pivoting).");
     }
 
+    /// <summary>
+    /// Reconstructs the remote network shares (mapped drives / browsed UNC paths) a user connected to, from their
+    /// registry hives in <paramref name="hiveDirectory"/> — the file-copy / exfiltration channel in insider and
+    /// lateral-movement cases. Sources <c>MountPoints2</c> (each <c>\\server\share</c> is a connected share) and
+    /// the <c>Map Network Drive MRU</c>. Uses RECmd (the <c>.reb</c> batch), which <em>replays transaction logs</em>:
+    /// these keys are frequently in a dirty hive's logs — especially after anti-forensic MRU cleaning — where
+    /// RegRipper would miss them.
+    /// </summary>
+    /// <param name="ntuserHive">Path to the user's NTUSER.DAT (its transaction logs alongside are replayed).</param>
+    /// <param name="batchFile">RECmd batch file (defaults to the toolkit-installed DFIRBatch.reb).</param>
+    public async Task<WorkflowResult<ExternalConnectionReport>> AnalyzeExternalConnectionsAsync(string ntuserHive, string batchFile = DfirBatchFile)
+    {
+        using var op = Begin("Analyzing external connections (mapped drives) in {0}", ntuserHive);
+
+        var entries = await WindowsAnalysis.RECmdSingleHiveAsync(ntuserHive, batchFile);
+        if (entries is null)
+            return WorkflowResult<ExternalConnectionReport>.Failure(
+                $"RECmd failed for hive '{ntuserHive}'; check the hive exists and the batch file '{batchFile}' is installed.");
+
+        var found = new List<ExternalConnection>();
+        foreach (var e in entries)
+        {
+            // MountPoints2: the connected share is the "##server#share" subkey name in the key path.
+            if (e.KeyPath is { } kp && kp.IndexOf(@"MountPoints2\##", StringComparison.OrdinalIgnoreCase) is var i && i >= 0)
+            {
+                var token = kp[(kp.IndexOf(@"MountPoints2\", StringComparison.OrdinalIgnoreCase) + "MountPoints2\\".Length)..];
+                int bs = token.IndexOf('\\');                    // cut any deeper subkey (shell\open\…)
+                if (bs >= 0) token = token[..bs];
+                found.Add(MakeConnection(token.Replace('#', '\\'), "MountPoints2", e.LastWriteTimestamp));
+            }
+            // Map Network Drive MRU: the value data is the UNC path the user mapped.
+            else if (e.Description is { } d && d.Contains("Network Drive MRU", StringComparison.OrdinalIgnoreCase)
+                     && e.ValueData is { } vd && vd.TrimStart().StartsWith(@"\\"))
+                found.Add(MakeConnection(vd.Trim(), "Map Network Drive MRU", e.LastWriteTimestamp));
+        }
+
+        // One entry per distinct share (MountPoints2 yields a row per value), keeping the most recent timestamp.
+        var remoteShares = found.Where(c => c.Server is { Length: > 0 })
+            .GroupBy(c => c.Unc, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderByDescending(x => x.LastWrite ?? DateTime.MinValue).First())
+            .OrderBy(c => c.Unc, StringComparer.OrdinalIgnoreCase).ToArray();
+
+        op.Complete();
+        return WorkflowResult<ExternalConnectionReport>.Success(new ExternalConnectionReport { RemoteShares = remoteShares },
+            remoteShares.Length == 0
+                ? "No remote network shares (mapped drives) found in the user's registry."
+                : $"Found {remoteShares.Length} remote share connection(s): {string.Join(", ", remoteShares.Select(s => s.Unc))}.");
+    }
+
+    // Splits a "\\server\share[\…]" UNC into an ExternalConnection.
+    private static ExternalConnection MakeConnection(string unc, string source, DateTime? lastWrite)
+    {
+        var parts = unc.TrimStart('\\').Split('\\', 2);
+        return new ExternalConnection
+        {
+            Unc = unc,
+            Server = parts.Length > 0 && parts[0].Length > 0 ? parts[0] : null,
+            Share = parts.Length > 1 ? parts[1] : null,
+            Source = source,
+            LastWrite = lastWrite,
+        };
+    }
+
+    // Locations from which legitimate software almost never executes (the suspicious-execution-location set).
+    private static readonly string[] DefaultExecSuspiciousPaths =
+        [@"\temp\", @"\tmp\", @"\users\public\", @"\$recycle", @"\recycler\", @"\programdata\temp\",
+         @"\perflogs\", @"\windows\temp\", @"\appdata\local\temp\"];
+    // Notable security / hacking / anti-forensic / recon tool name stems — their presence is a lead to review
+    // intent (matched as a substring of the executable name). Maps to the NIST cases (CCleaner/Eraser; NetStumbler/Ethereal).
+    private static readonly string[] DefaultToolWatchlist =
+        ["ccleaner", "eraser", "bcwipe", "sdelete", "timestomp", "netstumbler", "ethereal", "wireshark", "winpcap",
+         "npcap", "zenmap", "nmap", "aircrack", "kismet", "cain", "mimikatz", "psexec", "paexec", "procdump",
+         "fgdump", "gsecdump", "pwdump", "lazagne", "secretsdump", "netcat", "ncat", "mirc", "keylogger", "look@lan"];
+
+    /// <summary>
+    /// Builds a unified, scored "evidence of execution" inventory for a host by correlating the two offline
+    /// execution-evidence sources: Shimcache (<paramref name="systemHive"/>, AppCompatCache — proves a file
+    /// existed) and, when supplied, Amcache (<paramref name="amcacheHive"/> — strongest execution evidence, with
+    /// SHA-1 for IOC pivoting; Win7+ only). Each executable is merged by path and scored for the high-precision
+    /// anomalies the methodology calls out: execution from a suspicious location, a known hacking/anti-forensic
+    /// tool (watchlist), or a LOLBin run from a non-canonical path (LOLBAS masquerade). Findings are leads.
+    /// </summary>
+    /// <param name="systemHive">Path to the SYSTEM hive (Shimcache / AppCompatCache).</param>
+    /// <param name="amcacheHive">Optional path to Amcache.hve (adds SHA-1 + execution metadata; omit on XP).</param>
+    /// <param name="suspiciousPathFragments">Path substrings marking a suspicious execution location (defaults provided).</param>
+    /// <param name="toolWatchlist">Notable tool name stems to flag (defaults to anti-forensic/hacking/recon tools).</param>
+    public async Task<WorkflowResult<ExecutionReport>> AnalyzeExecutionEvidenceAsync(
+        string systemHive, string? amcacheHive = null, string[]? suspiciousPathFragments = null, string[]? toolWatchlist = null)
+    {
+        suspiciousPathFragments ??= DefaultExecSuspiciousPaths;
+        toolWatchlist ??= DefaultToolWatchlist;
+
+        using var op = Begin("Analyzing evidence of execution from {0}", systemHive);
+
+        var shim = await WindowsAnalysis.AppCompatCacheParserAsync(systemHive);
+        if (shim is null)
+            return WorkflowResult<ExecutionReport>.Failure(
+                $"AppCompatCacheParser failed for SYSTEM hive '{systemHive}'; check it is a valid SYSTEM hive.");
+        var amcache = amcacheHive is not null ? (await WindowsAnalysis.AmcacheParserAsync(amcacheHive) ?? []) : [];
+        var lolbas = await WindowsAnalysis.LoadLolbasAsync();
+
+        // Index each source by executable path and take the union — one artifact per distinct path.
+        var shimByPath = shim.Where(s => !string.IsNullOrEmpty(s.Path))
+            .GroupBy(s => s.Path, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var amByPath = amcache.Where(a => !string.IsNullOrEmpty(a.FullPath))
+            .GroupBy(a => a.FullPath!, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        var executables = shimByPath.Keys.Union(amByPath.Keys, StringComparer.OrdinalIgnoreCase).Select(path =>
+        {
+            shimByPath.TryGetValue(path, out var s);
+            amByPath.TryGetValue(path, out var a);
+            var name = FileNameOf(path);
+            var sources = new List<string>(2);
+            if (s is not null) sources.Add("Shimcache");
+            if (a is not null) sources.Add("Amcache");
+            var reasons = ScoreExecution(path, name, suspiciousPathFragments, toolWatchlist, lolbas);
+            return new ExecutionArtifact
+            {
+                Path = path, Name = name, Sha1 = a?.SHA1,
+                ShimcacheLastModified = s?.LastModifiedTimeUTC,
+                AmcacheTimestamp = a?.FileKeyLastWriteTimestamp,
+                CompileTime = a?.LinkDate,
+                Sources = sources.ToArray(),
+                Reasons = reasons, Suspicious = reasons.Length > 0,
+            };
+        }).ToArray();
+
+        op.Complete();
+        var report = new ExecutionReport { Executables = executables };
+        return WorkflowResult<ExecutionReport>.Success(report,
+            $"Correlated {executables.Length} executable(s) from Shimcache" + (amcacheHive is not null ? " + Amcache" : "") +
+            $"; {report.SuspiciousExecutables.Length} flagged " +
+            (report.SuspiciousExecutables.Length == 0 ? "." : $"(e.g. {string.Join(", ", report.SuspiciousExecutables.Take(5).Select(e => e.Name))})."));
+    }
+
+    // Scores an executable for the high-precision execution anomalies: suspicious location, a watchlisted tool, or
+    // a LOLBin run from a non-canonical path (masquerading).
+    private static string[] ScoreExecution(string path, string name, string[] suspiciousPaths, string[] watchlist, LolbasReference? lolbas)
+    {
+        var reasons = new List<string>();
+        var loc = suspiciousPaths.FirstOrDefault(f => path.Contains(f, StringComparison.OrdinalIgnoreCase));
+        if (loc is not null) reasons.Add($"executed from a suspicious location ('{loc.Trim('\\')}')");
+        var tool = watchlist.FirstOrDefault(w => name.Contains(w, StringComparison.OrdinalIgnoreCase));
+        if (tool is not null) reasons.Add($"matches a notable hacking/anti-forensic/recon tool ('{tool}')");
+        if (lolbas is not null && lolbas.IsLolbin(name) && HasDirectory(path) && !lolbas.IsCanonicalPath(name, path))
+            reasons.Add($"living-off-the-land binary '{name}' run from a non-canonical path (possible masquerading)");
+        return reasons.ToArray();
+    }
+
     // WMI consumer/filter names that are benign-but-noisy (stock OS / vendor subscriptions), per the methodology's
     // false-positive list. Names are matched case-insensitively as substrings.
     private static readonly string[] DefaultWmiAllowlist =
