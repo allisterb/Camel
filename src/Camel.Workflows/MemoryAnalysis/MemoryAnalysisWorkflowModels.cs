@@ -328,8 +328,9 @@ public record SkeletonKeyReport
 /// <summary>
 /// One suspect process surfaced by the six-step <c>FindMalware</c> memory-analysis workflow. <see cref="Signals"/>
 /// are the human-readable findings that flagged it; <see cref="Categories"/> are the distinct methodology steps
-/// those signals came from (<c>rogue-process</c>, <c>code-injection</c>, <c>network</c>). A process corroborated
-/// by ≥2 categories (<see cref="IsHighConfidence"/>) is the "first hit" the methodology hunts. The remaining
+/// those signals came from (<c>rogue-process</c>, <c>process-anomaly</c>, <c>code-injection</c>, <c>network</c>).
+/// A process corroborated by ≥2 categories (<see cref="IsHighConfidence"/>) is the "first hit" the methodology
+/// hunts. The remaining
 /// fields are the Step-2 enrichment (loaded-DLL / handle / SID drill-down): the process command line, its owning
 /// SIDs, any orphan/unlinked DLLs, its routable remote connections, and — when Step 6 dumping was requested —
 /// the paths of the executable images extracted for downstream triage.
@@ -352,32 +353,84 @@ public record MalwareSuspect
 
     // Step-6 extraction (when a dump directory was requested).
     public string[] DumpedFiles { get; init; } = [];
+    /// <summary>Classic-YARA rule hits on this suspect's dumped executable image (adds the <c>yara-detection</c> category).</summary>
+    public Camel.Toolkits.Models.YaraMatch[] YaraMatches { get; init; } = [];
 }
 
 /// <summary>
 /// The result of the six-step "Finding the First Hit" memory-analysis methodology (FOR508.3) run end-to-end by
 /// <c>FindMalwareAsync</c>. Each named report is the output of one methodology step run as its own workflow:
 /// <list type="bullet">
-/// <item>Step 1 — <see cref="RogueProcesses"/> (cross-view hidden-process scan).</item>
+/// <item>Step 1 — <see cref="RogueProcesses"/> (cross-view hidden-process scan) and <see cref="ProcessTriage"/>
+/// (visible-process integrity / ancestry triage) — the two halves of "Identify Rogue Processes".</item>
 /// <item>Step 3 — <see cref="NetworkArtifacts"/> (unique remote IPs / connections).</item>
 /// <item>Step 4 — <see cref="CodeInjection"/> (unlinked DLLs + hollowing + malfind).</item>
 /// <item>Step 5 — <see cref="KernelRootkit"/> (SSDT / callback / IRP hooks — module-level, not per-process).</item>
 /// </list>
-/// Steps 1 and 4 nominate per-process suspects; Step 3 corroborates them and Step 2 (command line, SIDs, DLLs)
-/// enriches them; the merged, ranked result is <see cref="Suspects"/>. Step 6 (optional) populates
-/// <see cref="DumpedArtifacts"/> with the extracted executable images and, when YARA rules were supplied,
-/// <see cref="YaraScan"/>. <see cref="HighConfidenceSuspects"/> is the cross-corroborated "first hit" subset.
+/// The nomination sources are the cross-view hidden scan (category <c>rogue-process</c>), the process triage
+/// (category <c>process-anomaly</c>), and code injection (category <c>code-injection</c>); Step 3 corroborates
+/// them (category <c>network</c>, never nominating alone) and Step 2 (command line, SIDs, DLLs) enriches them;
+/// the merged, ranked result is <see cref="Suspects"/>. Step 6 (optional) populates <see cref="DumpedArtifacts"/>
+/// with the extracted executable images and, when YARA rules were supplied, <see cref="YaraScan"/>.
+/// <see cref="HighConfidenceSuspects"/> is the cross-corroborated "first hit" subset.
 /// </summary>
 public record FindMalwareReport
 {
     public CrossViewHiddenProcessReport RogueProcesses { get; init; } = new();
+    public ProcessTriageReport ProcessTriage { get; init; } = new();
     public RemoteIpReport NetworkArtifacts { get; init; } = new([], []);
     public CodeInjectionReport CodeInjection { get; init; } = new();
     public KernelRootkitReport KernelRootkit { get; init; } = new();
     public MalwareSuspect[] Suspects { get; init; } = [];
     public string[] DumpedArtifacts { get; init; } = [];
+    /// <summary>
+    /// Classic-YARA rule hits across all dumped executables (the bundled malware pack, scanned via the classic
+    /// <c>yara</c> file scanner — vol3's YARA-X cannot load that pack). Empty when nothing was dumped.
+    /// </summary>
+    public Camel.Toolkits.Models.YaraMatch[] DumpYaraMatches { get; init; } = [];
+    /// <summary>Optional VAD-region YARA scan of the live image (YARA-X), present only when caller-supplied rules were given.</summary>
     public MemoryYaraReport? YaraScan { get; init; }
 
     /// <summary>Suspects corroborated by ≥2 independent methodology steps — the highest-priority leads.</summary>
     public MalwareSuspect[] HighConfidenceSuspects => Suspects.Where(s => s.IsHighConfidence).ToArray();
+}
+
+/// <summary>
+/// One process flagged by <c>TriageProcessAncestryAsync</c> — a <em>visible</em> process whose identity or
+/// lineage is anomalous (as opposed to a hidden process, which the cross-view scan handles). <see cref="Categories"/>
+/// records which kind(s) of check fired: <c>system-process-integrity</c> (a canonical Windows system process,
+/// or a near-miss masquerade of one, that fails an expected-parent / expected-path / single-instance / name
+/// check — the <c>malprocfind</c> logic) and/or <c>ancestry-anomaly</c> (a suspicious parent→child relationship,
+/// e.g. Office spawning PowerShell, a WMI/console consumer host spawning a child, a web/db server spawning a
+/// shell, or a system-process name spawned by the shell). <see cref="Reasons"/> are the human-readable findings.
+/// </summary>
+public record ProcessAnomaly
+{
+    public int Pid { get; init; }
+    public string Name { get; init; } = "";
+    public int ParentPid { get; init; }
+    public string? ParentName { get; init; }
+    public string? Path { get; init; }
+    public string? CommandLine { get; init; }
+    public string[] Categories { get; init; } = [];
+    public string[] Reasons { get; init; } = [];
+}
+
+/// <summary>
+/// The result of <c>TriageProcessAncestryAsync</c> — the FOR508.3 "Identify Rogue Processes" deep analysis,
+/// which answers "is this process who it claims to be?" by combining two techniques the methodology details:
+/// the <c>malprocfind</c> system-process integrity checks and parent-child ancestry-anomaly detection. Both run
+/// over a single <c>windows.pstree</c> pull. <see cref="FlaggedProcesses"/> are the leads (each with its
+/// firing categories and reasons); <see cref="IntegrityFailures"/> / <see cref="AncestryAnomalies"/> are the
+/// per-category views; <see cref="TotalProcesses"/> is the tree size for context. Leads to triage, not verdicts.
+/// </summary>
+public record ProcessTriageReport
+{
+    public ProcessAnomaly[] FlaggedProcesses { get; init; } = [];
+    public int TotalProcesses { get; init; }
+
+    public ProcessAnomaly[] IntegrityFailures =>
+        FlaggedProcesses.Where(p => p.Categories.Contains("system-process-integrity")).ToArray();
+    public ProcessAnomaly[] AncestryAnomalies =>
+        FlaggedProcesses.Where(p => p.Categories.Contains("ancestry-anomaly")).ToArray();
 }

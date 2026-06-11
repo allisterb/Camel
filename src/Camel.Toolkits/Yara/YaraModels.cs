@@ -43,7 +43,7 @@ public class YaraOptions
         if (NoFollowSymlinks == true) sb.Append("-N ");
         if (ScanList == true) sb.Append("--scan-list ");
         if (Threads is int p) sb.Append($"-p {p} ");
-        if (Timeout is int t) sb.Append($"--timeout {t} ");
+        if (Timeout is int t) sb.Append($"--timeout={t} ");   // yara 4.5 requires the =form for this long option
         if (MaxRules is int mr) sb.Append($"--max-rules={mr} ");
         if (Tag is { Length: > 0 } tag) sb.Append($"-t {tag} ");
         if (Define is not null)

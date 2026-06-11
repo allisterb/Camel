@@ -161,6 +161,36 @@ public class DiskAnalysisToolkit : Toolkit
         var r = await auditEnvironment.ExecuteCommandAsync("sha256sum", Q(path), false);
         return r.IsCompleted ? r.Output.Split(' ', 2, StringSplitOptions.TrimEntries)[0] : null;
     }
+
+    /// <summary>
+    /// Server-side <c>grep</c> of a text file (e.g. a web-server access log), returning only the lines that match
+    /// any of <paramref name="patterns"/> (extended regex, case-insensitive by default). The patterns are shipped
+    /// to the workstation as a base64-encoded pattern file and matched with <c>grep -E -f</c>, so the match runs on
+    /// the workstation and only the matching lines transfer back — the same scaling discipline the event-log
+    /// workflows use to avoid pulling an entire multi-hundred-megabyte source over SSH. A no-match (<c>grep</c>
+    /// exit 1) is success-with-no-rows, not an error. When <paramref name="maxMatches"/> is set the result is
+    /// capped server-side. Returns the matching lines (empty when none match), or null when the file is unreadable.
+    /// </summary>
+    /// <param name="path">Path to the text file on the workstation / mounted volume to search.</param>
+    /// <param name="patterns">Extended-regex patterns; a line matching <em>any</em> of them is returned (grep -f OR semantics).</param>
+    /// <param name="ignoreCase">Match case-insensitively (<c>grep -i</c>). Defaults to true.</param>
+    /// <param name="maxMatches">When set, stop after this many matching lines (server-side <c>head</c>).</param>
+    public async Task<string[]?> GrepLinesAsync(string path, IEnumerable<string> patterns, bool ignoreCase = true, int? maxMatches = null)
+    {
+        var pats = patterns.Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
+        if (pats.Length == 0) return [];
+        if (!auditEnvironment.FileExists(path)) return null;
+
+        // Ship the pattern set as a base64 temp file so regex metacharacters never hit the shell; grep -f gives
+        // OR semantics across the lines. rc==1 (no match) is normalised to success; rc>=2 (real error) propagates.
+        var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(string.Join("\n", pats)));
+        var tmp = "/tmp/camel_grep_" + Guid.NewGuid().ToString("N") + ".pat";
+        var flags = ignoreCase ? "-E -i" : "-E";
+        var cap = maxMatches is int n and > 0 ? $" | head -n {n}" : "";
+        var script = $"echo {b64} | base64 -d > {tmp}; grep {flags} -f {tmp} {Q(path)}{cap}; rc=${{PIPESTATUS[0]}}; rm -f {tmp}; exit $((rc==1?0:rc))";
+        var r = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"{script}\"", false);
+        return r.IsCompleted ? r.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries) : null;
+    }
     #endregion
 
     #region File recovery

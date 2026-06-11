@@ -410,11 +410,12 @@ public class MemoryAnalysisWorkflowTests : TestsRuntime
         Assert.True(r.IsSuccess, r.Message);
         Assert.NotNull(r.Result);
         Assert.NotNull(r.Result.RogueProcesses);
+        Assert.NotNull(r.Result.ProcessTriage);
         Assert.NotNull(r.Result.NetworkArtifacts);
         Assert.NotNull(r.Result.CodeInjection);
         Assert.NotNull(r.Result.KernelRootkit);
 
-        string[] validCategories = ["rogue-process", "code-injection", "network"];
+        string[] validCategories = ["rogue-process", "process-anomaly", "code-injection", "network", "yara-detection"];
         Assert.All(r.Result.Suspects, s =>
         {
             Assert.NotEmpty(s.Signals);
@@ -439,9 +440,152 @@ public class MemoryAnalysisWorkflowTests : TestsRuntime
                 Assert.True(s.Categories.Length >= 2, $"PID {s.Pid} flagged by network only");
         });
 
+        // Wiring: every process-triage finding is folded in as a suspect carrying the process-anomaly category.
+        var anomalyPids = r.Result.Suspects.Where(s => s.Categories.Contains("process-anomaly")).Select(s => s.Pid).ToHashSet();
+        Assert.All(r.Result.ProcessTriage.FlaggedProcesses, p => Assert.Contains(p.Pid, anomalyPids));
+
         // No Step-6 work requested.
         Assert.Empty(r.Result.DumpedArtifacts);
+        Assert.Empty(r.Result.DumpYaraMatches);
         Assert.Null(r.Result.YaraScan);
+    }
+
+    [Fact]
+    public async Task FindMalwareScansDumpedExecutablesWithClassicYara()
+    {
+        // Step 6 with dumping: extracts suspect executables and always scans them with the bundled malware pack
+        // via the classic yara file scanner (vol3's YARA-X can't load that pack). On the clean image we expect
+        // no malware hits, but the path must run end-to-end and the wiring invariants must hold.
+        var dumpDir = $"/tmp/camel_fm_dump_{System.Guid.NewGuid():N}";
+        try
+        {
+            var r = await workflow.FindMalwareAsync(Win10Image, dumpDir: dumpDir);
+
+            Assert.True(r.IsSuccess, r.Message);
+            Assert.NotNull(r.Result);
+            Assert.NotNull(r.Result.DumpYaraMatches);
+
+            // Every classic-YARA hit targets one of the dumped files, and traces to a suspect carrying the
+            // yara-detection category.
+            var dumpedNames = r.Result.DumpedArtifacts.Select(System.IO.Path.GetFileName).ToHashSet();
+            Assert.All(r.Result.DumpYaraMatches, m =>
+                Assert.Contains(System.IO.Path.GetFileName(m.Target), dumpedNames));
+            Assert.All(r.Result.Suspects.Where(s => s.YaraMatches.Length > 0), s =>
+            {
+                Assert.Contains("yara-detection", s.Categories);
+                Assert.All(s.YaraMatches, m => Assert.Contains(m, r.Result.DumpYaraMatches));
+            });
+            // Conversely, any suspect tagged yara-detection actually carries matches.
+            Assert.All(r.Result.Suspects.Where(s => s.Categories.Contains("yara-detection")),
+                s => Assert.NotEmpty(s.YaraMatches));
+        }
+        finally
+        {
+            sshenv.ExecuteCommand("rm", $"-rf {dumpDir}", out _, false);
+        }
+    }
+
+    [Fact]
+    public async Task CanTriageProcessAncestry()
+    {
+        // Clean Win10 baseline: the whole tree parses and every flagged process is structurally well-formed.
+        // A correct ruleset produces zero false positives here (the canonical system processes all pass), which
+        // is the key low-FP property — the boot-time PID-reuse trap (csrss/winlogon PPID recycled by a later
+        // svchost) must NOT flag.
+        var r = await workflow.TriageProcessAncestryAsync(Win10Image);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.True(r.Result.TotalProcesses > 0);
+
+        string[] validCategories = ["system-process-integrity", "ancestry-anomaly"];
+        Assert.All(r.Result.FlaggedProcesses, p =>
+        {
+            Assert.NotEmpty(p.Reasons);
+            Assert.NotEmpty(p.Categories);
+            Assert.All(p.Categories, c => Assert.Contains(c, validCategories));
+        });
+        // Category views partition the flagged set by their tag.
+        Assert.All(r.Result.IntegrityFailures, p => Assert.Contains("system-process-integrity", p.Categories));
+        Assert.All(r.Result.AncestryAnomalies, p => Assert.Contains("ancestry-anomaly", p.Categories));
+
+        // The canonical system processes on a clean image must not be flagged for integrity — this is the
+        // PID-reuse-trap regression guard.
+        Assert.DoesNotContain(r.Result.IntegrityFailures, p =>
+            p.Name.Equals("csrss.exe", StringComparison.OrdinalIgnoreCase) ||
+            p.Name.Equals("winlogon.exe", StringComparison.OrdinalIgnoreCase) ||
+            p.Name.Equals("lsass.exe", StringComparison.OrdinalIgnoreCase) ||
+            p.Name.Equals("services.exe", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task TriageProcessAncestryRunsOnXp()
+    {
+        // Windows XP (5.1) regression: it has no wininit.exe — services.exe/lsass.exe are children of
+        // winlogon.exe. The parentage rules accept both wininit and winlogon, so these must NOT be flagged as
+        // integrity failures (the pre-Vista false-positive guard).
+        var r = await workflow.TriageProcessAncestryAsync(Image);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.True(r.Result.TotalProcesses > 0);
+        Assert.DoesNotContain(r.Result.IntegrityFailures, p =>
+            p.Name.Equals("services.exe", StringComparison.OrdinalIgnoreCase) ||
+            p.Name.Equals("lsass.exe", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task FindMalwareDegradesGracefullyOnXp()
+    {
+        // Windows XP (5.1): vol3's windows.netscan is unimplemented for this OS. Because network is
+        // corroboration-only, FindMalware must still SUCCEED — degrading to empty network artifacts rather than
+        // aborting — and the rest of the six-step analysis runs (all other XP plugins are supported).
+        var r = await workflow.FindMalwareAsync(Image);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.Empty(r.Result.NetworkArtifacts.RemoteIPs);
+        // No suspect can carry a network category when netscan was unavailable.
+        Assert.DoesNotContain(r.Result.Suspects, s => s.Categories.Contains("network"));
+    }
+
+    [Fact]
+    public void ProcessTriageDetectionLogicIsCorrect()
+    {
+        // Deterministic, offline validation of the novel detection primitives — the real malware-positive
+        // coverage the clean image cannot provide (no infected memory fixture parses under vol3 here).
+
+        // Damerau-Levenshtein: substitution and adjacent transposition each count as one edit.
+        Assert.Equal(0, MemoryAnalysisWorkflow.DamerauLevenshtein("svchost", "svchost"));
+        Assert.Equal(1, MemoryAnalysisWorkflow.DamerauLevenshtein("svchost", "svch0st")); // o -> 0 (substitution)
+        Assert.Equal(1, MemoryAnalysisWorkflow.DamerauLevenshtein("svchost", "scvhost")); // v<->c (transposition)
+        Assert.True(MemoryAnalysisWorkflow.DamerauLevenshtein("svchost", "explorer") > 2);
+
+        // Masquerade detection: one edit from a system name flags; the exact name and unrelated names do not.
+        Assert.Equal("svchost", MemoryAnalysisWorkflow.NearestSystemProcessName("scvhost"));
+        Assert.Equal("svchost", MemoryAnalysisWorkflow.NearestSystemProcessName("svch0st"));
+        Assert.Equal("lsass", MemoryAnalysisWorkflow.NearestSystemProcessName("lsasss"));
+        Assert.Null(MemoryAnalysisWorkflow.NearestSystemProcessName("svchost"));  // it IS the real one
+        Assert.Null(MemoryAnalysisWorkflow.NearestSystemProcessName("chrome"));   // unrelated
+        Assert.Null(MemoryAnalysisWorkflow.NearestSystemProcessName("lsm"));      // too short to compare
+
+        // Path-location check (case- and slash-insensitive; matches dir immediately before the exe).
+        Assert.True(MemoryAnalysisWorkflow.PathInExpectedDir(
+            @"\Device\HarddiskVolume3\Windows\System32\svchost.exe", "svchost", ["system32", "syswow64"]));
+        Assert.False(MemoryAnalysisWorkflow.PathInExpectedDir(
+            @"\Device\HarddiskVolume3\Users\evil\AppData\Local\Temp\svchost.exe", "svchost", ["system32", "syswow64"]));
+
+        Assert.Equal("svchost", MemoryAnalysisWorkflow.ProcBaseName("SvcHost.exe"));
+    }
+
+    [Fact]
+    public async Task TriageProcessAncestryFailsForMissingImage()
+    {
+        var r = await workflow.TriageProcessAncestryAsync("/mnt/artifacts/does_not_exist.raw");
+
+        Assert.False(r.IsSuccess);
+        Assert.Null(r.Result);
+        Assert.NotNull(r.Message);
     }
 
     [Fact]
@@ -454,8 +598,38 @@ public class MemoryAnalysisWorkflowTests : TestsRuntime
         Assert.NotNull(r.Message);
     }
 
+    [Fact]
+    public async Task FindMalwareLegacyModeReducesCrossViewNoiseOnServer2008()
+    {
+        // Server 2008 (the Ali Hadi web-server case image): psxview's pslist/csrss cross-view is unreliable on
+        // pre-Win10 builds and flags nearly every process as "missed by pslist/csrss", inflating the
+        // rogue-process nominations. Legacy mode demotes those pslist/csrss-only discrepancies to
+        // corroboration-only (only a genuine psscan miss still nominates), so it must yield no MORE suspects —
+        // and in particular no more rogue-process-only suspects — than the default, while both still succeed.
+        var normal = await workflow.FindMalwareAsync(Server2008Image);
+        var legacy = await workflow.FindMalwareAsync(Server2008Image, legacyMode: true);
+
+        Assert.True(normal.IsSuccess, normal.Message);
+        Assert.True(legacy.IsSuccess, legacy.Message);
+
+        // Demoting the noisy cross-view discrepancies can only shrink the suspect set.
+        Assert.True(legacy.Result!.Suspects.Length <= normal.Result!.Suspects.Length,
+            $"legacy {legacy.Result.Suspects.Length} > normal {normal.Result.Suspects.Length}");
+
+        // The pure-rogue (psxview-only) suspects are exactly what legacy mode suppresses.
+        static int OnlyRogue(Camel.Workflows.Models.FindMalwareReport r) =>
+            r.Suspects.Count(s => s.Categories is ["rogue-process"]);
+        Assert.True(OnlyRogue(legacy.Result!) <= OnlyRogue(normal.Result!));
+
+        // Every rogue-process suspect that survives legacy mode either is a genuine psscan miss or is corroborated
+        // by another category — none is a pslist/csrss-only nomination standing alone is acceptable (psscan miss),
+        // so we assert the count is bounded, not zero.
+        Assert.True(legacy.Result!.HighConfidenceSuspects.Length <= normal.Result!.HighConfidenceSuspects.Length);
+    }
+
     const string Image = "/mnt/artifacts/pat-2009-11-19.mddramimage";
     const string Win10Image = "/mnt/artifacts/Rocba-Memory.raw";
+    const string Server2008Image = "/mnt/artifacts/memdump.mem";
 
     AuditEnvironment sshenv;
     CamelApi api;

@@ -35,4 +35,6 @@ public class Workflow : Runtime
     protected MemoryAnalysisToolkit MemoryAnalysis => api.MemoryAnalysis;
 
     protected WindowsAnalysisToolkit WindowsAnalysis => api.WindowsAnalysis;
+
+    protected YaraToolkit Yara => api.Yara;
 }

@@ -593,12 +593,19 @@ public class MemoryAnalysisWorkflow : Workflow
                 : $"No Skeleton Key implant detected in '{imageFile}'.");
     }
 
+    // Default classic-yara ruleset for scanning FindMalware's dumped executables — the bundled Yara-Rules
+    // community malware pack (classic YARA, resolvable by the yara CLI's include handling; vol3's YARA-X cannot
+    // load it). Auto-installed by the YaraToolkit at YaraToolkit.RulesRepoPath.
+    private const string DefaultDumpYaraRules = Camel.Toolkits.YaraToolkit.RulesRepoPath + "/malware_index.yar";
+
     /// <summary>
     /// Runs the six-step "Finding the First Hit" memory-analysis methodology (FOR508.3) end-to-end against a
     /// Windows memory image, orchestrating the lower-level workflows and correlating their findings into a
     /// single ranked suspect list. The steps:
     /// <list type="number">
-    /// <item><b>Identify rogue processes</b> — <see cref="CrossViewHiddenProcessAsync"/> (psxview cross-view).</item>
+    /// <item><b>Identify rogue processes</b> — both halves: <see cref="CrossViewHiddenProcessAsync"/> (psxview
+    /// cross-view, the <em>hidden</em> processes) and <see cref="TriageProcessAncestryAsync"/> (system-process
+    /// integrity + ancestry anomalies, the <em>visible</em> masqueraders).</item>
     /// <item><b>Analyze process DLLs and handles</b> — each suspect is enriched with its command line, owning
     /// SIDs, and orphan/unlinked DLLs (a per-process deep-dive, pulled in two image-wide plugin calls).</item>
     /// <item><b>Review network artifacts</b> — <see cref="FindAllUniqueRemoteIPsAsync"/>; a suspect's routable
@@ -610,16 +617,32 @@ public class MemoryAnalysisWorkflow : Workflow
     /// suspect's executable image is extracted; when <paramref name="yaraRulesFile"/> is set, the image is
     /// YARA-scanned. Both are optional and non-fatal.</item>
     /// </list>
-    /// Steps 1 and 4 nominate per-process suspects; a process flagged by ≥2 independent steps is high-confidence
-    /// — the "first hit". Suspects are ranked by distinct-category count, then raw signal count, then PID.
+    /// Step 1 (both halves) and Step 4 nominate per-process suspects across the categories <c>rogue-process</c>,
+    /// <c>process-anomaly</c>, and <c>code-injection</c>; a process flagged by ≥2 of these (or +network) is
+    /// high-confidence — the "first hit". Suspects are ranked by distinct-category count, then signal count, then PID.
     /// </summary>
     /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
     /// <param name="dumpDir">Optional: when set, Step 6 extracts each high-confidence suspect's executable image
-    /// to this workstation directory (falling back to the top 5 suspects if none are high-confidence).</param>
-    /// <param name="yaraRulesFile">Optional: when set, Step 6 YARA-scans the image's VAD regions with these rules
-    /// (a failed scan is recorded as a null <see cref="FindMalwareReport.YaraScan"/>, not a workflow failure).</param>
+    /// to this workstation directory (falling back to the top 5 suspects if none are high-confidence), then
+    /// always scans the dumped images with the classic <c>yara</c> file scanner using
+    /// <paramref name="dumpYaraRules"/>. A rule hit on a suspect's own image adds the <c>yara-detection</c>
+    /// category, promoting it.</param>
+    /// <param name="yaraRulesFile">Optional: when set, Step 6 also YARA-scans the live image's VAD regions
+    /// (YARA-X via <c>windows.vadyarascan</c>) with these rules — note this engine cannot load the classic
+    /// community pack, so supply YARA-X-compatible rules. A failed scan is recorded as a null
+    /// <see cref="FindMalwareReport.YaraScan"/>, not a workflow failure.</param>
+    /// <param name="dumpYaraRules">YARA rules file used to scan the <paramref name="dumpDir"/> dumps with the
+    /// classic <c>yara</c> engine; defaults to the bundled community malware pack
+    /// (<c>/opt/yara-rules/malware_index.yar</c>). Only used when <paramref name="dumpDir"/> is set.</param>
+    /// <param name="legacyMode">Tunes Step 1 for pre-Windows-10 images (XP / Server 2003 / Server 2008), where
+    /// <c>psxview</c>'s pslist/csrss cross-view sources are unreliable and flag nearly every process as
+    /// "missed by pslist/csrss" — drowning the real signal. When set, only a process <em>missed by psscan</em>
+    /// (the genuine pool-scan/DKOM discrepancy) nominates a <c>rogue-process</c> suspect; a process merely absent
+    /// from pslist/csrss is demoted to corroboration-only (it strengthens a PID already flagged by another
+    /// category but never nominates alone), exactly like the network signal. Leave false for Windows 10+.</param>
     public async Task<WorkflowResult<FindMalwareReport>> FindMalwareAsync(
-        string imageFile, string? dumpDir = null, string? yaraRulesFile = null)
+        string imageFile, string? dumpDir = null, string? yaraRulesFile = null,
+        string dumpYaraRules = DefaultDumpYaraRules, bool legacyMode = false)
     {
         using var op = Begin("Finding malware (6-step memory analysis) in {0}", imageFile);
 
@@ -629,21 +652,34 @@ public class MemoryAnalysisWorkflow : Workflow
         // and SSH.NET gives each command its own channel, so this is safe. A failure in any broad scan means the
         // image is unreadable / its symbols are unavailable, so the whole analysis fails (the message names it).
         var rogueTask = CrossViewHiddenProcessAsync(imageFile);
+        var triageTask = TriageProcessAncestryAsync(imageFile);
         var networkTask = FindAllUniqueRemoteIPsAsync(imageFile);
         var injectionTask = FindCodeInjectionAsync(imageFile);
         var rootkitTask = DetectKernelRootkitAsync(imageFile);
         var cmdlinesTask = MemoryAnalysis.WindowsCmdLineAsync(imageFile);
         var sidsTask = MemoryAnalysis.WindowsGetSidsAsync(imageFile);
-        await Task.WhenAll(rogueTask, networkTask, injectionTask, rootkitTask, cmdlinesTask, sidsTask);
+        await Task.WhenAll(rogueTask, triageTask, networkTask, injectionTask, rootkitTask, cmdlinesTask, sidsTask);
 
         var rogue = rogueTask.Result;
         if (!rogue.IsSuccess) return WorkflowResult<FindMalwareReport>.Failure(rogue.Message ?? "rogue-process scan failed.");
-        var network = networkTask.Result;
-        if (!network.IsSuccess) return WorkflowResult<FindMalwareReport>.Failure(network.Message ?? "network-artifact scan failed.");
+        var triage = triageTask.Result;
+        if (!triage.IsSuccess) return WorkflowResult<FindMalwareReport>.Failure(triage.Message ?? "process-triage scan failed.");
         var injection = injectionTask.Result;
         if (!injection.IsSuccess) return WorkflowResult<FindMalwareReport>.Failure(injection.Message ?? "code-injection scan failed.");
+
+        // Network and rootkit are non-nominating secondary signals (they never nominate a per-process suspect),
+        // so a failure in either must NOT abort the whole analysis — we degrade to an empty report and note it.
+        // The nominating scans above (rogue/triage/injection) stay fail-fast: if a process-enumeration plugin
+        // fails the image itself is unreadable and there is nothing to analyse.
+        //  - netscan is unimplemented for Windows XP/2003 (5.x) in vol3.
+        //  - the kernel plugins (ssdt/callbacks/driverirp) commonly fail on live-acquired busy servers from page
+        //    smear (unreadable kernel pages), as seen on the SHIELDBASE DC capture.
+        var network = networkTask.Result;
+        var networkResult = network.IsSuccess ? network.Result! : new RemoteIpReport([], []);
+        var networkNote = network.IsSuccess ? "" : " (network corroboration skipped: netscan unavailable on this image/OS)";
         var rootkit = rootkitTask.Result;
-        if (!rootkit.IsSuccess) return WorkflowResult<FindMalwareReport>.Failure(rootkit.Message ?? "rootkit scan failed.");
+        var rootkitResult = rootkit.IsSuccess ? rootkit.Result! : new KernelRootkitReport();
+        var rootkitNote = rootkit.IsSuccess ? "" : " (rootkit scan skipped: kernel plugins unavailable — e.g. memory smear)";
 
         // Step 2 enrichment data — pulled image-wide (cheaper than per-PID), indexed by PID below.
         var cmdlines = cmdlinesTask.Result ?? [];
@@ -665,8 +701,13 @@ public class MemoryAnalysisWorkflow : Workflow
             if (!names.TryGetValue(pid, out var n) || string.IsNullOrEmpty(n)) names[pid] = process;
         }
 
-        // Step 1 nominations: cross-view hidden processes.
-        foreach (var h in rogue.Result!.HiddenSightings)
+        // Step 1 nominations: cross-view hidden processes. In legacy mode (pre-Win10) the pslist/csrss cross-view
+        // is noisy, so only a psscan miss (the strong pool-scan/DKOM discrepancy) nominates; the rest are deferred
+        // to corroboration-only below. In normal mode every hidden sighting nominates.
+        var hiddenSightings = rogue.Result!.HiddenSightings;
+        var strongRogue = legacyMode ? hiddenSightings.Where(h => !h.PsScan).ToArray() : hiddenSightings;
+        var weakRogue = legacyMode ? hiddenSightings.Where(h => h.PsScan).ToArray() : [];
+        foreach (var h in strongRogue)
             Flag(h.Pid, h.Name, "rogue-process", $"rogue process: missed by {string.Join("/", h.MissedBy)} (cross-view)");
 
         // Step 4 nominations: each code-injection sub-signal, broken out per PID.
@@ -679,13 +720,20 @@ public class MemoryAnalysisWorkflow : Workflow
         foreach (var g in inj.AnomalousRegions.RwxRegions.GroupBy(r => r.PID))
             Flag(g.Key, g.First().Process, "code-injection", $"RWX region (shellcode) ×{g.Count()}");
 
+        // Step 1 (visible half): process-triage nominations — masquerades, system-process integrity failures,
+        // and suspicious ancestry. An independent axis from the cross-view hidden scan, so a process that is both
+        // hidden and a masquerade earns two categories.
+        foreach (var a in triage.Result!.FlaggedProcesses)
+            foreach (var reason in a.Reasons)
+                Flag(a.Pid, a.Name, "process-anomaly", reason);
+
         // Enrichment indexes (Step 2 + Step 3 data), keyed by PID.
         var cmdByPid = cmdlines.GroupBy(c => c.PID).ToDictionary(g => g.Key, g => g.First().Args);
         var sidsByPid = sids.GroupBy(s => s.PID)
             .ToDictionary(g => g.Key, g => g.Select(x => x.Name).Where(n => !string.IsNullOrEmpty(n)).Distinct().ToArray());
         var orphanByPid = inj.UnlinkedDlls.GroupBy(u => u.PID)
             .ToDictionary(g => g.Key, g => g.Select(u => string.IsNullOrEmpty(u.MappedPath) ? "<no MappedPath>" : u.MappedPath!).Distinct().ToArray());
-        var connByPid = network.Result!.Connections
+        var connByPid = networkResult.Connections
             .Where(c => c.PID is not null && IsRoutableRemote(c.ForeignAddr))
             .GroupBy(c => c.PID!.Value)
             .ToDictionary(g => g.Key, g => g.ToArray());
@@ -695,6 +743,13 @@ public class MemoryAnalysisWorkflow : Workflow
             if (connByPid.GetValueOrDefault(pid, []) is { Length: > 0 } conns)
                 Flag(pid, names.GetValueOrDefault(pid, ""), "network",
                     $"remote connection(s): {string.Join(", ", conns.Select(c => $"{c.ForeignAddr}:{c.ForeignPort}").Distinct().Take(3))}");
+
+        // Legacy-mode corroboration: a pslist/csrss-only cross-view discrepancy strengthens a PID another category
+        // already nominated, but (like network) never nominates on its own — keeping the pre-Win10 psxview noise out.
+        foreach (var h in weakRogue)
+            if (reasons.ContainsKey(h.Pid))
+                Flag(h.Pid, h.Name, "rogue-process",
+                    $"cross-view discrepancy (legacy psxview, corroborating): missed by {string.Join("/", h.MissedBy)}");
 
         var suspects = reasons.Select(kv => new MalwareSuspect
         {
@@ -728,7 +783,36 @@ public class MemoryAnalysisWorkflow : Workflow
             suspects = suspects.Select(s => dumpedByPid.TryGetValue(s.Pid, out var f) ? s with { DumpedFiles = f } : s).ToArray();
         }
 
-        // Step 6 (optional): YARA-scan the image. Non-fatal — a failure leaves YaraScan null.
+        // Step 6: classic-yara scan of the dumped executables with the bundled malware pack. vol3's vadyarascan
+        // (YARA-X) can't load that classic-YARA pack, but the classic `yara` file scanner can — so whenever we
+        // produced dumps we always scan them. A rule hit on a suspect's own image is a strong corroborator, so it
+        // adds the 'yara-detection' category (auto-promoting the suspect to high-confidence). Non-fatal.
+        var dumpYaraMatches = Array.Empty<YaraMatch>();
+        if (dumpDir is not null && dumpedAll.Count > 0)
+        {
+            dumpYaraMatches = await Yara.ScanAsync(dumpYaraRules, dumpDir, new YaraOptions { Recurse = true, Timeout = 120 }) ?? [];
+            if (dumpYaraMatches.Length > 0)
+            {
+                suspects = suspects.Select(s =>
+                {
+                    var hits = dumpYaraMatches
+                        .Where(m => s.DumpedFiles.Any(f => System.IO.Path.GetFileName(f) == System.IO.Path.GetFileName(m.Target)))
+                        .ToArray();
+                    return hits.Length == 0 ? s : s with
+                    {
+                        YaraMatches = hits,
+                        Categories = s.Categories.Append("yara-detection").Distinct().OrderBy(c => c).ToArray(),
+                        Signals = s.Signals
+                            .Concat(hits.Select(h => $"YARA rule '{h.Rule}' matched dumped image").Distinct())
+                            .ToArray(),
+                    };
+                })
+                .OrderByDescending(s => s.Categories.Length).ThenByDescending(s => s.SignalCount).ThenBy(s => s.Pid)
+                .ToArray();
+            }
+        }
+
+        // Step 6 (optional): YARA-X scan of the live image's VAD regions. Non-fatal — a failure leaves YaraScan null.
         MemoryYaraReport? yara = null;
         if (yaraRulesFile is not null)
         {
@@ -740,20 +824,274 @@ public class MemoryAnalysisWorkflow : Workflow
         var report = new FindMalwareReport
         {
             RogueProcesses = rogue.Result!,
-            NetworkArtifacts = network.Result!,
+            ProcessTriage = triage.Result!,
+            NetworkArtifacts = networkResult,
             CodeInjection = inj,
-            KernelRootkit = rootkit.Result!,
+            KernelRootkit = rootkitResult,
             Suspects = suspects,
             DumpedArtifacts = dumpedAll.ToArray(),
+            DumpYaraMatches = dumpYaraMatches,
             YaraScan = yara,
         };
         var hi = report.HighConfidenceSuspects;
-        var dumpNote = dumpDir is null ? "" : $" Dumped {dumpedAll.Count} executable(s).";
-        var yaraNote = yara is null ? "" : $" YARA: {yara.Matches.Length} match(es).";
+        var dumpNote = dumpDir is null ? ""
+            : $" Dumped {dumpedAll.Count} executable(s), {dumpYaraMatches.Length} classic-YARA hit(s).";
+        var yaraNote = yara is null ? "" : $" VAD-YARA: {yara.Matches.Length} match(es).";
+        var legacyNote = legacyMode ? " (legacy mode: pslist/csrss-only cross-view discrepancies demoted to corroboration)." : "";
         return WorkflowResult<FindMalwareReport>.Success(report,
             $"6-step analysis of '{imageFile}': {suspects.Length} suspect process(es), {hi.Length} high-confidence " +
             $"(≥2 steps){(hi.Length == 0 ? "" : ": " + string.Join(", ", hi.Take(5).Select(s => $"{s.Process} (PID {s.Pid})")))}. " +
-            $"Plus {rootkit.Result!.Hooks.Length} kernel hook(s) and {network.Result!.RemoteIPs.Length} remote IP(s)." +
-            dumpNote + yaraNote);
+            $"Plus {triage.Result!.FlaggedProcesses.Length} process anomaly(ies), {rootkitResult.Hooks.Length} kernel " +
+            $"hook(s) and {networkResult.RemoteIPs.Length} remote IP(s)." +
+            networkNote + rootkitNote + dumpNote + yaraNote + legacyNote);
+    }
+
+    /// <summary>
+    /// Triages the process tree for <em>visible</em> rogue processes — the FOR508.3 "Identify Rogue Processes"
+    /// deep analysis, answering "is this process who it claims to be?" (the complement of the cross-view scan,
+    /// which finds <em>hidden</em> processes). One <c>windows.pstree</c> pull drives two combined techniques:
+    /// <list type="bullet">
+    /// <item><b>System-process integrity</b> (the <c>malprocfind</c> logic — vol3 has no equivalent plugin). For
+    /// the canonical Windows system processes (smss/csrss/wininit/winlogon/services/lsass/svchost/spoolsv/explorer)
+    /// it checks the expected parent, the expected on-disk directory (System32/SysWOW64, or Windows-root for
+    /// explorer), single-instance where mandated (wininit/services/lsass), and flags any process whose name is one
+    /// edit away from a system-process name (the "scvhost.exe" masquerade).</item>
+    /// <item><b>Ancestry anomalies</b> — suspicious parent→child relationships: Office/script-host (winword,
+    /// excel, outlook, mshta, …) spawning a shell/LOLBin (macro payload); a WMI/console consumer host
+    /// (wmiprvse, scrcons) spawning a child (WMI event-consumer execution); a PowerShell-remoting host
+    /// (wsmprovhost) and its children (remote execution / lateral movement); a web/db server (w3wp, httpd,
+    /// sqlservr, …) spawning a shell or recon command (webshell / exploitation); and a system-process name
+    /// spawned by explorer.exe (masquerade).</item>
+    /// </list>
+    /// A process may be flagged by both categories. Results are leads to triage, not verdicts.
+    /// </summary>
+    /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
+    public async Task<WorkflowResult<ProcessTriageReport>> TriageProcessAncestryAsync(string imageFile)
+    {
+        using var op = Begin("Triaging process ancestry/integrity in {0}", imageFile);
+
+        var tree = await MemoryAnalysis.WindowsPsTreeAsync(imageFile);
+        if (tree is null)
+            return WorkflowResult<ProcessTriageReport>.Failure(
+                $"windows.pstree failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
+
+        // Flatten the parent/child tree to a flat process list, then index by PID for parent resolution and by
+        // canonical name for single-instance counts.
+        var procs = FlattenTree(tree).ToArray();
+        var byPid = procs.GroupBy(p => p.PID).ToDictionary(g => g.Key, g => g.First());
+        var nameCounts = procs.GroupBy(p => ProcBaseName(p.ImageFileName)).ToDictionary(g => g.Key, g => g.Count());
+
+        // Accumulate findings per PID across both check categories.
+        var reasons = new Dictionary<int, List<string>>();
+        var cats = new Dictionary<int, HashSet<string>>();
+        void Flag(int pid, string category, string reason)
+        {
+            if (!reasons.TryGetValue(pid, out var list)) reasons[pid] = list = [];
+            list.Add(reason);
+            if (!cats.TryGetValue(pid, out var set)) cats[pid] = set = [];
+            set.Add(category);
+        }
+
+        foreach (var p in procs)
+        {
+            var name = ProcBaseName(p.ImageFileName);
+            var path = p.Audit ?? p.Path ?? p.Cmd;                       // full path for the location check
+
+            // Resolve the parent by PPID, but reject a resolved process that started AFTER this one — a real
+            // parent must predate its child, so a later start time is proof of PID reuse (a boot-time parent like
+            // smss exits and its PID gets recycled), not a genuine lineage. Only proven-reuse is rejected; when
+            // timestamps are missing we keep the relationship rather than risk missing a real anomaly.
+            var resolved = byPid.GetValueOrDefault(p.PPID);
+            var parent = resolved is not null
+                && !(p.CreateTime is { } ct && resolved.CreateTime is { } pt && pt > ct) ? resolved : null;
+            var parentName = parent is null ? null : ProcBaseName(parent.ImageFileName);
+
+            // ---- System-process integrity (malprocfind logic) ----
+            if (SystemProcessRules.TryGetValue(name, out var rule))
+            {
+                // Wrong parent — only for processes whose parent is a long-lived singleton (services/wininit),
+                // and only when a temporally-valid parent is present. The parent check is disabled for smss-
+                // spawned processes (csrss/wininit/winlogon): smss exits at boot and its PID is recycled, so the
+                // PPID is unreliable — every process in that boot second shares an indistinguishable timestamp,
+                // so the time guard alone can't catch the reuse. Their realistic masquerades are still caught by
+                // the path, name, and ancestry checks.
+                if (rule.CheckParent && parent is not null && rule.Parents.Length > 0
+                    && !rule.Parents.Contains(parentName, StringComparer.OrdinalIgnoreCase))
+                    Flag(p.PID, "system-process-integrity",
+                        $"'{p.ImageFileName}' is parented by '{parent.ImageFileName}' — expected {string.Join("/", rule.Parents.Select(x => x + ".exe"))}");
+
+                // Wrong location — the process runs from outside its canonical directory.
+                if (path is not null && !PathInExpectedDir(path, name, rule.Dirs))
+                    Flag(p.PID, "system-process-integrity",
+                        $"'{p.ImageFileName}' runs from '{path}' — expected {string.Join("/", rule.Dirs)}\\{name}.exe");
+
+                // More than one of a single-instance system process.
+                if (rule.SingleInstance && nameCounts.GetValueOrDefault(name, 0) > 1)
+                    Flag(p.PID, "system-process-integrity",
+                        $"{nameCounts[name]} instances of '{p.ImageFileName}' — expected exactly one");
+            }
+            else
+            {
+                // Name masquerade: a non-canonical process whose name is one edit from a system-process name.
+                var near = NearestSystemProcessName(name);
+                if (near is not null)
+                    Flag(p.PID, "system-process-integrity",
+                        $"process name '{p.ImageFileName}' is one edit from system process '{near}.exe' (likely masquerade)");
+            }
+
+            // ---- Ancestry anomalies (parent → child) ----
+            if (name is "wsmprovhost")
+                Flag(p.PID, "ancestry-anomaly",
+                    "wsmprovhost.exe present — PowerShell remoting (remote command execution on this host)");
+
+            if (parentName is not null)
+            {
+                if (OfficeScriptParents.Contains(parentName) && ShellLolbinChildren.Contains(name))
+                    Flag(p.PID, "ancestry-anomaly",
+                        $"'{parent!.ImageFileName}' spawned '{p.ImageFileName}' — document/script host launching a shell/LOLBin (macro or malicious-document payload)");
+                if (WmiConsumerParents.Contains(parentName))
+                    Flag(p.PID, "ancestry-anomaly",
+                        $"'{parent!.ImageFileName}' (WMI/script consumer host) spawned '{p.ImageFileName}' — WMI event-consumer execution");
+                if (parentName is "wsmprovhost")
+                    Flag(p.PID, "ancestry-anomaly",
+                        $"'{p.ImageFileName}' spawned by PowerShell-remoting host wsmprovhost.exe — remote execution / lateral movement");
+                if (WebDbServerParents.Contains(parentName) && ReconShellChildren.Contains(name))
+                    Flag(p.PID, "ancestry-anomaly",
+                        $"server process '{parent!.ImageFileName}' spawned '{p.ImageFileName}' — possible webshell / server exploitation");
+                if (parentName is "explorer" && SystemProcessRules.ContainsKey(name) && name is not "explorer")
+                    Flag(p.PID, "ancestry-anomaly",
+                        $"system-process name '{p.ImageFileName}' spawned by explorer.exe — system processes are not launched from the shell (masquerade)");
+            }
+        }
+
+        var flagged = reasons.Select(kv =>
+        {
+            var p = byPid[kv.Key];
+            var parent = byPid.GetValueOrDefault(p.PPID);
+            return new ProcessAnomaly
+            {
+                Pid = kv.Key,
+                Name = p.ImageFileName,
+                ParentPid = p.PPID,
+                ParentName = parent?.ImageFileName,
+                Path = p.Audit ?? p.Path,
+                CommandLine = p.Cmd,
+                Categories = cats[kv.Key].OrderBy(c => c).ToArray(),
+                Reasons = kv.Value.ToArray(),
+            };
+        })
+        .OrderByDescending(a => a.Categories.Length)
+        .ThenByDescending(a => a.Reasons.Length)
+        .ThenBy(a => a.Pid)
+        .ToArray();
+
+        op.Complete();
+        var report = new ProcessTriageReport { FlaggedProcesses = flagged, TotalProcesses = procs.Length };
+        return WorkflowResult<ProcessTriageReport>.Success(report,
+            flagged.Length == 0
+                ? $"No process-integrity or ancestry anomalies among {procs.Length} process(es)."
+                : $"Flagged {flagged.Length} process(es) of {procs.Length} — {report.IntegrityFailures.Length} integrity, " +
+                  $"{report.AncestryAnomalies.Length} ancestry: " +
+                  string.Join(", ", flagged.Take(6).Select(a => $"{a.Name} (PID {a.Pid})")) + ".");
+    }
+
+    // Canonical Windows system processes and their expected parent(s), on-disk directory, and whether exactly
+    // one instance is expected. A null/empty Parents means "don't check parent" (e.g. System). smss/csrss/
+    // wininit/winlogon are parented by smss.exe, which exits at boot — the missing-parent case is handled by
+    // only checking the parent when it is still present.
+    // CheckParent is true only when the expected parent is a long-lived singleton (wininit/services) whose PID is
+    // stable — for those the wrong-parent check is reliable. It is false for smss-spawned processes (their parent
+    // exits at boot, recycling the PPID) and for explorer (userinit exits).
+    private sealed record SysProcRule(string[] Parents, string[] Dirs, bool SingleInstance, bool CheckParent);
+    private static readonly Dictionary<string, SysProcRule> SystemProcessRules = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["smss"]     = new(["system"],             ["system32"],            false, false),
+        ["csrss"]    = new(["smss"],               ["system32"],            false, false),
+        ["wininit"]  = new(["smss"],               ["system32"],            true,  false),
+        ["winlogon"] = new(["smss"],               ["system32"],            false, false),
+        // services/lsass are children of wininit.exe on Vista+ but of winlogon.exe on XP/2003 (which has no
+        // wininit) — accept both so the check is correct across the whole vol3-supported range (XP→Win11)
+        // without per-image version branching.
+        ["services"] = new(["wininit", "winlogon"], ["system32"],           true,  true),
+        ["lsass"]    = new(["wininit", "winlogon"], ["system32"],           true,  true),
+        ["svchost"]  = new(["services"],           ["system32", "syswow64"], false, true),
+        ["spoolsv"]  = new(["services"],           ["system32"],            false, true),
+        ["explorer"] = new(["userinit", "winlogon"], ["windows"],           false, false),
+    };
+
+    // The subset of system-process names long enough to make a one-edit masquerade check meaningful (short names
+    // like smss produce false positives), used by NearestSystemProcessName.
+    private static readonly string[] MasqueradeTargets =
+        ["csrss", "lsass", "wininit", "winlogon", "services", "svchost", "spoolsv", "explorer"];
+
+    // Parent/child watchlists for ancestry-anomaly detection.
+    private static readonly HashSet<string> OfficeScriptParents = new(StringComparer.OrdinalIgnoreCase)
+        { "winword", "excel", "powerpnt", "outlook", "onenote", "mspub", "msaccess", "mshta", "hh" };
+    private static readonly HashSet<string> ShellLolbinChildren = new(StringComparer.OrdinalIgnoreCase)
+        { "powershell", "pwsh", "cmd", "wscript", "cscript", "mshta", "rundll32", "regsvr32", "certutil", "bitsadmin" };
+    private static readonly HashSet<string> WmiConsumerParents = new(StringComparer.OrdinalIgnoreCase)
+        { "wmiprvse", "scrcons" };
+    private static readonly HashSet<string> WebDbServerParents = new(StringComparer.OrdinalIgnoreCase)
+        { "w3wp", "httpd", "apache", "nginx", "tomcat", "php-cgi", "sqlservr", "sqlwriter" };
+    private static readonly HashSet<string> ReconShellChildren = new(StringComparer.OrdinalIgnoreCase)
+        { "cmd", "powershell", "pwsh", "net", "net1", "whoami", "ipconfig", "systeminfo", "hostname", "nltest",
+          "query", "tasklist", "netstat", "arp", "route", "quser" };
+
+    // Recursively flattens a windows.pstree result (each node carries its children) into a flat process list.
+    private static IEnumerable<WindowsPsTree> FlattenTree(WindowsPsTree[] nodes)
+    {
+        foreach (var n in nodes)
+        {
+            yield return n;
+            if (n.__children is { Length: > 0 })
+                foreach (var c in FlattenTree(n.__children)) yield return c;
+        }
+    }
+
+    // The EPROCESS image name, lower-cased with any trailing ".exe" stripped (e.g. "SvcHost.exe" -> "svchost").
+    internal static string ProcBaseName(string? imageFileName)
+    {
+        var n = (imageFileName ?? "").Trim().ToLowerInvariant();
+        return n.EndsWith(".exe") ? n[..^4] : n;
+    }
+
+    // True when path ends in one of the expected directories immediately followed by the process exe — i.e. the
+    // process is running from its canonical location (case-insensitive, slash-agnostic).
+    internal static bool PathInExpectedDir(string path, string name, string[] dirs)
+    {
+        var p = path.ToLowerInvariant().Replace('/', '\\');
+        return dirs.Any(d => p.Contains($"\\{d}\\{name}.exe"));
+    }
+
+    // The system-process name exactly one edit (incl. transposition) from this name, or null. Used to catch
+    // masquerades like "scvhost"/"svch0st". Skips exact matches and length-mismatched comparisons >1 apart.
+    internal static string? NearestSystemProcessName(string name)
+    {
+        if (name.Length < 5) return null;
+        foreach (var t in MasqueradeTargets)
+        {
+            if (string.Equals(name, t, StringComparison.OrdinalIgnoreCase)) return null; // it IS that process
+            if (Math.Abs(name.Length - t.Length) <= 1 && DamerauLevenshtein(name, t) == 1) return t;
+        }
+        return null;
+    }
+
+    // Optimal string alignment (Damerau-Levenshtein) distance — counts insert/delete/substitute plus adjacent
+    // transposition as single edits, so a character swap ("svchost" -> "scvhost") is distance 1.
+    internal static int DamerauLevenshtein(string a, string b)
+    {
+        int n = a.Length, m = b.Length;
+        var d = new int[n + 1, m + 1];
+        for (int i = 0; i <= n; i++) d[i, 0] = i;
+        for (int j = 0; j <= m; j++) d[0, j] = j;
+        for (int i = 1; i <= n; i++)
+            for (int j = 1; j <= m; j++)
+            {
+                int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                d[i, j] = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + cost);
+                if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1])
+                    d[i, j] = Math.Min(d[i, j], d[i - 2, j - 2] + 1);
+            }
+        return d[n, m];
     }
 }

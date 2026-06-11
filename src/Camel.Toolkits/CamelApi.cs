@@ -13,15 +13,30 @@ public class CamelApi : Runtime
     #region Constructors
     public CamelApi(AuditEnvironment env, IConfigurationRoot? config = null)
     {
+        this.env = env;
+        this.config = config;
         this.MemoryAnalysis = new MemoryAnalysisToolkit(env, config);
-        this.DiskAnalysis = new DiskAnalysisToolkit(env, config);   
+        this.DiskAnalysis = new DiskAnalysisToolkit(env, config);
         this.WindowsAnalysis = new WindowsAnalysisToolkit(env, config);
     }
+    #endregion
+
+    #region Fields
+    private readonly AuditEnvironment env;
+    private readonly IConfigurationRoot? config;
+    private YaraToolkit? _yara;
     #endregion
 
     #region Properties
     public MemoryAnalysisToolkit MemoryAnalysis { get; }
     public DiskAnalysisToolkit DiskAnalysis { get; }
     public WindowsAnalysisToolkit WindowsAnalysis { get; }
+
+    /// <summary>
+    /// The YARA toolkit (classic <c>yara</c> file scanner + the bundled rules pack). Constructed lazily on
+    /// first use so that callers and configs that never scan with YARA don't pay its construction cost or its
+    /// <c>Tools:Yara</c> config requirement. First access requires a <c>Tools:Yara</c> section in the config.
+    /// </summary>
+    public YaraToolkit Yara => _yara ??= new YaraToolkit(env, config);
     #endregion
 }
