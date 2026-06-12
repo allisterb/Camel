@@ -7,14 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="Camel.Tests.Training" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\Camel.Runtime\Camel.Runtime.csproj" />
     <ProjectReference Include="..\Camel.Toolkits\Camel.Toolkits.csproj" />
-    <ProjectReference Include="..\Camel.Search\Camel.Search.csproj" />
-    <ProjectReference Include="..\Camel.Inference\Camel.Inference.csproj" />
   </ItemGroup>
 
 </Project>

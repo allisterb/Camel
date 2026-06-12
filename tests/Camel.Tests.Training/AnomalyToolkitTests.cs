@@ -4,6 +4,7 @@ using System.Linq;
 
 using Camel.Toolkits.Models;
 using Camel.Training;
+using Camel.Inference;
 
 namespace Camel.Tests.Training;
 
@@ -44,7 +45,7 @@ public class AnomalyToolkitTests
         var events = Enumerable.Range(0, 80).Select(i => Evtx(i, 4624)).Append(Evtx(80, 1102)).ToArray();
         var report = new AnomalyDetectionToolkit().Triage(events, budget: 10);
 
-        var text = AnomalyDetectionToolkit.Summarize(report, topN: 5);
+        var text = new AnomalyDetectionToolkit().Summarize(report, topN: 5);
 
         Assert.Contains("worth review", text);
         Assert.Contains("Detectors firing:", text);

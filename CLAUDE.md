@@ -16,8 +16,8 @@ the same code works locally or remotely over SSH.
 - Camel.Toolkits at src/Camel.Runtime provides a strongly-typed, asynchronous API for the SIFT tools. 
 - Camel.Workflows at src/Camel.Workflows codifies existing forensic tool knowledge into high-level workflows utilizing the SIFT tools API.
 - Camel.Server at src/Camel.Server provides the constrained JavaScript execution engine and MCP server implementation.
-- Camel.Training (planned) For training and testing machine learning models on forensic tool data, and for generating synthetic data for training and testing.
-- Camel.Inference (planned) For performing inference using trained machine learning models on forensic tool data.
+- Camel.Training at src/Camel.Training For training/evaluating ML over forensic timelines and generating synthetic data: the embedding/novelty stack (TimelineNoveltyBaseline, ONNX embedders via Camel.Search, renderers), the eval harnesses (AnomalyDetectionEval metrics, DatasetEvaluator), SyntheticIntrusion, and the CSV/dataset loaders. References Camel.Inference. NOTE: Camel.Search is for the JS-SDK vector search only and must NOT be a dependency of any toolkit/Inference/Server — only Camel.Training (the experiment project) references it.
+- Camel.Inference at src/Camel.Inference The lean runtime/inference ML core (no ONNX/Search dependency): the canonical event model (CanonicalEvent, EventCanonicalizer, ContentSignals, NoiseFilters), windowing, the (event_id, Δt) anomaly detectors + ensemble (EventDetectors), and the agent-facing AnomalyDetectionToolkit triage façade. Exposed to the code-mode agent's JS engine as `anomaly`.
 - Camel.CLI at src/Camel.CLI provides the main interface for launching the Camel MCP server and other programs.
 
 ## Project milestones

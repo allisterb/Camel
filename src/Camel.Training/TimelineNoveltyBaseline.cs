@@ -1,4 +1,5 @@
 namespace Camel.Training;
+using Camel.Inference;
 
 using System;
 using System.Collections.Generic;

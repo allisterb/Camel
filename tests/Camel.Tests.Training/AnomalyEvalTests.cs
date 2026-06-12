@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 
 using Camel.Training;
+using Camel.Inference;
 
 namespace Camel.Tests.Training;
 

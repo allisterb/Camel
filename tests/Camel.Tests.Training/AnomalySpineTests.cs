@@ -3,6 +3,7 @@ using System.Linq;
 
 using Camel.Environments;
 using Camel.Training;
+using Camel.Inference;
 
 namespace Camel.Tests.Training;
 

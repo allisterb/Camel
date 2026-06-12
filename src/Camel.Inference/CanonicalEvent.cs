@@ -1,4 +1,4 @@
-namespace Camel.Training;
+namespace Camel.Inference;
 
 using System;
 

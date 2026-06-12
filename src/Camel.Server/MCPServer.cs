@@ -52,7 +52,9 @@ public class CamelMCPTools
               output.AppendLine(headers.ToString());
 
           }))
-          .SetValue("memoryAnalysis", session.Api.MemoryAnalysis);
+          .SetValue("memoryAnalysis", session.Api.MemoryAnalysis)
+          // Pure-compute anomaly triage over a canonical timeline (no AuditEnvironment); see Camel.Inference.
+          .SetValue("anomaly", new Camel.Inference.AnomalyDetectionToolkit());
         try
         {
             // Wrap in an async IIFE so scripts can `await` async toolkit methods: top-level await isn't allowed

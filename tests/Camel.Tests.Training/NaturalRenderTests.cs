@@ -1,6 +1,7 @@
 using System;
 
 using Camel.Training;
+using Camel.Inference;
 
 namespace Camel.Tests.Training;
 

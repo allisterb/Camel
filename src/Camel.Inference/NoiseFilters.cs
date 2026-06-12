@@ -1,4 +1,4 @@
-namespace Camel.Training;
+namespace Camel.Inference;
 
 /// <summary>
 /// Event-keep predicates for <see cref="EventCanonicalizer.Canonicalize(System.Collections.Generic.IEnumerable{Camel.Toolkits.Models.TimelineEvent}, System.Func{CanonicalEvent, bool})"/>.

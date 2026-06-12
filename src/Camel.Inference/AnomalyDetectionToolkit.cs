@@ -1,4 +1,4 @@
-namespace Camel.Training;
+namespace Camel.Inference;
 
 using System;
 using System.Collections.Generic;
@@ -44,7 +44,7 @@ public sealed class AnomalyDetectionToolkit
     /// A compact, agent/LLM-readable rendering of a triage result: the headline compression, which detectors fired,
     /// and the top <paramref name="topN"/> shortlist entries with their reasons.
     /// </summary>
-    public static string Summarize(TriageReport report, int topN = 25)
+    public string Summarize(TriageReport report, int topN = 25)
     {
         var byDetector = report.Shortlist
             .SelectMany(i => i.Findings.Select(f => f.Detector))

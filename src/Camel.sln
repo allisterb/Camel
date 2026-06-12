@@ -46,6 +46,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Camel.Training", "Camel.Tra
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Camel.Tests.Training", "..\tests\Camel.Tests.Training\Camel.Tests.Training.csproj", "{7524FE8B-33C8-41CF-9DD7-4028D2F3EA6A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Camel.Inference", "Camel.Inference\Camel.Inference.csproj", "{26996E46-4933-429A-B508-AB5ABE20B2C0}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -224,6 +226,18 @@ Global
 		{7524FE8B-33C8-41CF-9DD7-4028D2F3EA6A}.Release|x64.Build.0 = Release|Any CPU
 		{7524FE8B-33C8-41CF-9DD7-4028D2F3EA6A}.Release|x86.ActiveCfg = Release|Any CPU
 		{7524FE8B-33C8-41CF-9DD7-4028D2F3EA6A}.Release|x86.Build.0 = Release|Any CPU
+		{26996E46-4933-429A-B508-AB5ABE20B2C0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{26996E46-4933-429A-B508-AB5ABE20B2C0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{26996E46-4933-429A-B508-AB5ABE20B2C0}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{26996E46-4933-429A-B508-AB5ABE20B2C0}.Debug|x64.Build.0 = Debug|Any CPU
+		{26996E46-4933-429A-B508-AB5ABE20B2C0}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{26996E46-4933-429A-B508-AB5ABE20B2C0}.Debug|x86.Build.0 = Debug|Any CPU
+		{26996E46-4933-429A-B508-AB5ABE20B2C0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{26996E46-4933-429A-B508-AB5ABE20B2C0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{26996E46-4933-429A-B508-AB5ABE20B2C0}.Release|x64.ActiveCfg = Release|Any CPU
+		{26996E46-4933-429A-B508-AB5ABE20B2C0}.Release|x64.Build.0 = Release|Any CPU
+		{26996E46-4933-429A-B508-AB5ABE20B2C0}.Release|x86.ActiveCfg = Release|Any CPU
+		{26996E46-4933-429A-B508-AB5ABE20B2C0}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
