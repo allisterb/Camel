@@ -373,6 +373,32 @@ public class MFTEntry
     public string SourceFile { get; set; } = "";
 }
 
+/// <summary>MFTECmd: a single <c>$UsnJrnl:$J</c> change-journal update record (--csv output).</summary>
+public class UsnJournalEntry
+{
+    public string Name { get; set; } = "";
+    public string? Extension { get; set; }
+    public long EntryNumber { get; set; }
+    public long ParentEntryNumber { get; set; }
+    public long UpdateSequenceNumber { get; set; }
+    public DateTime? UpdateTimestamp { get; set; }
+    /// <summary>The pipe-joined USN reasons for this record (e.g. "FileCreate|Close", "DataExtend|FileDelete|Close").</summary>
+    public string? UpdateReasons { get; set; }
+    public string? SourceFile { get; set; }
+
+    public static UsnJournalEntry FromRow(IReadOnlyDictionary<string, string> r) => new()
+    {
+        Name = r.Get("Name") ?? "",
+        Extension = r.Get("Extension"),
+        EntryNumber = EzParse.ToLong(r.Get("EntryNumber")),
+        ParentEntryNumber = EzParse.ToLong(r.Get("ParentEntryNumber")),
+        UpdateSequenceNumber = EzParse.ToLong(r.Get("UpdateSequenceNumber")),
+        UpdateTimestamp = EzParse.ToDate(r.Get("UpdateTimestamp")),
+        UpdateReasons = r.Get("UpdateReasons"),
+        SourceFile = r.Get("SourceFile"),
+    };
+}
+
 /// <summary>LECmd: a parsed Windows shortcut (.lnk) file (--json output).</summary>
 public class LnkFile
 {

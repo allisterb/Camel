@@ -39,6 +39,11 @@ public class WindowsAnalysisToolkit : Toolkit
     #region JSON tools
     public Task<MFTEntry[]?> MFTECmdAsync(string file) => ExecuteToolJsonAsync<MFTEntry>("MFTECmd", $"-f {Q(file)}");
 
+    /// <summary>Parses a USN change journal (<c>$UsnJrnl:$J</c>) with MFTECmd and returns the update records
+    /// (file create/delete/rename/data-change events). MFTECmd auto-detects the $J format from the input file.</summary>
+    public Task<UsnJournalEntry[]?> MFTECmdUsnAsync(string usnFile) =>
+        ExecuteToolCsvAsync<UsnJournalEntry>("MFTECmd", $"-f {Q(usnFile)}", UsnJournalEntry.FromRow);
+
     /// <summary>
     /// Parses an NTFS metadata file (<paramref name="file"/>: <c>$MFT</c>, <c>$J</c>, <c>$Boot</c>, <c>$SDS</c>,
     /// <c>$I30</c>) with MFTECmd to a CSV file. <paramref name="outputDir"/> (<c>--csv</c>) /

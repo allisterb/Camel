@@ -33,7 +33,7 @@ public class DiskAnalysisToolkit : Toolkit
     /// </summary>
     public async Task<bool> EwfMountLoopbackAsync(string rawPartition, string mountDir, int? offset = null) =>
         await ExecuteToolTextAsync("EwfMountLoopback",
-            $"-o ro,loop,show_sys_files,streams_interace=windows{(offset is not null ? $",offset={offset.Value * 512}" : "")} {Q(rawPartition)} {Q(mountDir)}") is not null;
+            $"-o ro,loop,show_sys_files,streams_interface=windows{(offset is not null ? $",offset={offset.Value * 512}" : "")} {Q(rawPartition)} {Q(mountDir)}") is not null;
 
     /// <summary>
     /// Mounts a raw EWF partition read-only at <paramref name="mountDir"/> using ntfs-3g with the
