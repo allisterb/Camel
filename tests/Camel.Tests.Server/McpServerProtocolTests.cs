@@ -71,6 +71,24 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
     }
 
     [Fact]
+    public async Task SetCaseIdAndAuditHandleReturned()
+    {
+        await using var client = await NewClientAsync();
+
+        // SetCaseId is exposed as its own tool and reports the case file it routes to.
+        var setr = await client.CallToolAsync("SetCaseId",
+            new Dictionary<string, object?> { ["caseId"] = "case-test-1" });
+        Assert.Contains("case-test-1", Text(setr));
+
+        // Every ExecuteJavaScript result carries an audit handle (case + invocation id) the agent can cite so a
+        // judge can trace the finding to its tool executions. Same session ⇒ the SetCaseId case id is reflected.
+        var r = await client.CallToolAsync("ExecuteJavaScript", Script("log('hi');"));
+        var text = Text(r);
+        Assert.Contains("hi", text);
+        Assert.Contains("[audit] case=case-test-1 invocation=", text);
+    }
+
+    [Fact]
     public async Task TableRendersAsciiGrid()
     {
         await using var client = await NewClientAsync();

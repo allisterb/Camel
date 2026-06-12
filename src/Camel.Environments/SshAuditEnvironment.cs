@@ -94,6 +94,8 @@ public class SshAuditEnvironment : AuditEnvironment
     #endregion
 
     #region Properties
+    // Audit trail records the remote SIFT host for commands run over SSH (the base reports the local machine).
+    protected override string AuditHostName => HostName;
     public string HostName { get; private set; } = "";
     public string User { get; private set; } = "";
     public bool UsePageant { get; private set; }

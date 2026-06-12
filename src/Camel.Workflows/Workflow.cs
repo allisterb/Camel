@@ -39,4 +39,21 @@ public class Workflow : Runtime
     protected YaraToolkit Yara => api.Yara;
 
     protected TimelineToolkit Timeline => api.Timeline;
+
+    /// <summary>
+    /// Opens an audit scope attributing every tool execution under it to this workflow and the calling method,
+    /// so the per-case audit trail records the full hierarchy (Workflow → WorkflowOperation → Toolkit → Operation
+    /// → command). Call once at the top of a public workflow method: <c>using var _ = AuditScope();</c>. The
+    /// operation name is captured automatically from the caller.
+    /// </summary>
+    protected IDisposable AuditScope([System.Runtime.CompilerServices.CallerMemberName] string operation = "") =>
+        new AuditScopeHandle(
+            PushAuditProperty("Workflow", GetType().Name),
+            PushAuditProperty("WorkflowOperation", operation));
+
+    /// <summary>Disposes a pair of log-context property scopes together (innermost first).</summary>
+    private sealed class AuditScopeHandle(IDisposable workflow, IDisposable operation) : IDisposable
+    {
+        public void Dispose() { operation.Dispose(); workflow.Dispose(); }
+    }
 }

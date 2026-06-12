@@ -37,6 +37,20 @@ nullish coalescing `??`, `Array`/`Map`/`Set`/`JSON`, etc.). Tailor generated cod
 Path arguments are paths **on the SIFT workstation** (local or over SSH). Each MCP session has its own isolated
 environment; toolkits are constructed lazily on first access and cached for the session.
 
+## Audit trail (case attribution — do this)
+
+Camel records every tool execution to a **per-case audit log** so any finding can be traced to the exact command
+that produced it. Two things are expected of you:
+
+1. **Call the `SetCaseId` MCP tool once at the start of an investigation** with a short, human-readable case id
+   (e.g. `srl-2018-rd01`). This is a separate MCP tool, not a JS SDK call. Every tool execution afterward is
+   written to `audit-<caseId>.clef` and tagged with the case, the toolkit/tool, the command, host, exit code, and
+   duration.
+2. **Every `ExecuteJavaScript` result ends with an audit handle line** — `[audit] case=<caseId> invocation=<id>`.
+   **Cite that `invocation` id (and the toolkit/method) next to the findings it supports in your report**, so a
+   reviewer can trace each finding to its tool executions in the case's audit file. Treat it as the evidence
+   citation for everything that script established.
+
 ## Global Functions
 
 `log(message: string)` — write an informational line to the script's output buffer (the text returned to the

@@ -22,6 +22,16 @@ public sealed class SessionContext : IDisposable
     public readonly CamelWorkflowsApi WorkflowsApi;
     public DateTimeOffset LastAccess = DateTimeOffset.UtcNow;
 
+    /// <summary>The MCP session id (set when the context is created); the default audit case id.</summary>
+    public string SessionId = "";
+
+    /// <summary>
+    /// The audit case id this session's tool executions are recorded under. Defaults to <see cref="SessionId"/>
+    /// (one case per session) and can be set by the agent via the <c>SetCaseId</c> tool to a human-readable case
+    /// label, so the per-case audit file is named for the investigation rather than an opaque session id.
+    /// </summary>
+    public string CaseId = "";
+
     private int _activeCalls;
 
     /// <summary>True while one or more tool calls are executing on this session. Busy sessions are never swept
@@ -87,7 +97,8 @@ public sealed class SessionRegistry : IDisposable
             return new Lazy<SessionContext>(() =>
             {
                 Runtime.Info("Creating environment for MCP session {0}.", id);
-                return new SessionContext(config);
+                // Default the audit case id to the session id (one case per session) until SetCaseId overrides it.
+                return new SessionContext(config) { SessionId = id, CaseId = id };
             });
         });
         var ctx = lazy.Value;                    // SSH connect happens here, exactly once per session

@@ -148,6 +148,87 @@ public abstract class Runtime
     [DebuggerStepThrough]
     public static Operation Begin(string messageTemplate, params object[] args) => _logger.BeginOperation(messageTemplate, args);
 
+    #region Audit trail
+    /// <summary>
+    /// Configures the dedicated audit logger: a separate Serilog pipeline that writes structured CLEF (JSON)
+    /// events, one file per <c>CaseId</c> (<c>audit-&lt;CaseId&gt;.clef</c> under <paramref name="auditDir"/>),
+    /// routed by the <c>CaseId</c> property the MCP server pushes onto the <see cref="Serilog.Context.LogContext"/>.
+    /// Because it also enriches <c>FromLogContext</c>, every audit event automatically carries the ambient
+    /// <c>CaseId</c>, <c>InvocationId</c>, <c>Workflow</c>, and <c>Toolkit</c>/<c>Operation</c> in scope — so a
+    /// judge can trace any finding to the exact tool execution, on a per-case basis, from these files alone.
+    /// Kept separate from the main (verbose) log so the audit trail is clean and reconstructable.
+    /// </summary>
+    public static void WithAuditLog(string auditDir)
+    {
+        System.IO.Directory.CreateDirectory(auditDir);
+        _auditLogger = new LoggerConfiguration()
+            .Enrich.FromLogContext()
+            .MinimumLevel.Information()
+            .WriteTo.Map(
+                keyPropertyName: "CaseId",
+                defaultKey: "unknown",
+                configure: (caseId, wt) => wt.File(
+                    new Serilog.Formatting.Compact.CompactJsonFormatter(),
+                    System.IO.Path.Combine(auditDir, $"audit-{SanitizeCaseId(caseId)}.clef")))
+            .CreateLogger();
+    }
+
+    /// <summary>Strips characters that are unsafe in a filename from a case id (so it can name a per-case file).</summary>
+    private static string SanitizeCaseId(string caseId)
+    {
+        if (string.IsNullOrWhiteSpace(caseId)) return "unknown";
+        var invalid = System.IO.Path.GetInvalidFileNameChars();
+        var chars = caseId.Trim().Select(c => Array.IndexOf(invalid, c) >= 0 || c == ' ' ? '_' : c).ToArray();
+        return new string(chars);
+    }
+
+    /// <summary>
+    /// Records one command execution in the audit trail: the host it ran on, the command and arguments, whether
+    /// it ran under sudo, its exit code, duration, and whether it completed. <c>CaseId</c>/<c>InvocationId</c>/
+    /// <c>Workflow</c>/<c>Toolkit</c>/<c>Operation</c> are supplied ambiently from the log context. This is the
+    /// row a judge lands on when tracing a finding back to "the specific tool execution that produced it".
+    /// </summary>
+    [DebuggerStepThrough]
+    public static void AuditCommand(string host, string command, string arguments, bool sudo, int? exitCode, long durationMs, bool completed) =>
+        _auditLogger?.ForContext("EventType", "command")
+            .Information("CMD {Host} {Command} {Arguments} (sudo={Sudo} exit={ExitCode} completed={Completed} {DurationMs}ms)",
+                host, command, arguments, sudo, exitCode, completed, durationMs);
+
+    /// <summary>
+    /// Records an invocation boundary (the <c>ExecuteJavaScript</c> code-mode call that frames a set of tool
+    /// executions) in the audit trail: the phase (<c>started</c>/<c>completed</c>/<c>failed</c>/<c>cancelled</c>),
+    /// the script that ran, and — on completion — success and duration. Lets the trail group a case's tool
+    /// executions under the agent step that drove them.
+    /// </summary>
+    [DebuggerStepThrough]
+    public static void AuditInvocation(string phase, string? script = null, bool? success = null, long? durationMs = null) =>
+        _auditLogger?.ForContext("EventType", "invocation")
+            .Information("INVOCATION {Phase} (success={Success} {DurationMs}ms)\n{Script}", phase, success, durationMs, script);
+
+    /// <summary>Records an arbitrary audit event (e.g. a case-id change) with a free-form message.</summary>
+    [DebuggerStepThrough]
+    public static void AuditEvent(string eventType, string messageTemplate, params object[] args) =>
+        _auditLogger?.ForContext("EventType", eventType).Information(messageTemplate, args);
+
+    /// <summary>
+    /// Pushes a property onto the Serilog <see cref="Serilog.Context.LogContext"/> for the lifetime of the
+    /// returned scope, so audit (and main-log) events written within it are enriched with it. Used by the
+    /// toolkit/workflow layers to attribute commands to the case, workflow, and tool that drove them without
+    /// taking a direct Serilog dependency. Dispose (end the <c>using</c>) to pop it; scopes must bracket the
+    /// awaited work so the property flows across the async boundary.
+    /// </summary>
+    public static IDisposable PushAuditProperty(string name, object? value) =>
+        Serilog.Context.LogContext.PushProperty(name, value);
+
+    /// <summary>Flushes and closes the audit logger (writing any buffered events to the per-case files). Call on
+    /// shutdown; also resets it so a fresh <see cref="WithAuditLog"/> can be configured (e.g. between tests).</summary>
+    public static void CloseAndFlushAuditLog()
+    {
+        (_auditLogger as IDisposable)?.Dispose();
+        _auditLogger = null;
+    }
+    #endregion
+
     [DebuggerStepThrough]
     public static string FailIfFileDoesNotExist(string filePath)
     {
@@ -326,6 +407,8 @@ public abstract class Runtime
     #region Fields
     public static Microsoft.Extensions.Logging.ILogger logger = NullLogger.Instance;
     public static Serilog.ILogger _logger = Log.Logger;
+    // Dedicated structured (CLEF/JSON) audit logger, routed per CaseId; null until WithAuditLog is called.
+    private static Serilog.ILogger? _auditLogger;
     public static ILoggerFactory loggerFactory = NullLoggerFactory.Instance;
     public static ILoggerProvider loggerProvider = NullLoggerProvider.Instance;
     static protected IConfigurationRoot? config;

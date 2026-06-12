@@ -644,6 +644,7 @@ public class MemoryAnalysisWorkflow : Workflow
         string imageFile, string? dumpDir = null, string? yaraRulesFile = null,
         string dumpYaraRules = DefaultDumpYaraRules, bool legacyMode = false)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Finding malware (6-step memory analysis) in {0}", imageFile);
 
         // Steps 1/3/4/5 plus the Step-2 enrichment reads are independent — each only needs the image, none

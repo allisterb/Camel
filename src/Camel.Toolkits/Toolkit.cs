@@ -209,6 +209,8 @@ public abstract class Toolkit : Runtime
     /// </summary>
     public string? ExecuteToolText(string name, string args)
     {
+        using var _tk = PushAuditProperty("Toolkit", this.name);
+        using var _op = PushAuditProperty("Operation", name);
         if (auditEnvironment.ExecuteCommand(Tools[name].Command, args, out string output, Tools[name].Sudo))
         {
             return output;
@@ -330,6 +332,10 @@ public abstract class Toolkit : Runtime
     /// </summary>
     public async Task<string?> ExecuteToolTextAsync(string name, string args)
     {
+        // Attribute the command(s) this runs to this toolkit and tool in the audit trail. The scopes bracket the
+        // awaited execution so the properties flow onto the command-execution event emitted in the environment.
+        using var _tk = PushAuditProperty("Toolkit", this.name);
+        using var _op = PushAuditProperty("Operation", name);
         var r = await auditEnvironment.ExecuteCommandAsync(Tools[name].Command, args, Tools[name].Sudo);
         if (r.IsCompleted)
         {

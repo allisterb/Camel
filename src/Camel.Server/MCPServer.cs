@@ -40,6 +40,24 @@ public class CamelMCPTools : Runtime
         jsoptions.Constraints.PromiseTimeout = TimeSpan.FromHours(24);
     }
 
+    [McpServerTool(Name = "SetCaseId"), Description(
+        "Set the case identifier for this session's audit trail. Call this ONCE at the start of an investigation " +
+        "with a short, human-readable case id (e.g. 'srl-2018-rd01'). Every subsequent ExecuteJavaScript tool " +
+        "execution in this session is recorded in a per-case audit log file named for this id (audit-<caseId>.clef), " +
+        "so findings can be traced to the exact tool executions that produced them. One case per session; call " +
+        "again to switch cases. Returns the case id that was set.")]
+    public string SetCaseId(string caseId, RequestContext<CallToolRequestParams> context)
+    {
+        var session = registry.GetOrCreate(SessionId(context.Server));
+        var previous = session.CaseId;
+        session.CaseId = string.IsNullOrWhiteSpace(caseId) ? session.SessionId : caseId.Trim();
+        // Record the case association in the (new) case's audit file so the switch itself is auditable.
+        using (PushAuditProperty("CaseId", session.CaseId))
+            AuditEvent("case", "Case id set to {CaseId} (was {Previous}) for session {SessionId}",
+                session.CaseId, previous, session.SessionId);
+        return $"Case id set to '{session.CaseId}' for this session. Audit trail file: audit-{session.CaseId}.clef";
+    }
+
     [McpServerTool(Name = "ExecuteJavaScript"), Description(
         "Execute JavaScript code against the Camel DFIR API (toolkits + workflows + anomaly engine). " +
         "Before writing any script you MUST read the 'camel-sdk-core' resource (camel://sdk/core) for the " +
@@ -59,6 +77,15 @@ public class CamelMCPTools : Runtime
         // client (a no-op when it sent no progress token); cancellationToken trips when the client aborts the call.
         var sessioid = SessionId(context.Server);
         var session = registry.GetOrCreate(sessioid);
+
+        // Open the audit scope for this code-mode call: every tool execution it drives is recorded in the case's
+        // audit file tagged with this CaseId and a unique InvocationId, which is returned to the agent so its
+        // report can cite it and a judge can trace any finding back to the exact command. The scopes must bracket
+        // the whole run so the properties flow across the async boundary into the command-execution events.
+        var invocationId = Guid.NewGuid().ToString("N")[..8];
+        using var _case = PushAuditProperty("CaseId", session.CaseId);
+        using var _inv = PushAuditProperty("InvocationId", invocationId);
+
         StringBuilder output = new StringBuilder();
         var jsinterp = new Engine(jsoptions)
           .SetValue("log", new Action<string>((s) => output.AppendLine(s)))
@@ -106,6 +133,8 @@ public class CamelMCPTools : Runtime
         {
             try { session.Environment.CancelExecutions(); } catch { /* best-effort */ }
         });
+        var auditSw = Stopwatch.StartNew();
+        AuditInvocation("started", script);   // records the exact code this invocation ran, under the case file
         try
         {
             // Wrap in an async IIFE so scripts can `await` async toolkit methods: top-level await isn't allowed
@@ -124,10 +153,12 @@ public class CamelMCPTools : Runtime
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // The client aborted the call; the response channel is already gone, so there is nothing to return.
+            AuditInvocation("cancelled", success: false, durationMs: auditSw.ElapsedMilliseconds);
             throw;
         }
         catch (Exception ex)
         {
+            AuditInvocation("failed", success: false, durationMs: auditSw.ElapsedMilliseconds);
             // Errors surface as JavaScriptException (synchronous throw) or, via the async IIFE, as
             // PromiseRejectedException; both carry the script-level error text in their message.
             var jsex = ex as Jint.Runtime.JavaScriptException
@@ -147,7 +178,7 @@ public class CamelMCPTools : Runtime
             return new CallToolResult
             {
                 IsError = true,
-                Content = [new TextContentBlock { Text = message }],
+                Content = [new TextContentBlock { Text = message }, InvocationBlock(invocationId, session.CaseId)],
             };
         }
         finally
@@ -156,11 +187,20 @@ public class CamelMCPTools : Runtime
             session.LeaveCall();
         }
 
+        AuditInvocation("completed", success: true, durationMs: auditSw.ElapsedMilliseconds);
         return new CallToolResult
         {
-            Content = [new TextContentBlock { Text = output.ToString() }],
+            Content = [new TextContentBlock { Text = output.ToString() }, InvocationBlock(invocationId, session.CaseId)],
         };
     }
+
+    /// <summary>
+    /// The audit-handle block appended to every <c>ExecuteJavaScript</c> result: the case id and this call's
+    /// invocation id. The agent cites these in its report so a judge can grep the per-case audit file
+    /// (<c>audit-&lt;CaseId&gt;.clef</c>) for the invocation and see exactly which tool executions produced a finding.
+    /// </summary>
+    static TextContentBlock InvocationBlock(string invocationId, string caseId) =>
+        new() { Text = $"\n[audit] case={caseId} invocation={invocationId}" };
 
     /// <summary>
     /// Awaits <paramref name="work"/> while emitting a progress notification every <see cref="HeartbeatInterval"/>
@@ -324,7 +364,11 @@ public class CamelMCPServer : Runtime
             .WithStdioServerTransport();
 
         var app = builder.Build();
-        app.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(registry.Dispose);
+        app.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(() =>
+        {
+            registry.Dispose();
+            CloseAndFlushAuditLog();   // flush buffered audit events to the per-case files on a clean shutdown
+        });
 
         await app.RunAsync();
     }
@@ -393,7 +437,7 @@ public class CamelMCPServer : Runtime
         app.MapMcp();
 
         // Tear down all session environments (cancel in-flight commands, disconnect SSH) on shutdown.
-        app.Lifetime.ApplicationStopping.Register(registry.Dispose);
+        app.Lifetime.ApplicationStopping.Register(() => { registry.Dispose(); CloseAndFlushAuditLog(); });
 
         app.Lifetime.ApplicationStarted.Register(() =>
         {

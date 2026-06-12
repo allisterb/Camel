@@ -221,6 +221,7 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         // Concurrency limiting is enforced in ExecuteAsync (the primitive both this wrapper and any direct
         // caller funnel through), so it is intentionally not applied here to avoid acquiring twice.
         CommandResult? r;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         if (admin)
         {
             if (this.IsUnix)
@@ -233,6 +234,11 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         {
             r = await this.ExecuteAsync(command, arguments);
         }
+        sw.Stop();
+        // Record this command in the per-case audit trail. CaseId/InvocationId/Toolkit/Operation/Workflow are
+        // enriched ambiently from the log context, so this single chokepoint ties every tool execution to the
+        // case and agent step that drove it — the row a judge traces a finding back to.
+        AuditCommand(AuditHostName, command, arguments, admin, r.ExitCode, sw.ElapsedMilliseconds, r.IsCompleted);
         if (r.Status == ProcessExecuteStatus.Completed)
         {
             Debug("The command {0} {1} executed successfully. Output: {2}", command, arguments, r.Output);
@@ -243,6 +249,12 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         }
         return r;
     }
+
+    /// <summary>
+    /// The host name recorded in the audit trail for commands run on this environment. The base (local)
+    /// environment reports the machine name; the SSH environment overrides this with the remote host.
+    /// </summary>
+    protected virtual string AuditHostName => System.Environment.MachineName;
 
     public virtual string GetOSName()
     {
