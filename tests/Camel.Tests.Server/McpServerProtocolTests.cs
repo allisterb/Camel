@@ -110,6 +110,29 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
     }
 
     [Fact]
+    public async Task SdkReferenceResourcesAreListedAndReadable()
+    {
+        await using var client = await NewClientAsync();
+
+        // Both SDK docs must be advertised in resources/list...
+        var list = await client.ListResourcesAsync(new ListResourcesRequestParams());
+        var uris = list.Resources.Select(r => r.Uri).ToList();
+        Assert.Contains("camel://sdk/core", uris);
+        Assert.Contains("camel://sdk/schema", uris);
+
+        // ...and read back with their embedded markdown content.
+        var core = await client.ReadResourceAsync("camel://sdk/core");
+        var coreText = string.Concat(core.Contents.OfType<TextResourceContents>().Select(c => c.Text));
+        Assert.Contains("Camel JavaScript SDK", coreText);
+        Assert.Contains("ExecuteJavaScript", coreText);
+
+        var schema = await client.ReadResourceAsync("camel://sdk/schema");
+        var schemaText = string.Concat(schema.Contents.OfType<TextResourceContents>().Select(c => c.Text));
+        Assert.Contains("WorkflowResult Schema", schemaText);
+        Assert.Contains("TimelineEvent Schema", schemaText);
+    }
+
+    [Fact]
     public async Task EachSessionGetsItsOwnEnvironment()
     {
         var registry = app.Services.GetRequiredService<SessionRegistry>();

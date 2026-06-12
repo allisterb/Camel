@@ -36,7 +36,13 @@ public class CamelMCPTools : Runtime
         jsoptions.ExperimentalFeatures = ExperimentalFeature.TaskInterop;                
     }
 
-    [McpServerTool(Name = "ExecuteJavaScript"), Description("Execute JavaScript code against the Camel API.")]
+    [McpServerTool(Name = "ExecuteJavaScript"), Description(
+        "Execute JavaScript code against the Camel DFIR API (toolkits + workflows + anomaly engine). " +
+        "Before writing any script you MUST read the 'camel-sdk-core' resource (camel://sdk/core) for the " +
+        "execution model and the full list of objects and methods, and the 'camel-sdk-schema' resource " +
+        "(camel://sdk/schema) for the JSON schema of every value those methods return — without the schemas you " +
+        "cannot read results correctly. Call ONLY methods listed in camel-sdk-core, and access ONLY object " +
+        "properties listed in camel-sdk-schema; do not invent methods or properties that are not documented there.")]
     public async Task<CallToolResult> ExecuteJavaScript(string script, RequestContext<CallToolRequestParams> context)
     {
         // Each MCP session gets its own environment/API (its own SSH connection); resolve it by session id.
@@ -117,6 +123,39 @@ public class CamelMCPTools : Runtime
     readonly Options jsoptions;
 }
 
+/// <summary>
+/// MCP resources exposing the Camel JavaScript SDK reference to the agent. The two markdown docs are embedded in
+/// this assembly (see Camel.Server.csproj) and served verbatim, so an agent can read the SDK surface before
+/// generating code for the <c>ExecuteJavaScript</c> tool without the docs having to exist on disk at runtime.
+/// </summary>
+public class CamelResources
+{
+    [McpServerResource(UriTemplate = "camel://sdk/core", Name = "camel-sdk-core",
+        Title = "Camel JS SDK reference — core", MimeType = "text/markdown")]
+    [Description("Core reference for the Camel JavaScript SDK used by the ExecuteJavaScript tool: the execution " +
+        "model (await semantics, return-value shapes, PascalCase naming, positional optional params) and the full " +
+        "method signature index — every toolkit and workflow object, each method's parameters and return type. " +
+        "Read this FIRST and keep it in context when generating JS. The method return types reference model types " +
+        "whose JSON schemas live in the companion 'camel-sdk-schema' resource (camel://sdk/schema).")]
+    public static string SdkCore() => ReadEmbedded("Camel.core.md");
+
+    [McpServerResource(UriTemplate = "camel://sdk/schema", Name = "camel-sdk-schema",
+        Title = "Camel JS SDK reference — schemas", MimeType = "text/markdown")]
+    [Description("JSON schemas for every parameter and return model type in the Camel JavaScript SDK — the " +
+        "companion to 'camel-sdk-core'. Consult this when you need the exact fields of an object a toolkit or " +
+        "workflow method returns (e.g. TimelineEvent, FindMalwareReport, TriageReport). Schemas are grouped by " +
+        "the object that returns them.")]
+    public static string SdkSchema() => ReadEmbedded("Camel.schema.md");
+
+    static string ReadEmbedded(string name)
+    {
+        using var stream = typeof(CamelResources).Assembly.GetManifestResourceStream(name)
+            ?? throw new InvalidOperationException($"Embedded SDK doc '{name}' was not found in the assembly.");
+        using var reader = new System.IO.StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+}
+
 public class CamelMCPServer : Runtime
 {
     const string CorsPolicyName = "CamelMcpCors";
@@ -136,6 +175,7 @@ public class CamelMCPServer : Runtime
             .Services
             .AddMcpServer()
             .WithTools(new CamelMCPTools(registry))
+            .WithResources<CamelResources>()
             .WithStdioServerTransport();
 
         var app = builder.Build();
@@ -184,6 +224,7 @@ public class CamelMCPServer : Runtime
             .Services
             .AddMcpServer()
             .WithTools(new CamelMCPTools(registry))
+            .WithResources<CamelResources>()
             .WithHttpTransport(options =>
             {
                 // Use stateful sessions so the Streamable HTTP transport can

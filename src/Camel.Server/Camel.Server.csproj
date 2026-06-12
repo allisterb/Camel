@@ -13,6 +13,13 @@
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.4.0" />
   </ItemGroup>
 
+  <!-- Embed the Camel JS SDK reference docs so the MCP resource handlers can serve them
+       regardless of the server's working directory. LogicalName is the manifest resource name. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\docs\Camel.core.md" LogicalName="Camel.core.md" />
+    <EmbeddedResource Include="..\..\docs\Camel.schema.md" LogicalName="Camel.schema.md" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Camel.Environments\Camel.Environments.csproj" />
     <ProjectReference Include="..\Camel.Runtime\Camel.Runtime.csproj" />
