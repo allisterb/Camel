@@ -29,7 +29,7 @@ public class VectorSearch : Runtime
         services.AddEmbeddingCache();
         var sp = services.BuildServiceProvider();
         embeddingCache = sp.GetRequiredService<EmbeddingCacheService>();
-        tokenizer = BertTokenizer.Create(vocabPath, new BertOptions
+        tokenizer = BertTokenizer.Create(SentenceEmbedder.OpenVocabStream(), new BertOptions
         {
             LowerCaseBeforeTokenization = true,
             ClassificationToken = "[CLS]",
@@ -38,7 +38,9 @@ public class VectorSearch : Runtime
             UnknownToken = "[UNK]",
             MaskingToken = "[MASK]",
         });
-        embeddingCache.LoadSnapshotAsync
+        // Best-effort warm-load of any persisted tool-embedding snapshot (fire-and-forget; callers can await
+        // EmbeddingCacheService.LoadSnapshotAsync directly when they need the result).
+        _ = embeddingCache.LoadSnapshotAsync();
     }
 
     

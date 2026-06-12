@@ -20,9 +20,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="vocab.txt">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <!-- The BERT vocab is embedded so it loads from any consuming project's output without a content-copy step. -->
+    <None Remove="vocab.txt" />
+    <EmbeddedResource Include="vocab.txt" />
   </ItemGroup>
 
 </Project>
