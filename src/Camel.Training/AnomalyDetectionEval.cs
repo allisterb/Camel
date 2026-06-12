@@ -49,6 +49,60 @@ public static class AnomalyDetectionEval
             BestRank = bestRank,
         };
     }
+
+    /// <summary>
+    /// Triage-quality of a <see cref="TriageReport"/>: of the events flagged interesting (<paramref name="isPositive"/>,
+    /// indexed by position in the target stream), how many the shortlist recovered, and how aggressively the
+    /// timeline was compressed. This is the metric that matches the toolkit's actual goal — recall at a review
+    /// budget, not autonomous precision.
+    /// </summary>
+    public static TriageRecall ScoreTriage(TriageReport report, bool[] isPositive)
+    {
+        int positives = 0;
+        for (int i = 0; i < isPositive.Length; i++) if (isPositive[i]) positives++;
+
+        // A shortlisted episode covers every positive among its member events (so collapsing a burst doesn't lose
+        // credit). recovered = distinct positive events any shortlisted episode covers; firstRank = the earliest
+        // shortlist rank whose episode covers a positive.
+        var covered = new HashSet<int>();
+        int firstRank = -1;
+        for (int rank = 0; rank < report.Shortlist.Length; rank++)
+        {
+            bool hit = false;
+            foreach (int idx in report.Shortlist[rank].MemberIndices)
+                if (idx < isPositive.Length && isPositive[idx]) { covered.Add(idx); hit = true; }
+            if (hit && firstRank < 0) firstRank = rank + 1;
+        }
+        int recovered = covered.Count;
+        return new TriageRecall
+        {
+            Positives = positives,
+            Recovered = recovered,
+            ShortlistSize = report.Shortlist.Length,
+            TotalEvents = report.TotalEvents,
+            Recall = positives > 0 ? (double)recovered / positives : 0,
+            FirstRank = firstRank,
+        };
+    }
+}
+
+/// <summary>Recall of the "interesting" events in a triage shortlist, with the compression achieved.</summary>
+public sealed record TriageRecall
+{
+    public required int Positives { get; init; }
+    public required int Recovered { get; init; }
+    public required int ShortlistSize { get; init; }
+    public required int TotalEvents { get; init; }
+    public required double Recall { get; init; }
+    /// <summary>1-based shortlist rank of the first recovered positive; -1 if none recovered.</summary>
+    public required int FirstRank { get; init; }
+
+    /// <summary>Shortlist size as a fraction of the timeline (lower = more aggressive triage).</summary>
+    public double Compression => TotalEvents > 0 ? (double)ShortlistSize / TotalEvents : 0;
+
+    public override string ToString() =>
+        $"recall={Recall:P0} ({Recovered}/{Positives}) · shortlist {ShortlistSize}/{TotalEvents} " +
+        $"(compression {Compression:P2}) · firstRank={FirstRank}";
 }
 
 /// <summary>Ranking-quality metrics for a novelty result against known-malicious windows (higher = better).</summary>
@@ -75,6 +129,53 @@ public sealed record AnomalyEvalResult
     public override string ToString() =>
         $"AP={AveragePrecision:P1} (chance={ChanceAp:P1}) · P@{K}={PrecisionAtK:P0} R@{K}={RecallAtK:P0} " +
         $"({HitsAtK}/{Positives} hits) · bestRank={BestRank}/{Windows}";
+}
+
+/// <summary>
+/// A second, content-aware anomaly head that scores a window by the <em>surprisal</em> of its rarest event type —
+/// the simplest form of an "(event_id, Δt)" model. Fit on a benign baseline, it learns each EventId's frequency;
+/// a window is scored by the maximum <c>-log₂ p(EventId)</c> over its events, so a single never-before-seen event
+/// (e.g. 1102 "audit log cleared") lights up its window regardless of how many ordinary events surround it. This is
+/// the deliberate antidote to bag-of-tokens window embedding, which averages the one discriminative field
+/// (<see cref="CanonicalEvent.EventId"/>) away among generic structural tokens and so misses a lone rare event on a
+/// busy, type-diverse real host. Events without an EventId contribute no surprisal (score 0).
+/// </summary>
+public sealed class EventIdRarityScorer
+{
+    private readonly Dictionary<int, int> counts = new();
+    private readonly double total;
+
+    public EventIdRarityScorer(IEnumerable<CanonicalEvent> baseline)
+    {
+        int n = 0;
+        foreach (var e in baseline) if (e.EventId is { } id) { counts[id] = counts.GetValueOrDefault(id) + 1; n++; }
+        total = n;
+    }
+
+    /// <summary>Surprisal of one EventId in bits: common → ~0, unseen → ~log₂(total). 0 for events without an EventId.</summary>
+    public double Surprisal(int? eventId)
+    {
+        if (eventId is not { } id || total == 0) return 0;
+        double p = (counts.GetValueOrDefault(id) + 1e-6) / total;       // additive floor so unseen IDs stay finite
+        return -Math.Log2(p);
+    }
+
+    /// <summary>A window's novelty = the surprisal of its single rarest event.</summary>
+    public double WindowSurprisal(EventWindow w) => w.Events.Length == 0 ? 0 : w.Events.Max(e => Surprisal(e.EventId));
+
+    /// <summary>
+    /// Fits on <paramref name="baseline"/> and ranks every window of <paramref name="target"/> most-surprising-first
+    /// — a drop-in <see cref="NoveltyResult"/> so the same <see cref="AnomalyDetectionEval"/> metrics apply.
+    /// </summary>
+    public static NoveltyResult Rank(string hostId, CanonicalEvent[] baseline, CanonicalEvent[] target, WindowSpec spec)
+    {
+        var scorer = new EventIdRarityScorer(baseline);
+        var scored = Windower.SlidingByCount(hostId, target, spec)
+            .Select(w => new ScoredWindow(w, (float)scorer.WindowSurprisal(w)))
+            .OrderByDescending(s => s.Novelty)
+            .ToArray();
+        return new NoveltyResult { Windows = scored };
+    }
 }
 
 /// <summary>

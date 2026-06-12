@@ -43,6 +43,33 @@ public class AnomalyEvalTests : TestsRuntime
         Assert.Equal(0, m.RecallAtK);
     }
 
+    // --- event-id rarity head ---
+
+    [Fact]
+    public void EventIdRarityRanksUnseenEventTypeFirst()
+    {
+        // Baseline is all routine logons (4624/4634); the target injects a single never-seen 1102 (log clear) — the
+        // case the bag-of-tokens embedding misses on a real host but the surprisal head catches.
+        var baseline = Enumerable.Range(0, 200).Select(Benign).ToArray();
+        var target = Enumerable.Range(0, 40).Select(Benign)
+            .Append(new CanonicalEvent { Ts = 40, DataType = "windows:evtx:record", Source = SourceClass.EventLog, EventId = 1102 })
+            .Concat(Enumerable.Range(41, 9).Select(Benign))
+            .ToArray();
+
+        var scorer = new EventIdRarityScorer(baseline);
+        Assert.Equal(0, scorer.Surprisal(null), 6);                         // events without an EventId contribute nothing
+        // An unseen id is far more surprising than a baseline-common one (surprisal = -log₂ p, so ~1 bit for a
+        // half-the-baseline id vs ~25 bits for one never seen).
+        Assert.True(scorer.Surprisal(1102) > scorer.Surprisal(4624) + 10);
+
+        bool isLogClear(EventWindow w) => w.Events.Any(e => e.EventId is 1102);
+        var m = AnomalyDetectionEval.RankingMetrics(
+            EventIdRarityScorer.Rank("h", baseline, target, WindowSpec.Tiled(5)), isLogClear, k: 5);
+        Assert.Equal(1, m.Positives);
+        Assert.Equal(1, m.BestRank);                                        // the 1102 window ranks most-novel
+        Assert.Equal(1.0, m.AveragePrecision, 6);
+    }
+
     // --- synthetic injection surfaces under the real novelty baseline (deterministic, no dataset) ---
 
     [Fact]
