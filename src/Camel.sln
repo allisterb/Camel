@@ -30,7 +30,6 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Docs", "Docs", "{33539284-7586-41FB-93C2-4894BE3E05D5}"
 	ProjectSection(SolutionItems) = preProject
 		..\.gitignore = ..\.gitignore
-		..\docs\Camel.md = ..\docs\Camel.md
 		..\CLAUDE.md = ..\CLAUDE.md
 		..\docs\Project.md = ..\docs\Project.md
 	EndProjectSection

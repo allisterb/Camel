@@ -26,6 +26,7 @@ public class CamelToolkitsApi : Runtime
     private WindowsAnalysisToolkit? _windows;
     private YaraToolkit? _yara;
     private TimelineToolkit? _timeline;
+    private UnixToolsToolkit? _unix;
     #endregion
 
     #region Properties
@@ -52,5 +53,13 @@ public class CamelToolkitsApi : Runtime
     /// provisioned when actually needed). First access requires a <c>Tools:Timeline</c> section in the config.
     /// </summary>
     public TimelineToolkit Timeline => _timeline ??= new TimelineToolkit(env, config);
+
+    /// <summary>
+    /// A collection of commonly used Unix utilities, currently the archive tools (<c>bunzip2</c>/<c>unzip</c>/
+    /// <c>7z</c>) for uncompressing acquired disk and memory images. Constructed lazily on first use; first
+    /// access requires a <c>Tools:UnixTools</c> config section. These tools need no provisioning (they ship
+    /// with the base SIFT image).
+    /// </summary>
+    public UnixToolsToolkit UnixTools => _unix ??= new UnixToolsToolkit(env, config);
     #endregion
 }

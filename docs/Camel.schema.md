@@ -610,6 +610,34 @@ types are defined once (in the toolkit that owns them) and referenced by name el
 
 ---
 
+## UnixToolsToolkit
+
+### DecompressResult Schema
+```json
+{ "type": "object", "properties": {
+  "Source": { "type": "string", "description": "The archive that was decompressed/extracted." },
+  "OutputPath": { "type": "string", "description": "Decompressed file (Bunzip2) or destination directory (Unzip)." },
+  "Files": { "type": "array", "items": { "$ref": "ExtractedFile" }, "description": "Files produced by the operation." },
+  "TotalBytes": { "type": "integer", "description": "Sum of the produced files' sizes." } } }
+```
+### CopyResult Schema
+```json
+{ "type": "object", "properties": {
+  "Source": { "type": "string", "description": "The file or directory that was copied." },
+  "Destination": { "type": "string", "description": "Path the copy landed at (file for CopyFile, directory for CopyDir)." },
+  "Files": { "type": "array", "items": { "$ref": "ExtractedFile" }, "description": "Files written by the copy." },
+  "TotalBytes": { "type": "integer", "description": "Sum of the copied files' sizes." },
+  "Verified": { "type": ["boolean", "null"], "description": "SHA-256 source-vs-copy result; null when verify was not requested." },
+  "Mismatches": { "type": "array", "items": { "type": "string" }, "description": "Destination paths whose hash didn't match (empty on success)." } } }
+```
+### ExtractedFile Schema
+```json
+{ "type": "object", "properties": {
+  "Path": { "type": "string" }, "Size": { "type": "integer", "description": "File size in bytes." } } }
+```
+
+---
+
 ## AnomalyDetectionToolkit
 
 ### TriageReport Schema

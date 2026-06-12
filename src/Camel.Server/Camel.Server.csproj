@@ -20,6 +20,11 @@
     <EmbeddedResource Include="..\..\docs\Camel.schema.md" LogicalName="Camel.schema.md" />
   </ItemGroup>
 
+  <!-- Expose internal helpers (e.g. RunWithHeartbeatAsync) to the server test project. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Camel.Tests.Server" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Camel.Environments\Camel.Environments.csproj" />
     <ProjectReference Include="..\Camel.Runtime\Camel.Runtime.csproj" />

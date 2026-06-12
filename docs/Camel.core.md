@@ -68,8 +68,8 @@ if (!r.IsSuccess) error(r.Message); else log(r.Message);  // inspect r.Result �
 
 Toolkit methods execute a SIFT tool on the workstation and return a parsed model — an array or object — or `null`
 if the command failed. The toolkit objects are `MemoryAnalysisToolkit`, `DiskAnalysisToolkit`,
-`WindowsAnalysisToolkit`, `TimelineAnalysisToolkit`, `YaraToolkit`, and `AnomalyDetectionToolkit`. The JSON
-schema for each return type named below is in the `camel-sdk-schema` resource.
+`WindowsAnalysisToolkit`, `TimelineAnalysisToolkit`, `YaraToolkit`, `UnixToolsToolkit`, and
+`AnomalyDetectionToolkit`. The JSON schema for each return type named below is in the `camel-sdk-schema` resource.
 
 ---
 
@@ -243,6 +243,46 @@ such as `malware_index.yar`, `webshells_index.yar`).
 
 `options` is passed as a JS object literal (all fields optional), e.g. `{ Recurse: true, Timeout: 120 }`. See the
 `YaraOptions` schema for the full field set.
+
+---
+
+## UnixToolsToolkit
+
+A growing collection of commonly used Unix utilities on the SIFT workstation, wrapped as typed methods so the
+agent can run them server-side in one call instead of scripting shell. The current set covers **archive
+decompression** for acquired disk and memory images (commonly shipped as `.bz2`, `.zip`, or `.7z`) and **file/
+directory copy** for staging evidence into standard locations — the workstation does the work and you get the
+resulting file path(s) and sizes back, with no follow-up directory walk. Pass `sudo: true` when the source or
+destination is root-owned.
+
+- `Bunzip2Async(file: string, outputFile?: string, sudo?: bool)` → `DecompressResult` — decompress a bzip2
+  file, keeping the original. When `outputFile` is omitted the destination is `file` with a trailing `.bz2`
+  stripped. `Files` holds the single decompressed file with its size.
+- `UnzipAsync(archive: string, destDir: string, files?: string[], sudo?: bool)` → `DecompressResult` — extract a
+  zip into `destDir` (created if missing, overwriting existing files). Pass `files` to extract only selected
+  members (e.g. one large image out of a multi-file archive); `OutputPath` is `destDir` and `Files` lists every
+  extracted file with its size.
+- `SevenZipExtractAsync(archive: string, destDir: string, files?: string[], sudo?: bool)` → `DecompressResult` —
+  extract a 7-Zip archive (`.7z`, and other formats 7-Zip reads — zip/rar/tar/gz) into `destDir`, preserving the
+  archive's directory structure and overwriting existing files. Same `files`/`OutputPath`/`Files` semantics as
+  `UnzipAsync`.
+- `CopyFileAsync(source: string, dest: string, sudo?: bool, verify?: bool)` → `CopyResult` — copy a single file
+  to `dest` (the full destination file path), preserving mode/timestamps (`cp -p`) and creating the parent dir if
+  missing. Use to stage an image from an external/removable dir into `/mnt`, `/cases`, etc.
+- `CopyDirAsync(source: string, dest: string, sudo?: bool, verify?: bool)` → `CopyResult` — recursively copy a
+  directory to `dest` (the target dir path, created as a copy of `source`), preserving mode/timestamps (`cp -rp`).
+  `Files` lists every copied file with its size.
+
+Pass `verify: true` to SHA-256 each source file against its copy after the copy; the result's `Verified` is then
+`true`/`false` and `Mismatches` lists any destination paths whose hash didn't match (empty `[]` on success).
+`Verified` is `null` when verification wasn't requested.
+
+```js
+// Stage a compressed image from a removable mount, then decompress it in place under /cases.
+const c = await UnixToolsToolkit.CopyFileAsync("/media/usb/memdump.raw.bz2", "/cases/memdump.raw.bz2");
+const d = await UnixToolsToolkit.Bunzip2Async(c.Destination);
+const procs = await MemoryAnalysisToolkit.WindowsPsScanAsync(d.OutputPath);
+```
 
 ---
 

@@ -22,6 +22,22 @@ public sealed class SessionContext : IDisposable
     public readonly CamelWorkflowsApi WorkflowsApi;
     public DateTimeOffset LastAccess = DateTimeOffset.UtcNow;
 
+    private int _activeCalls;
+
+    /// <summary>True while one or more tool calls are executing on this session. Busy sessions are never swept
+    /// for inactivity — a long-running call must not have its SSH environment disposed out from under it.</summary>
+    public bool IsBusy => Volatile.Read(ref _activeCalls) > 0;
+
+    /// <summary>Marks the start of a tool call on this session (increments the active-call count).</summary>
+    public void EnterCall() => Interlocked.Increment(ref _activeCalls);
+
+    /// <summary>Marks the end of a tool call and re-stamps <see cref="LastAccess"/> so the idle window starts now.</summary>
+    public void LeaveCall()
+    {
+        Interlocked.Decrement(ref _activeCalls);
+        LastAccess = DateTimeOffset.UtcNow;
+    }
+
     public SessionContext(IConfigurationRoot config)
     {
         Environment = AuditEnvironment.CreateFromConfig(config);
@@ -95,7 +111,9 @@ public sealed class SessionRegistry : IDisposable
         var cutoff = DateTimeOffset.UtcNow - ttl;
         foreach (var kv in sessions)
         {
-            if (kv.Value.IsValueCreated && kv.Value.Value.LastAccess < cutoff)
+            // Never sweep a session with a call in flight, even if its last-access predates the cutoff — a
+            // long-running analysis would otherwise have its SSH connection cancelled and disposed mid-call.
+            if (kv.Value.IsValueCreated && !kv.Value.Value.IsBusy && kv.Value.Value.LastAccess < cutoff)
             {
                 Runtime.Info("Sweeping idle MCP session {0} (inactive longer than {1}).", kv.Key, ttl);
                 End(kv.Key);

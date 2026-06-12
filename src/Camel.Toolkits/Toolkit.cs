@@ -354,13 +354,48 @@ public abstract class Toolkit : Runtime
         try
         {
             if (await ExecuteToolTextAsync(name, $"{args} --json {dir}") is null) return null;
-            var r = await auditEnvironment.ExecuteCommandAsync("cat", $"{dir}/{pattern}", false);
-            if (!r.IsCompleted) return [];
-            return ParseJsonLines<T>(r.Output);
+            return await DownloadJsonLinesAsync<T>(dir, pattern);
         }
         // Sync ExecuteCommand has no cancellation token, so cleanup runs even after the async work was
         // cancelled; guarded so a teardown failure can never mask the method's result.
         finally { try { auditEnvironment.ExecuteCommand("rm", $"-rf {dir}", out _, false); } catch { } }
+    }
+
+    /// <summary>
+    /// Reads the JSON-lines file(s) an EZ tool wrote into <paramref name="dir"/> by SCP-ing each down and
+    /// stream-parsing it from disk, rather than <c>cat</c>-ing it back through the SSH stdout channel. A large
+    /// export (EvtxECmd on a multi-hundred-MB EVTX, MFTECmd on a big <c>$MFT</c>) buffers the whole file into one
+    /// in-memory string and can take many minutes — even hang — through stdout; the binary file transfer is far
+    /// faster and never holds the whole export in memory or on the wire at once. Returns an empty array when the
+    /// tool produced no file.
+    /// </summary>
+    protected async Task<T[]> DownloadJsonLinesAsync<T>(string dir, string pattern)
+    {
+        // EZ tools embed the source artifact in the output filename (e.g. "..._$MFT_Output.json"). A '$' in the
+        // remote path would be expanded by the shell the SCP client opens its copy channel through, so the
+        // download would look for the wrong (empty) name. Rename every produced file to a shell-safe sequential
+        // name first — shipped base64 to dodge all quoting — then transfer those by path. (The old cat-the-glob
+        // path sidestepped this by never naming the file, but buffered the whole export through stdout.)
+        var script = $"i=0; for f in {dir}/{pattern}; do [ -e \"$f\" ] || continue; mv -- \"$f\" {dir}/camel_dl_$i.jsonl; i=$((i+1)); done";
+        var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(script));
+        await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"echo {b64} | base64 -d | bash\"", false);
+
+        var ls = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"ls -1 {dir}/camel_dl_*.jsonl 2>/dev/null\"", false);
+        if (!ls.IsCompleted) return [];
+        var results = new List<T>();
+        foreach (var remote in ls.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            // SCP the file down (a binary stream — far faster than capturing a huge file through stdout) and
+            // stream-parse it from disk, so neither the wire nor memory holds the whole export at once.
+            string local = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "camel_ez_" + Guid.NewGuid().ToString("N") + ".jsonl");
+            try
+            {
+                if (auditEnvironment.GetFileAsLocal(remote, local) is not null)
+                    results.AddRange(ParseJsonLinesFile<T>(local));
+            }
+            finally { try { System.IO.File.Delete(local); } catch { } }
+        }
+        return [.. results];
     }
 
     /// <summary>

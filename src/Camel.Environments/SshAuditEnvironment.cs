@@ -242,6 +242,7 @@ public class SshAuditEnvironment : AuditEnvironment
         try
         {
             await cmd.ExecuteAsync(linked.Token);
+            op.Complete();
             process_output = cmd.Result.Trim();
             process_error = cmd.Error.Trim();
             if (cmd.ExitStatus == 0)

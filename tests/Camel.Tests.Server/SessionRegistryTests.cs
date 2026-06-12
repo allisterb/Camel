@@ -84,6 +84,22 @@ public class SessionRegistryTests : TestsRuntime
     }
 
     [Fact]
+    public void SweepIdleSkipsBusySessions()
+    {
+        var reg = NewRegistry();
+        var busy = reg.GetOrCreate("busy");
+        busy.LastAccess = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(30); // stale by last-access...
+        busy.EnterCall();                                                   // ...but a call is in flight
+
+        reg.SweepIdle(TimeSpan.FromMinutes(15));
+        Assert.True(reg.Contains("busy"));   // not swept: a long-running call must keep its SSH environment
+
+        busy.LeaveCall();                    // call ends; LeaveCall re-stamps LastAccess to now
+        reg.SweepIdle(TimeSpan.FromMinutes(15));
+        Assert.True(reg.Contains("busy"));   // still fresh immediately after the call returned
+    }
+
+    [Fact]
     public void DisposeClearsAllSessions()
     {
         var reg = NewRegistry();

@@ -3,7 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 using Microsoft.Extensions.Configuration;
@@ -14,6 +16,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 
+using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using ModelContextProtocol.Protocol;
 using Jint;
@@ -44,10 +47,16 @@ public class CamelMCPTools : Runtime
         "(camel://sdk/schema) for the JSON schema of every value those methods return — without the schemas you " +
         "cannot read results correctly. Call ONLY methods listed in camel-sdk-core, and access ONLY object " +
         "properties listed in camel-sdk-schema; do not invent methods or properties that are not documented there.")]
-    public async Task<CallToolResult> ExecuteJavaScript(string script, RequestContext<CallToolRequestParams> context)
+    public async Task<CallToolResult> ExecuteJavaScript(
+        string script,
+        RequestContext<CallToolRequestParams> context,
+        IProgress<ProgressNotificationValue> progress,
+        CancellationToken cancellationToken)
     {
         // Each MCP session gets its own environment/API (its own SSH connection); resolve it by session id.
         // The RequestContext is injected by the SDK per request; context.Server carries the session id.
+        // progress + cancellationToken are injected by the SDK: progress sends notifications/progress to the
+        // client (a no-op when it sent no progress token); cancellationToken trips when the client aborts the call.
         var sessioid = SessionId(context.Server);
         var session = registry.GetOrCreate(sessioid);
         StringBuilder output = new StringBuilder();
@@ -84,14 +93,38 @@ public class CamelMCPTools : Runtime
         BindToolkitIfUsed("WindowsAnalysisToolkit", () => session.ToolkitsApi.WindowsAnalysis);
         BindToolkitIfUsed("TimelineAnalysisToolkit", () => session.ToolkitsApi.Timeline);
         BindToolkitIfUsed("YaraToolkit", () => session.ToolkitsApi.Yara);
+        BindToolkitIfUsed("UnixToolsToolkit", () => session.ToolkitsApi.UnixTools);
 
+        // Mark the session busy for the duration of the call so the idle sweeper can't dispose its SSH
+        // environment out from under a long-running analysis (LastAccess is only stamped at call start).
+        session.EnterCall();
+        // If the client aborts the call (its timeout fires, or the user cancels), promptly cancel the session's
+        // in-flight SSH command(s). Jint only observes its cancellation token at a JS/await boundary, so without
+        // this a blocked command (e.g. reading a multi-GB tool output) would keep running for minutes after the
+        // client has gone. CancelExecutions swaps in a fresh token source, so the session stays usable afterwards.
+        using var cancelReg = cancellationToken.Register(() =>
+        {
+            try { session.Environment.CancelExecutions(); } catch { /* best-effort */ }
+        });
         try
         {
             // Wrap in an async IIFE so scripts can `await` async toolkit methods: top-level await isn't allowed
             // in a plain Jint script, and modules can't drive a CLR-task top-level await synchronously. The
             // surrounding newlines guard against a trailing line comment swallowing the closer. ExecuteAsync
-            // drains the awaited CLR tasks before returning; purely synchronous scripts run unchanged.
-            await jsinterp.ExecuteAsync($"(async () => {{\n{script}\n}})();");
+            // drains the awaited CLR tasks before returning; purely synchronous scripts run unchanged. The
+            // cancellationToken lets Jint stop awaiting promises if the client aborts the request.
+            var exec = jsinterp.ExecuteAsync($"(async () => {{\n{script}\n}})();", source: null, cancellationToken);
+
+            // Heartbeat: a code-mode analysis can run for many minutes (super-timeline builds, multi-GB memory
+            // triage). With no traffic on the response stream the MCP client's per-call idle timeout fires and it
+            // aborts the request ("transport dropped mid-call; response was lost"). Emitting a progress
+            // notification every HeartbeatInterval resets that client-side timer for the duration of the work.
+            await RunWithHeartbeatAsync(exec, progress, HeartbeatInterval, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The client aborted the call; the response channel is already gone, so there is nothing to return.
+            throw;
         }
         catch (Exception ex)
         {
@@ -117,13 +150,54 @@ public class CamelMCPTools : Runtime
                 Content = [new TextContentBlock { Text = message }],
             };
         }
+        finally
+        {
+            // Clears the busy flag and re-stamps LastAccess, so the idle window starts when the call ends.
+            session.LeaveCall();
+        }
 
         return new CallToolResult
         {
             Content = [new TextContentBlock { Text = output.ToString() }],
         };
     }
-    
+
+    /// <summary>
+    /// Awaits <paramref name="work"/> while emitting a progress notification every <see cref="HeartbeatInterval"/>
+    /// so a long-running tool call keeps resetting the MCP client's idle timeout (otherwise the client aborts the
+    /// request mid-call). Returns when the work completes (re-throwing any error it produced); throws
+    /// <see cref="OperationCanceledException"/> if the client cancels first.
+    /// </summary>
+    internal static async Task RunWithHeartbeatAsync(Task work, IProgress<ProgressNotificationValue> progress, TimeSpan interval, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        float tick = 0;
+        while (true)
+        {
+            // Cancel the pending delay as soon as the work finishes so we don't leak a timer per heartbeat.
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var delay = Task.Delay(interval, linked.Token);
+            if (await Task.WhenAny(work, delay).ConfigureAwait(false) == work)
+            {
+                linked.Cancel();
+                await work.ConfigureAwait(false);   // observe the result / surface the script exception
+                return;
+            }
+            // The delay won the race: either the interval elapsed (emit a heartbeat) or the caller cancelled —
+            // in which case the delay completed as cancelled and we must surface that rather than tick again.
+            ct.ThrowIfCancellationRequested();
+            progress.Report(new ProgressNotificationValue
+            {
+                Progress = ++tick,
+                Message = $"Camel: executing… ({sw.Elapsed.TotalSeconds:F0}s elapsed)",
+            });
+        }
+    }
+
+    // How often to send a keep-alive progress notification while a script runs. Comfortably under typical MCP
+    // client per-call idle timeouts (tens of seconds to minutes) so a multi-minute analysis is never aborted.
+    static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(20);
+
     // Stdio (and any transport that doesn't assign one) yields a null/empty session id; bucket those under "default".
     static string SessionId(McpServer server) => string.IsNullOrEmpty(server.SessionId) ? "default" : server.SessionId;
 
