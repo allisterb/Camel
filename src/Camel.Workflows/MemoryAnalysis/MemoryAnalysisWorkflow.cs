@@ -23,6 +23,7 @@ public class MemoryAnalysisWorkflow : Workflow
     /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
     public async Task<WorkflowResult<HiddenProcessReport>> FindHiddenProcessAsync(string imageFile)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Finding hidden processes in {0}", imageFile);
 
         // Active-process linked-list walk: fast, but misses unlinked (hidden) and exited processes.
@@ -71,6 +72,7 @@ public class MemoryAnalysisWorkflow : Workflow
         if (suspiciousPathFragments.Length == 0)
             suspiciousPathFragments = [@"\temp\", @"\appdata\", @"\users\"];
 
+        using var _audit = AuditScope();
         using var op = Begin("Finding services with suspicious binary paths in {0}", imageFile);
 
         // Pool-tag service scan: surfaces every service, including hidden/deleted/not-yet-loaded ones.
@@ -115,6 +117,7 @@ public class MemoryAnalysisWorkflow : Workflow
     public async Task<WorkflowResult<AnomalousMemoryReport>> FindAnomalousMemoryIndicatorsAsync(
         string imageFile, string? dumpProcessDir = null, string? dumpMemoryDir = null, string? dumpStringsDir = null)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Finding process-hollowing indicators in {0}", imageFile);
 
         var hits = await MemoryAnalysis.WindowsMalFindAsync(imageFile);
@@ -169,6 +172,7 @@ public class MemoryAnalysisWorkflow : Workflow
     /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
     public async Task<WorkflowResult<RemoteIpReport>> FindAllUniqueRemoteIPsAsync(string imageFile)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Finding unique remote IPs in {0}", imageFile);
 
         // Pool-tag scan of network structures: includes closed/historical connections, not just active ones.
@@ -202,6 +206,7 @@ public class MemoryAnalysisWorkflow : Workflow
     /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
     public async Task<WorkflowResult<CredentialReport>> ExtractCredentialMaterialAsync(string imageFile)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Extracting credential material from {0}", imageFile);
 
         // SAM local-account hashes; if this fails the image is unreadable / its symbols are unavailable.
@@ -253,6 +258,7 @@ public class MemoryAnalysisWorkflow : Workflow
     /// <param name="timelineOutputPath">Workstation path to write the sorted timeline file to.</param>
     public async Task<WorkflowResult<MemoryTimeline>> GenerateTimelineAsync(string imageFile, string timelineOutputPath)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Generating memory timeline for {0} -> {1}", imageFile, timelineOutputPath);
 
         // The bodyfile (volatility.body) is written into the timeline's directory — which also ensures that
@@ -325,6 +331,7 @@ public class MemoryAnalysisWorkflow : Workflow
     /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
     public async Task<WorkflowResult<CodeInjectionReport>> FindCodeInjectionAsync(string imageFile)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Hunting code injection in {0}", imageFile);
 
         // The three injection signals are independent plugins, so run them concurrently (the environment's
@@ -379,6 +386,7 @@ public class MemoryAnalysisWorkflow : Workflow
     /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
     public async Task<WorkflowResult<KernelRootkitReport>> DetectKernelRootkitAsync(string imageFile)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Detecting kernel rootkit hooks in {0}", imageFile);
 
         // The three hooking surfaces are independent plugins — fan them out concurrently (the environment's
@@ -457,6 +465,7 @@ public class MemoryAnalysisWorkflow : Workflow
     /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
     public async Task<WorkflowResult<CrossViewHiddenProcessReport>> CrossViewHiddenProcessAsync(string imageFile)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Cross-view hidden-process scan in {0}", imageFile);
 
         var rows = await MemoryAnalysis.WindowsPsxViewAsync(imageFile);
@@ -496,6 +505,7 @@ public class MemoryAnalysisWorkflow : Workflow
     /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
     public async Task<WorkflowResult<ConsoleHistoryReport>> ReconstructConsoleHistoryAsync(string imageFile)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Reconstructing console history from {0}", imageFile);
 
         var cmd = await MemoryAnalysis.WindowsCmdScanAsync(imageFile);
@@ -553,6 +563,7 @@ public class MemoryAnalysisWorkflow : Workflow
     public async Task<WorkflowResult<MemoryYaraReport>> ScanMemoryWithYaraAsync(
         string imageFile, string yaraRulesFile, int? pid = null, bool wide = false)
     {
+        using var _audit = AuditScope();
         using var op = Begin("YARA-scanning {0} with rules {1}", imageFile, yaraRulesFile);
 
         var matches = await MemoryAnalysis.WindowsVadYaraScanAsync(imageFile, yaraRulesFile, pid, wide);
@@ -578,6 +589,7 @@ public class MemoryAnalysisWorkflow : Workflow
     /// <param name="imageFile">Path to a Domain Controller's memory image.</param>
     public async Task<WorkflowResult<SkeletonKeyReport>> DetectSkeletonKeyAsync(string imageFile)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Checking {0} for Skeleton Key", imageFile);
 
         var findings = await MemoryAnalysis.WindowsSkeletonKeyCheckAsync(imageFile);
@@ -869,6 +881,7 @@ public class MemoryAnalysisWorkflow : Workflow
     /// <param name="imageFile">Path to the Windows memory image to analyse.</param>
     public async Task<WorkflowResult<ProcessTriageReport>> TriageProcessAncestryAsync(string imageFile)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Triaging process ancestry/integrity in {0}", imageFile);
 
         var tree = await MemoryAnalysis.WindowsPsTreeAsync(imageFile);

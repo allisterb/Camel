@@ -58,6 +58,7 @@ public class TimelineAnalysisWorkflow : Workflow
         string? parsers = null, string? filterFile = null, string? partitions = null, string? vssStores = null,
         string? from = null, string? to = null, bool hash = false, string timezone = "UTC")
     {
+        using var _audit = AuditScope();
         using var op = Begin("Creating super timeline from {0} into {1}", source, storageFile);
 
         if (!await Timeline.Log2TimelineAsync(source, storageFile, parsers, hash, filterFile, partitions, vssStores, timezone))
@@ -83,6 +84,7 @@ public class TimelineAnalysisWorkflow : Workflow
         string? filterFile = DefaultWindowsFilterFile, string? mftBodyfile = null,
         string? from = null, string? to = null, string timezone = "UTC")
     {
+        using var _audit = AuditScope();
         using var op = Begin("Creating triage timeline from {0} into {1}", source, storageFile);
 
         // Parse the triage files (default parsers, narrowed to the file-filter set).
@@ -112,6 +114,7 @@ public class TimelineAnalysisWorkflow : Workflow
     /// <param name="sliceSizeMinutes">Minutes either side of the pivot to include (default 5).</param>
     public async Task<WorkflowResult<SuperTimeline>> PivotAroundAsync(string storageFile, DateTimeOffset pivot, int sliceSizeMinutes = 5)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Slicing timeline around {0} (±{1} min) in {2}", pivot, sliceSizeMinutes, storageFile);
 
         var iso = Iso(pivot);
@@ -150,6 +153,7 @@ public class TimelineAnalysisWorkflow : Workflow
     {
         categories ??= WindowsTagCategories;
 
+        using var _audit = AuditScope();
         using var op = Begin("Categorizing timeline {0} with {1}", storageFile, taggingFile);
 
         if (!await Timeline.PsortTagAsync(storageFile, taggingFile))
@@ -200,6 +204,7 @@ public class TimelineAnalysisWorkflow : Workflow
         string storageFile, string evtxPath, bool evtxDirectory = false, string minLevel = "high",
         int sliceSizeMinutes = 5, int maxPivots = 20)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Detecting timeline pivots in {0} from hayabusa alerts on {1}", storageFile, evtxPath);
 
         var alerts = await Timeline.HayabusaJsonTimelineAsync(evtxPath, evtxDirectory, minLevel);
@@ -259,6 +264,7 @@ public class TimelineAnalysisWorkflow : Workflow
     public async Task<WorkflowResult<TimelineTriageReport>> TriageTimelineAsync(
         string storageFile, int budget = 200, bool highSignalOnly = true, string? filter = null)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Triaging timeline {0} for anomalous pivots (budget {1})", storageFile, budget);
 
         // Reduced export: only the canonical-relevant fields (with truncated messages) cross the wire, so this
@@ -314,6 +320,7 @@ public class TimelineAnalysisWorkflow : Workflow
     public async Task<WorkflowResult<AutoPivotReport>> AutoPivotExpansionAsync(
         string storageFile, int budget = 200, int topPivots = 10, int sliceSizeMinutes = 5, bool highSignalOnly = true)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Auto-pivot expansion on {0} (top {1} of budget {2}, ±{3} min)", storageFile, topPivots, budget, sliceSizeMinutes);
 
         var triage = await TriageTimelineAsync(storageFile, budget, highSignalOnly);
@@ -385,6 +392,7 @@ public class TimelineAnalysisWorkflow : Workflow
         if (keywords is null || keywords.Length == 0)
             return WorkflowResult<TimelineSearchReport>.Failure("No keywords provided to search for.");
 
+        using var _audit = AuditScope();
         using var op = Begin("Searching timeline {0} for {1} keyword(s)", storageFile, keywords.Length);
 
         var pattern = string.Join("|", keywords.Where(k => !string.IsNullOrEmpty(k)).Select(EscapeEre));

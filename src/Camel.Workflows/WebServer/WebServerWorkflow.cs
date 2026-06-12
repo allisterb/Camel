@@ -110,6 +110,7 @@ public class WebServerWorkflow : Workflow
     public async Task<WorkflowResult<WebServerLogReport>> AnalyzeWebServerLogsAsync(
         string accessLogPath, string[]? extraPatterns = null, int maxFindings = 100)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Analyzing web-server access log {0}", accessLogPath);
 
         var patterns = Signatures.Select(s => s.Pattern).Concat(extraPatterns ?? []).Distinct();
@@ -187,6 +188,7 @@ public class WebServerWorkflow : Workflow
         string webRoot, string? rulesFile = null)
     {
         rulesFile ??= WebshellRulesIndex;
+        using var _audit = AuditScope();
         using var op = Begin("Scanning web root {0} for web shells", webRoot);
 
         var matches = await Yara.ScanAsync(rulesFile, webRoot, new YaraOptions { Recurse = true, Timeout = 120 });

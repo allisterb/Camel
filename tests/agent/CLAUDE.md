@@ -54,7 +54,9 @@ may fan out independent calls with `Promise.all`.
   is no known signature or keyword to start from.
 
 **First steps each session:** read the two SDK resources, then confirm the MCP link with a trivial run, e.g.
-`ExecuteJavaScript` with `log('camel up');`. Then orient on the evidence and begin the methodology below.
+`ExecuteJavaScript` with `log('camel up');`. **Then call the `SetCaseId` tool with a short case id for this
+investigation** (e.g. `srl-2018-rd01`) so every tool execution is recorded under that case in the audit trail.
+Then orient on the evidence and begin the methodology below.
 
 ---
 
@@ -163,3 +165,8 @@ via known signatures, keywords, and "evidence of…" categories), and anti-foren
 For each objective: state the finding, the SDK method(s) and key returned fields that support it, and fold
 confirmed activity into a single UTC timeline of the intrusion with the associated IOCs (IPs, file paths, hashes,
 account names, persistence mechanisms). Keep conclusions strictly to what the returned data shows.
+
+**Cite the audit handle.** Every `ExecuteJavaScript` result ends with a line `[audit] case=<caseId> invocation=<id>`.
+For each finding, cite the `invocation` id (and the toolkit/workflow method) of the call that established it — so
+the finding is traceable to its exact tool executions in the case's audit log (`audit-<caseId>.clef`). This is the
+chain of custody: a reviewer must be able to go from any claim in your report to the command that produced it.

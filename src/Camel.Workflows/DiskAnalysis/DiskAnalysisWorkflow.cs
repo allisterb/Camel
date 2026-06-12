@@ -22,6 +22,7 @@ public class DiskAnalysisWorkflow : Workflow
     /// <param name="mountDir">Directory to mount the raw device under (created if missing, e.g. /mnt/ewf).</param>
     public async Task<WorkflowResult<EwfImageMount>> MountEwfImageAsync(string imageFile, string mountDir)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Mounting EWF image {0} at {1}", imageFile, mountDir);
 
         // 1. Read and validate the image metadata. This also confirms the file exists and is a readable
@@ -74,6 +75,7 @@ public class DiskAnalysisWorkflow : Workflow
     public async Task<WorkflowResult<FileSystemMount>> MountFileSystemAsync(EwfImageMount imageMount, int offset, string? mountDir = null)
     {
         mountDir ??= $"{imageMount.MountDir.TrimEnd('/')}_fs_{offset}";
+        using var _audit = AuditScope();
         using var op = Begin("Mounting filesystem at sector {0} of {1} at {2}", offset, imageMount.RawDevice, mountDir);
 
         // 1. Verify a filesystem actually lives at this offset before attempting to mount. fsstat reads the
@@ -117,6 +119,7 @@ public class DiskAnalysisWorkflow : Workflow
     /// <param name="imageFile">Absolute path to the .E01 image (first segment for multi-segment sets).</param>
     public async Task<WorkflowResult<ImageVerification>> VerifyImageAsync(string imageFile)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Verifying EWF image {0}", imageFile);
 
         var info = await DiskAnalysis.EwfInfoAsync(imageFile);
@@ -152,6 +155,7 @@ public class DiskAnalysisWorkflow : Workflow
         string imageFile, int? offset = null, string timezone = "UTC", string? bodyfilePath = null)
     {
         bodyfilePath ??= $"/tmp/camel_bodyfile_{offset ?? 0}.txt";
+        using var _audit = AuditScope();
         using var op = Begin("Generating filesystem timeline for {0} (offset {1})", imageFile, offset?.ToString() ?? "none");
 
         // Confirm a filesystem actually lives at the offset before walking it (avoids an empty/garbage timeline).
@@ -190,6 +194,7 @@ public class DiskAnalysisWorkflow : Workflow
     public async Task<WorkflowResult<FileRecovery>> RecoverFilesAsync(
         string imageFile, string outputDir, int? offset = null, bool includeDeleted = true)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Recovering files from {0} (offset {1}) to {2}", imageFile, offset?.ToString() ?? "none", outputDir);
 
         var fs = await DiskAnalysis.FsStatAsync(imageFile, offset);
@@ -218,6 +223,7 @@ public class DiskAnalysisWorkflow : Workflow
     /// <param name="filesystemMounts">Filesystem mounts taken from it via <see cref="MountFileSystemAsync"/>.</param>
     public async Task<WorkflowResult<string[]>> UnmountImageAsync(EwfImageMount imageMount, params FileSystemMount[] filesystemMounts)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Unmounting image {0}", imageMount.MountDir);
 
         var failed = new List<string>();

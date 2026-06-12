@@ -35,6 +35,7 @@ public class AntiForensicsAnalysisWorkflow : Workflow
     /// </summary>
     public async Task<WorkflowResult<TimestompReport>> DetectTimestompingAsync(string mftFile, int neighborWindow = 8)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Detecting timestomping in {0}", mftFile);
 
         var entries = await WindowsAnalysis.MFTECmdAsync(mftFile);
@@ -61,6 +62,7 @@ public class AntiForensicsAnalysisWorkflow : Workflow
     /// </summary>
     public async Task<WorkflowResult<UsnAnomalyReport>> AnalyzeUsnJournalAsync(string usnFile, int budget = 200)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Analyzing USN journal {0} for anomalous file activity (budget {1})", usnFile, budget);
 
         var records = await WindowsAnalysis.MFTECmdUsnAsync(usnFile);

@@ -186,9 +186,10 @@ public abstract class AuditEnvironment : Runtime, IDisposable
 
     #region Methods
     public bool ExecuteCommand(string command, string arguments, out string output, bool admin = false)
-    {     
+    {
         string process_output = "", process_error = "";
         CommandResult? r;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         if (admin)
         {
             if (this.IsUnix)
@@ -200,7 +201,11 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         else
         {
             r = this.Execute(command, arguments);
-        }            
+        }
+        sw.Stop();
+        // Audit the synchronous command path too (cleanup/plumbing and any sync tool call), so the per-case trail
+        // is complete. Ambient case/invocation/toolkit context is supplied from the log context as in the async path.
+        AuditCommand(AuditHostName, command, arguments, admin, r.ExitCode, sw.ElapsedMilliseconds, r.IsCompleted);
         process_output = r.StdOut;
         process_error = r.StdErr;
         if (r.Status == ProcessExecuteStatus.Completed)

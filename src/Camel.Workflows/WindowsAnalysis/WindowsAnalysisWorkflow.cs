@@ -29,6 +29,7 @@ public class WindowsAnalysisWorkflow : Workflow
     /// <param name="batchFile">RECmd batch file to use (defaults to the toolkit-installed DFIRBatch.reb).</param>
     public async Task<WorkflowResult<KeyRegistryArtifactsReport>> GetKeyRegistryArtifactsAsync(string hiveDirectory, string batchFile = DfirBatchFile)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Extracting key registry artifacts from {0}", hiveDirectory);
 
         var entries = await WindowsAnalysis.RECmdAsync(hiveDirectory, batchFile);
@@ -60,6 +61,7 @@ public class WindowsAnalysisWorkflow : Workflow
     /// <param name="ignoreTransactionLogs">Ignore registry transaction logs (<c>--nl</c>); default true (faster).</param>
     public async Task<WorkflowResult<ShimcacheEntry[]>> GetKnownExecutablesFromShimcacheAsync(string systemHive, bool ignoreTransactionLogs = true)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Getting known executables (Shimcache) from {0}", systemHive);
 
         var entries = await WindowsAnalysis.AppCompatCacheParserAsync(systemHive, ignoreTransactionLogs);
@@ -83,6 +85,7 @@ public class WindowsAnalysisWorkflow : Workflow
     /// <param name="ignoreTransactionLogs">Ignore registry transaction logs (<c>--nl</c>); default false (replays logs).</param>
     public async Task<WorkflowResult<AmcacheEntry[]>> GetExecutedBinariesFromAmcacheAsync(string amcacheHive, bool ignoreTransactionLogs = false)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Getting executed binaries (Amcache) from {0}", amcacheHive);
 
         var entries = await WindowsAnalysis.AmcacheParserAsync(amcacheHive, ignoreTransactionLogs);
@@ -107,6 +110,7 @@ public class WindowsAnalysisWorkflow : Workflow
     /// <param name="batchFile">RECmd batch file (defaults to the toolkit-installed DFIRBatch.reb).</param>
     public async Task<WorkflowResult<ExternalShareConnectionsReport>> AnalyzeExternalShareConnectionsAsync(string ntuserHive, string batchFile = DfirBatchFile)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Analyzing external connections (mapped drives) in {0}", ntuserHive);
 
         var entries = await WindowsAnalysis.RECmdSingleHiveAsync(ntuserHive, batchFile);
@@ -188,6 +192,7 @@ public class WindowsAnalysisWorkflow : Workflow
         suspiciousPathFragments ??= DefaultExecSuspiciousPaths;
         toolWatchlist ??= DefaultToolWatchlist;
 
+        using var _audit = AuditScope();
         using var op = Begin("Analyzing evidence of execution from {0}", systemHive);
 
         var shim = await WindowsAnalysis.AppCompatCacheParserAsync(systemHive);
@@ -246,6 +251,7 @@ public class WindowsAnalysisWorkflow : Workflow
     {
         allowlistNames ??= DefaultWmiAllowlist;
 
+        using var _audit = AuditScope();
         using var op = Begin("Hunting WMI event-consumer persistence in {0}", objectsDataPath);
 
         var subs = await WindowsAnalysis.WmiSubscriptionsAsync(objectsDataPath);
@@ -336,6 +342,7 @@ public class WindowsAnalysisWorkflow : Workflow
         var win = $"{root}/Windows";
         transientDllDirs ??= [$"{win}/Temp", $"{root}/Temp", $"{root}/temp", $"{root}/PerfLogs", $"{root}/$Recycle.Bin"];
 
+        using var _audit = AuditScope();
         using var op = Begin("Hunting DLL hijacking on {0}", volumeRoot);
 
         // Build the set of genuine System32/SysWOW64 DLLs (name -> file), used to detect \Windows-root shadows.
@@ -414,6 +421,7 @@ public class WindowsAnalysisWorkflow : Workflow
     public async Task<WorkflowResult<CredentialDumpReport>> DetectCredentialDumpingAsync(string volumeRoot)
     {
         var root = volumeRoot.TrimEnd('/');
+        using var _audit = AuditScope();
         using var op = Begin("Detecting credential-dumping artifacts on {0}", volumeRoot);
 
         var files = await DiskAnalysis.FindFilesAsync(root, CredDumpPatterns);   // one traversal for all patterns
@@ -481,6 +489,7 @@ public class WindowsAnalysisWorkflow : Workflow
         transientExecDirs ??= [$"{win}/Temp", $"{root}/Temp", $"{root}/temp", $"{root}/PerfLogs",
                                $"{root}/ProgramData/Temp"];
 
+        using var _audit = AuditScope();
         using var op = Begin("Triaging suspicious executables on {0}", volumeRoot);
 
         var findings = new List<SuspiciousExecutable>();
@@ -542,6 +551,7 @@ public class WindowsAnalysisWorkflow : Workflow
     /// <param name="securityEvtxPath">Path to the Security event log (<c>…\winevt\Logs\Security.evtx</c>).</param>
     public async Task<WorkflowResult<LogonReport>> AnalyzeLogonsAsync(string securityEvtxPath)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Analyzing logon events in {0}", securityEvtxPath);
 
         var events = await WindowsAnalysis.EvtxECmdAsync(file: securityEvtxPath, includeIds: LogonEventIds);
@@ -636,6 +646,7 @@ public class WindowsAnalysisWorkflow : Workflow
     /// <param name="systemEvtxPath">Optional path to the System event log (adds 7045 service installs).</param>
     public async Task<WorkflowResult<LateralMovementReport>> HuntLateralMovementAsync(string securityEvtxPath, string? systemEvtxPath = null)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Hunting lateral movement in {0}", securityEvtxPath);
 
         var sec = await WindowsAnalysis.EvtxECmdAsync(file: securityEvtxPath, includeIds: LateralSecurityIds);
@@ -749,6 +760,7 @@ public class WindowsAnalysisWorkflow : Workflow
     /// <param name="preauthFailureThreshold">Minimum 4771 failures from one source IP to flag a burst (default 20).</param>
     public async Task<WorkflowResult<KerberosReport>> DetectKerberosAttacksAsync(string securityEvtxPath, int preauthFailureThreshold = 20)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Detecting Kerberos attacks in {0}", securityEvtxPath);
 
         // 4768 + 4771 are bounded; pull them in full. 4769 dominates the log on a busy DC, so server-side filter it
@@ -868,6 +880,7 @@ public class WindowsAnalysisWorkflow : Workflow
     /// <param name="systemEvtxPath">Optional path to the System event log (104 — names each cleared channel).</param>
     public async Task<WorkflowResult<LogClearingReport>> DetectLogClearingAsync(string securityEvtxPath, string? systemEvtxPath = null)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Detecting event-log clearing in {0}", securityEvtxPath);
 
         var sec = await WindowsAnalysis.EvtxECmdAsync(file: securityEvtxPath, includeIds: "1102");
@@ -932,6 +945,7 @@ public class WindowsAnalysisWorkflow : Workflow
     /// <param name="powershellEvtxPath">Path to <c>Microsoft-Windows-PowerShell%4Operational.evtx</c>.</param>
     public async Task<WorkflowResult<PowerShellReport>> AnalyzePowerShellAsync(string powershellEvtxPath)
     {
+        using var _audit = AuditScope();
         using var op = Begin("Analyzing PowerShell script blocks in {0}", powershellEvtxPath);
 
         var events = await WindowsAnalysis.EvtxECmdAsync(file: powershellEvtxPath, includeIds: "4104");
@@ -995,6 +1009,7 @@ public class WindowsAnalysisWorkflow : Workflow
     {
         suspiciousPathFragments ??= DefaultSuspiciousPaths;
 
+        using var _audit = AuditScope();
         using var op = Begin("Finding persistence mechanisms in {0} / {1}", softwareHive, systemHive);
 
         // Run each targeted ASEP plugin against the hive it reads. rip.pl is lenient (exits 0 even on a missing
