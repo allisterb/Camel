@@ -8,7 +8,7 @@ using Camel.Workflows.Models;
 
 public class MemoryAnalysisWorkflow : Workflow
 {
-    public MemoryAnalysisWorkflow(CamelApi api) : base(api) {}
+    public MemoryAnalysisWorkflow(CamelToolkitsApi api) : base(api) {}
 
     /// <summary>
     /// Detects hidden processes in a Windows memory image by cross-referencing two enumeration techniques —

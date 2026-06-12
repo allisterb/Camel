@@ -13,8 +13,8 @@ public class TimelineWorkflowTests : TestsRuntime
     {
         var sshconfig = LoadConfigFile("sshtestappsettings.json");
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
-        api = new CamelApi(sshenv, sshconfig);
-        workflow = new TimelineWorkflow(api);
+        api = new CamelToolkitsApi(sshenv, sshconfig);
+        workflow = new TimelineAnalysisWorkflow(api);
 
         // A one-entry mactime bodyfile (all four MACB times = 2010-01-01 00:00:00 UTC). Used as a tiny, fast,
         // deterministic source for the orchestration tests and as the $MFT-append fixture for the triage test —
@@ -320,6 +320,6 @@ public class TimelineWorkflowTests : TestsRuntime
     const string BodyPlaso = "/tmp/camel_wf_bodyp.plaso";
 
     AuditEnvironment sshenv;
-    CamelApi api;
-    TimelineWorkflow workflow;
+    CamelToolkitsApi api;
+    TimelineAnalysisWorkflow workflow;
 }

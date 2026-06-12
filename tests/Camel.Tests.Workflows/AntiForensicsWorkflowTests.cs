@@ -13,8 +13,8 @@ public class AntiForensicsWorkflowTests : TestsRuntime
     {
         var sshconfig = LoadConfigFile("sshtestappsettings.json");
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
-        api = new CamelApi(sshenv, sshconfig);
-        workflow = new AntiForensicsWorkflow(api);
+        api = new CamelToolkitsApi(sshenv, sshconfig);
+        workflow = new AntiForensicsAnalysisWorkflow(api);
     }
 
     [Fact]
@@ -62,6 +62,6 @@ public class AntiForensicsWorkflowTests : TestsRuntime
     const string VolumeRoot = "/mnt/dlpc";
 
     AuditEnvironment sshenv;
-    CamelApi api;
-    AntiForensicsWorkflow workflow;
+    CamelToolkitsApi api;
+    AntiForensicsAnalysisWorkflow workflow;
 }

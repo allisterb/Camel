@@ -17,7 +17,6 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using ModelContextProtocol.Server;
 using ModelContextProtocol.Protocol;
 using Jint;
-using Camel.Environments;
 
 public enum TransportType
 {
@@ -25,16 +24,16 @@ public enum TransportType
     Http = 1,
 }
 
-public class CamelMCPTools
+public class CamelMCPTools : Runtime
 {
    public CamelMCPTools(SessionRegistry registry)
    {
         this.registry = registry;
         jsoptions = new Options();
-        jsoptions.Host.StringCompilationAllowed = false;
+        jsoptions.Host.StringCompilationAllowed = false;        
         // Lets generated JS `await` async toolkit methods (CLR Task<T> -> awaitable JS promise). Required so
         // tool calls run on the async path, where per-session cancellation (CancelExecutions) takes effect.
-        jsoptions.ExperimentalFeatures = ExperimentalFeature.TaskInterop;
+        jsoptions.ExperimentalFeatures = ExperimentalFeature.TaskInterop;                
     }
 
     [McpServerTool(Name = "ExecuteJavaScript"), Description("Execute JavaScript code against the Camel API.")]
@@ -42,9 +41,11 @@ public class CamelMCPTools
     {
         // Each MCP session gets its own environment/API (its own SSH connection); resolve it by session id.
         // The RequestContext is injected by the SDK per request; context.Server carries the session id.
-        var session = registry.GetOrCreate(SessionId(context.Server));
+        var sessioid = SessionId(context.Server);
+        var session = registry.GetOrCreate(sessioid);
         StringBuilder output = new StringBuilder();
         var jsinterp = new Engine(jsoptions)
+           
           .SetValue("log", new Action<string>((s) => output.AppendLine(s)))
           .SetValue("error", new Action<string>((s) => output.AppendLine(s)))
           .SetValue("table", new Action<string[], object[][]>((headers, dataRows) =>
@@ -54,14 +55,22 @@ public class CamelMCPTools
           }))
           // The SIFT tool surface (each toolkit is lazily constructed + cached on the per-session CamelApi, so
           // first access provisions it once per session). Config for all toolkits is assumed present at runtime.
-          .SetValue("memoryAnalysis", session.Api.MemoryAnalysis)
-          .SetValue("diskAnalysis", session.Api.DiskAnalysis)
-          .SetValue("windowsAnalysis", session.Api.WindowsAnalysis)
-          .SetValue("timeline", session.Api.Timeline)
-          .SetValue("yara", session.Api.Yara)
+          .SetValue("MemoryAnalysisToolkit", session.ToolkitsApi.MemoryAnalysis)
+          .SetValue("DiskAnalysisToolkit", session.ToolkitsApi.DiskAnalysis)
+          .SetValue("WindowsAnalysisToolkit", session.ToolkitsApi.WindowsAnalysis)
+          .SetValue("TimelineAnalysisToolkit", session.ToolkitsApi.Timeline)
+          .SetValue("YaraToolkit", session.ToolkitsApi.Yara)
           // Pure-compute anomaly triage over a canonical timeline (no AuditEnvironment); see Camel.Inference.
           // Typical flow: const ev = await timeline.PsortAsync(plaso); log(anomaly.Summarize(anomaly.TriageTimeline(ev, 200)));
-          .SetValue("anomaly", new Camel.Inference.AnomalyDetectionToolkit());
+          .SetValue("AnomalyDetectionToolkit", new Camel.Inference.AnomalyDetectionToolkit())
+          
+          .SetValue("MemoryAnalysisWorkflow", session.WorkflowsApi.MemoryAnalysis)
+          .SetValue("DiskAnalysisWorkflow", session.WorkflowsApi.DiskAnalysis)
+          .SetValue("WindowsAnalysisWorkflow", session.WorkflowsApi.WindowsAnalysis)
+          .SetValue("TimelineAnalysisWorkflow", session.WorkflowsApi.TimelineAnalysis)
+          .SetValue("AntiForensicsAnalysisWorkflow", session.WorkflowsApi.AntiForensicsAnalysis)
+          .SetValue("WebServerWorkflow", session.WorkflowsApi.WebServer);
+
         try
         {
             // Wrap in an async IIFE so scripts can `await` async toolkit methods: top-level await isn't allowed
@@ -100,7 +109,7 @@ public class CamelMCPTools
             Content = [new TextContentBlock { Text = output.ToString() }],
         };
     }
-
+    
     // Stdio (and any transport that doesn't assign one) yields a null/empty session id; bucket those under "default".
     static string SessionId(McpServer server) => string.IsNullOrEmpty(server.SessionId) ? "default" : server.SessionId;
 

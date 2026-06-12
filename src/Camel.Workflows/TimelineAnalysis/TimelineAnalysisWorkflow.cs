@@ -27,9 +27,9 @@ using Camel.Inference;
 /// Both return a <see cref="SuperTimeline"/> whose persistent <see cref="SuperTimeline.StorageFile"/> can be
 /// re-filtered cheaply afterwards (psort is near-instant) to carve further mini-timelines around pivot points.
 /// </summary>
-public class TimelineWorkflow : Workflow
+public class TimelineAnalysisWorkflow : Workflow
 {
-    public TimelineWorkflow(CamelApi api) : base(api) { }
+    public TimelineAnalysisWorkflow(CamelToolkitsApi api) : base(api) { }
 
     /// <summary>The SANS triage file-filter shipped with Plaso on the SIFT workstation (key Windows forensic files).</summary>
     public const string DefaultWindowsFilterFile = "/usr/share/plaso/filter_windows.yaml";

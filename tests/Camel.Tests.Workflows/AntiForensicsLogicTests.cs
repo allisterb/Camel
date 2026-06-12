@@ -25,7 +25,7 @@ public class AntiForensicsLogicTests
             .Append(Mft(700, created: cluster, timestomped: true, isDir: true))                                  // a directory — excluded
             .ToArray();
 
-        var findings = AntiForensicsWorkflow.BuildTimestompFindings(entries, neighborWindow: 8);
+        var findings = AntiForensicsAnalysisWorkflow.BuildTimestompFindings(entries, neighborWindow: 8);
 
         Assert.DoesNotContain(findings, f => f.Path.Contains("700"));               // directory excluded
         var backdated = Assert.Single(findings, f => f.SiBeforeFn && f.SiCreated?.Year == 2010);
@@ -50,7 +50,7 @@ public class AntiForensicsLogicTests
             Usn(name: $"w{i}", ext: "tmp", when: t0.AddMinutes(10).AddMilliseconds(i * 100), reason: "FileDelete|Close"));
         var records = benign.Concat(burst).ToArray();
 
-        var canonical = AntiForensicsWorkflow.UsnToCanonical(records);
+        var canonical = AntiForensicsAnalysisWorkflow.UsnToCanonical(records);
         Assert.Equal(records.Length, canonical.Length);
         Assert.All(canonical, e => Assert.Equal(SourceClass.FileSystem, e.Source));
         Assert.Contains(canonical, e => EventType.TokenOf(e) == "file:tmp");        // extension → token

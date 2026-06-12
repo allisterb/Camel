@@ -11,7 +11,7 @@ public class MemoryAnalysisWorkflowTests : TestsRuntime
     {
         var sshconfig = LoadConfigFile("sshtestappsettings.json");
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
-        api = new CamelApi(sshenv, sshconfig);
+        api = new CamelToolkitsApi(sshenv, sshconfig);
         workflow = new MemoryAnalysisWorkflow(api);
     }
 
@@ -632,6 +632,6 @@ public class MemoryAnalysisWorkflowTests : TestsRuntime
     const string Server2008Image = "/mnt/artifacts/memdump.mem";
 
     AuditEnvironment sshenv;
-    CamelApi api;
+    CamelToolkitsApi api;
     MemoryAnalysisWorkflow workflow;
 }

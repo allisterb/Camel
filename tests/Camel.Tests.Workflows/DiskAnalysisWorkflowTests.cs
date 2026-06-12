@@ -9,7 +9,7 @@ public class DiskAnalysisWorkflowTests : TestsRuntime
     {
         var sshconfig = LoadConfigFile("sshtestappsettings.json");
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
-        api = new CamelApi(sshenv, sshconfig);
+        api = new CamelToolkitsApi(sshenv, sshconfig);
         workflow = new DiskAnalysisWorkflow(api);
     }
 
@@ -244,6 +244,6 @@ public class DiskAnalysisWorkflowTests : TestsRuntime
     const int NtfsOffset = 63;
 
     AuditEnvironment sshenv;
-    CamelApi api;
+    CamelToolkitsApi api;
     DiskAnalysisWorkflow workflow;
 }

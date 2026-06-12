@@ -13,7 +13,7 @@ public class CanonicalizerTests : TestsRuntime
     {
         var sshconfig = LoadConfigFile("sshtestappsettings.json");
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
-        api = new CamelApi(sshenv, sshconfig);
+        api = new CamelToolkitsApi(sshenv, sshconfig);
     }
 
     // --- pure logic tests (no workstation) ---
@@ -143,5 +143,5 @@ public class CanonicalizerTests : TestsRuntime
     const string RegPlaso = "/tmp/camel_train_reg.plaso";
 
     AuditEnvironment sshenv;
-    CamelApi api;
+    CamelToolkitsApi api;
 }

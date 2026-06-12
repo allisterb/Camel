@@ -8,10 +8,10 @@ using Microsoft.Extensions.Configuration;
 using Camel.Environments;
 using Camel.Toolkits;
 
-public class CamelApi : Runtime
+public class CamelToolkitsApi : Runtime
 {
     #region Constructors
-    public CamelApi(AuditEnvironment env, IConfigurationRoot? config = null)
+    public CamelToolkitsApi(AuditEnvironment env, IConfigurationRoot? config = null)
     {
         this.env = env;
         this.config = config;
@@ -23,7 +23,7 @@ public class CamelApi : Runtime
 
     #region Fields
     private readonly AuditEnvironment env;
-    private readonly IConfigurationRoot? config;
+    private new readonly IConfigurationRoot? config;
     private YaraToolkit? _yara;
     private TimelineToolkit? _timeline;
     #endregion

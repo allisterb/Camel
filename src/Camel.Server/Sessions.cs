@@ -12,19 +12,21 @@ using Camel.Environments;
 
 /// <summary>
 /// Per-MCP-session state: a dedicated <see cref="AuditEnvironment"/> (its own SSH/local connection) and the
-/// <see cref="CamelApi"/> bound to it. Disposing cancels the session's in-flight commands and tears down its
+/// <see cref="CamelToolkitsApi"/> bound to it. Disposing cancels the session's in-flight commands and tears down its
 /// connection.
 /// </summary>
 public sealed class SessionContext : IDisposable
 {
-    public AuditEnvironment Environment { get; }
-    public CamelApi Api { get; }
-    public DateTimeOffset LastAccess { get; set; } = DateTimeOffset.UtcNow;
+    public readonly AuditEnvironment Environment;
+    public readonly CamelToolkitsApi ToolkitsApi;
+    public readonly CamelWorkflowsApi WorkflowsApi;
+    public DateTimeOffset LastAccess = DateTimeOffset.UtcNow;
 
     public SessionContext(IConfigurationRoot config)
     {
         Environment = AuditEnvironment.CreateFromConfig(config);
-        Api = new CamelApi(Environment, config);
+        ToolkitsApi = new CamelToolkitsApi(Environment, config);
+        WorkflowsApi = new CamelWorkflowsApi(ToolkitsApi);
     }
 
     public void Dispose()
@@ -32,6 +34,7 @@ public sealed class SessionContext : IDisposable
         try { Environment.CancelExecutions(); } catch { /* best-effort */ }
         try { Environment.Dispose(); } catch { /* best-effort */ }
     }
+   
 }
 
 /// <summary>

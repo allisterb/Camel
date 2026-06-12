@@ -19,8 +19,7 @@ using Camel.Tests;
 
 /// <summary>
 /// End-to-end protocol tests: a real MCP client drives the actual HTTP transport pipeline (hosted in-process
-/// on an ephemeral port). The scripts use only pure JS / log() so they don't touch a forensic tool — the
-/// Local environment (testappsettings.json) makes session creation cheap and CI-able without an SSH host.
+/// on an ephemeral port). 
 /// xunit creates a fresh instance per test, so each test gets its own server + registry.
 /// </summary>
 public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
@@ -91,7 +90,7 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
         // `await` must resolve it to the value (null here, since vol can't run on the Local test host) rather
         // than hand back an un-awaitable Task object. isNull=true proves the Task->promise interop works.
         var r = await client.CallToolAsync("ExecuteJavaScript",
-            Script("var info = await memoryAnalysis.WindowsInfoAsync('/no/such/image'); log('isNull=' + (info === null));"));
+            Script("var info = await MemoryAnalysisToolkit.WindowsInfoAsync('/no/such/image'); log('isNull=' + (info === null));"));
 
         Assert.NotEqual(true, r.IsError);
         Assert.Contains("isNull=true", Text(r));

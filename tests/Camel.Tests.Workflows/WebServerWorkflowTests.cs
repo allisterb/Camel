@@ -12,7 +12,7 @@ public class WebServerWorkflowTests : TestsRuntime
     {
         var sshconfig = LoadConfigFile("sshtestappsettings.json");
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
-        api = new CamelApi(sshenv, sshconfig);
+        api = new CamelToolkitsApi(sshenv, sshconfig);
         workflow = new WebServerWorkflow(api);
     }
 
@@ -94,6 +94,6 @@ public class WebServerWorkflowTests : TestsRuntime
     const string WebRoot = "/mnt/c4/xampp/htdocs";
 
     AuditEnvironment sshenv;
-    CamelApi api;
+    CamelToolkitsApi api;
     WebServerWorkflow workflow;
 }

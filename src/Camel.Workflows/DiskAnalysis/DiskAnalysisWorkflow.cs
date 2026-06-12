@@ -7,7 +7,7 @@ using Camel.Workflows.Models;
 
 public class DiskAnalysisWorkflow : Workflow
 {
-    public DiskAnalysisWorkflow(CamelApi api) : base(api) {}
+    public DiskAnalysisWorkflow(CamelToolkitsApi api) : base(api) {}
 
     /// <summary>
     /// Mounts an EWF/E01 evidence image read-only on the workstation, following standard forensic practice:

@@ -13,7 +13,7 @@ public class AnomalySpineTests : TestsRuntime
     {
         var sshconfig = LoadConfigFile("sshtestappsettings.json");
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
-        api = new CamelApi(sshenv, sshconfig);
+        api = new CamelToolkitsApi(sshenv, sshconfig);
     }
 
     // --- Windower ---
@@ -134,5 +134,5 @@ public class AnomalySpineTests : TestsRuntime
     const string RegPlaso = "/tmp/camel_train_reg.plaso";
 
     AuditEnvironment sshenv;
-    CamelApi api;
+    CamelToolkitsApi api;
 }

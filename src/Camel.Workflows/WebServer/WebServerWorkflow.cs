@@ -22,7 +22,7 @@ using Camel.Workflows.Models;
 /// </summary>
 public class WebServerWorkflow : Workflow
 {
-    public WebServerWorkflow(CamelApi api) : base(api) { }
+    public WebServerWorkflow(CamelToolkitsApi api) : base(api) { }
 
     // The bundled Yara-Rules community pack ships a web-shell aggregator index alongside the master index.
     private const string WebshellRulesIndex = YaraToolkit.RulesRepoPath + "/webshells_index.yar";

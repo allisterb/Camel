@@ -12,7 +12,7 @@ using Camel.Workflows.Models;
 
 public class WindowsAnalysisWorkflow : Workflow
 {
-    public WindowsAnalysisWorkflow(CamelApi api) : base(api) {}
+    public WindowsAnalysisWorkflow(CamelToolkitsApi api) : base(api) {}
 
     #region Methods
 

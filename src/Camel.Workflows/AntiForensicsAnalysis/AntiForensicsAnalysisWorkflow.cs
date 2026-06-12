@@ -21,9 +21,9 @@ using Camel.Inference;
 /// delete = wiping, mass create = staging) and rare file types, reusing the (event_id, Δt) anomaly ensemble.</item>
 /// </list>
 /// </summary>
-public class AntiForensicsWorkflow : Workflow
+public class AntiForensicsAnalysisWorkflow : Workflow
 {
-    public AntiForensicsWorkflow(CamelApi api) : base(api) { }
+    public AntiForensicsAnalysisWorkflow(CamelToolkitsApi api) : base(api) { }
 
     #region Workflow methods
     /// <summary>

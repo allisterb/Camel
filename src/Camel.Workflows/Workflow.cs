@@ -24,11 +24,11 @@ public class WorkflowResult<T>
 
 public class Workflow : Runtime
 {
-    public Workflow(CamelApi api)    
+    public Workflow(CamelToolkitsApi api)    
     {
         this.api = api;
     }
-    protected readonly CamelApi api;
+    protected readonly CamelToolkitsApi api;
 
     protected DiskAnalysisToolkit DiskAnalysis => api.DiskAnalysis;
 
