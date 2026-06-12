@@ -52,8 +52,15 @@ public class CamelMCPTools
               output.AppendLine(headers.ToString());
 
           }))
+          // The SIFT tool surface (each toolkit is lazily constructed + cached on the per-session CamelApi, so
+          // first access provisions it once per session). Config for all toolkits is assumed present at runtime.
           .SetValue("memoryAnalysis", session.Api.MemoryAnalysis)
+          .SetValue("diskAnalysis", session.Api.DiskAnalysis)
+          .SetValue("windowsAnalysis", session.Api.WindowsAnalysis)
+          .SetValue("timeline", session.Api.Timeline)
+          .SetValue("yara", session.Api.Yara)
           // Pure-compute anomaly triage over a canonical timeline (no AuditEnvironment); see Camel.Inference.
+          // Typical flow: const ev = await timeline.PsortAsync(plaso); log(anomaly.Summarize(anomaly.TriageTimeline(ev, 200)));
           .SetValue("anomaly", new Camel.Inference.AnomalyDetectionToolkit());
         try
         {
