@@ -29,6 +29,18 @@ public static partial class EventCanonicalizer
         return WithDeltas(kept);
     }
 
+    /// <summary>
+    /// Finalizes already-canonical events from a non-Plaso source (e.g. a pre-distilled CSV): time-sorts, filters,
+    /// and recomputes <see cref="CanonicalEvent.DtPrev"/> over the survivors — the <see cref="Canonicalize"/> tail
+    /// without the <see cref="TimelineEvent"/> build step.
+    /// </summary>
+    public static CanonicalEvent[] Order(IEnumerable<CanonicalEvent> events, Func<CanonicalEvent, bool>? keep = null)
+    {
+        var built = events.Where(e => e.Ts > 0).OrderBy(e => e.Ts).ToArray();
+        var kept = keep is null ? built : Array.FindAll(built, e => keep(e));
+        return WithDeltas(kept);
+    }
+
     // Canonicalizes one event (DtPrev is filled in later by WithDeltas, once the kept set is known).
     private static CanonicalEvent Build(TimelineEvent e)
     {
@@ -42,6 +54,8 @@ public static partial class EventCanonicalizer
             Location = ClassifyLocation(path),
             Ext = ExtractExt(path),
             EventId = ExtractEventId(e.Message),
+            MsgLength = ContentSignals.MsgLength(e.Message),
+            BadWordCount = ContentSignals.BadWordCount(e.Message),
             Reg = ClassifyReg(e.DataType),
             DtPrev = 0f,
             HourOfDay = e.Time.UtcDateTime.Hour,

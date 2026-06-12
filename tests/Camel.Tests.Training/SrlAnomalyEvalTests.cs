@@ -119,6 +119,87 @@ public class SrlAnomalyEvalTests
         Assert.True(recall500.Recall == 1.0, $"triage missed a log-clear within a 500-event budget: {recall500}");
     }
 
+    // 3-log slim CSV (ts,desc,eid,msg_len,c2,snippet) adds the PowerShell Operational log + content columns. Regen:
+    //   cp /tmp/camel_srl_evtx.plaso /tmp/camel_srl_3logs.plaso
+    //   log2timeline.py -q --storage-file /tmp/camel_srl_3logs.plaso --parsers winevtx <...PowerShell%4Operational.evtx>
+    //   psort.py -q -o json_line -w full.jsonl /tmp/camel_srl_3logs.plaso
+    //   python3 -> per line: timestamp, timestamp_desc, event_identifier, len(message), (1 if 'squirreldirectory' in
+    //              message.lower() else 0), message.lower()[:200] with commas/newlines->space  (=> /tmp/srl3_slim.csv)
+    //   plink ... "cat /tmp/srl3_slim.csv" > %TEMP%\camel_srl_slim3.csv
+    private static readonly string Slim3Csv = Path.Combine(Path.GetTempPath(), "camel_srl_slim3.csv");
+
+    // Measured one-off — the content detector (Studiawan Ch.7 bad-words + message-length) closes the C2 gap:
+    //   content-only: C2 recall 100% (24/24) · shortlist 65 · firstRank 8   ← previously UNDETECTABLE
+    //   ensemble 200: C2 100% (24/24) | log-clear 100% (8/8) | ALL 100% (32/32) · shortlist 180 (compression 0.12%, ~810x)
+    // CONCLUSION: adding the two leakage-safe content scalars lets the toolkit recover BOTH IOC classes — the C2
+    // PowerShell (squirreldirectory download cradle, caught by keywords + 25k-char encoded-blob length on 4103/4104)
+    // AND the anti-forensics log-clears — in a 180-event review set out of 145,756. The thesis idea works.
+    [Fact(Skip = "one-off real-data eval: needs the staged 3-log SRL slim CSV (see recipe); run manually with --filter")]
+    public void TriageSurfacesC2AndLogClearingInSrlHost()
+    {
+        Assert.True(File.Exists(Slim3Csv), $"staged SRL 3-log slim CSV not found at {Slim3Csv} — regenerate it.");
+
+        var canon = EventCanonicalizer.Order(LoadSlim3(Slim3Csv), NoiseFilters.KeepHighSignal);
+        var isC2 = canon.Select(e => Array.IndexOf(e.Labels, "__c2__") >= 0).ToArray();
+        var isLogClear = canon.Select(IsLogClear).ToArray();
+        var isInteresting = canon.Select((e, i) => isC2[i] || isLogClear[i]).ToArray();
+
+        var lines = new System.Collections.Generic.List<string>
+        {
+            $"SRL base-rd-01 (Security+System+PowerShell): {canon.Length} events. " +
+            $"C2 (squirreldirectory) {isC2.Count(b => b)}, log-clear {isLogClear.Count(b => b)}. Self-baseline.",
+        };
+
+        // The content detector alone — does it surface the C2 PowerShell the type/sequence/timing heads are blind to?
+        var contentOnly = new DetectorEnsemble(new ContentDetector()).Triage(canon, canon, 500);
+        lines.Add($"content-only:   C2 {AnomalyDetectionEval.ScoreTriage(contentOnly, isC2)}");
+
+        // The full ensemble as the triage tool.
+        var ensemble = DetectorEnsemble.Default();
+        foreach (int budget in new[] { 100, 200, 500 })
+        {
+            var r = ensemble.Triage(canon, canon, budget);
+            lines.Add($"ensemble {budget,4}: C2 {AnomalyDetectionEval.ScoreTriage(r, isC2)} | " +
+                      $"log-clear {AnomalyDetectionEval.ScoreTriage(r, isLogClear)} | all {AnomalyDetectionEval.ScoreTriage(r, isInteresting)}");
+        }
+        var top = ensemble.Triage(canon, canon, 500);
+        lines.Add("--- top 15 ---");
+        lines.AddRange(top.Shortlist.Take(15).Select(s => s.ToString()));
+        File.WriteAllText(Path.Combine(Path.GetTempPath(), "camel_triage_srl3.txt"), string.Join("\n", lines) + "\n");
+
+        Assert.True(AnomalyDetectionEval.ScoreTriage(contentOnly, isC2).Recall > 0, "content detector did not surface the C2");
+        Assert.True(AnomalyDetectionEval.ScoreTriage(top, isInteresting).Recall >= 0.5, "triage recovered <50% of interesting events");
+    }
+
+    // Builds canonical events directly from the 3-log slim CSV; BadWordCount is computed by the real ContentSignals
+    // dictionary over the staged message snippet (so the eval exercises production code), MsgLength is the box-side
+    // full message length. c2 ground truth is carried as a label (never an input feature).
+    private static CanonicalEvent[] LoadSlim3(string path)
+    {
+        var events = new System.Collections.Generic.List<CanonicalEvent>(150_000);
+        bool header = true;
+        foreach (var line in File.ReadLines(path))
+        {
+            if (header) { header = false; continue; }
+            if (line.Length == 0) continue;
+            var f = line.Split(',', 6);
+            if (f.Length < 5 || !long.TryParse(f[0], out long ts) || !int.TryParse(f[3], out int msgLen)) continue;
+            var snippet = f.Length == 6 ? f[5] : "";
+            events.Add(new CanonicalEvent
+            {
+                Ts = ts,
+                DataType = "windows:evtx:record",
+                Source = SourceClass.EventLog,
+                EventId = int.TryParse(f[2], out int id) ? id : null,
+                MsgLength = msgLen,
+                BadWordCount = ContentSignals.BadWordCount(snippet),
+                HourOfDay = DateTimeOffset.FromUnixTimeMilliseconds(ts / 1000).UtcDateTime.Hour,
+                Labels = f[4] == "1" ? ["__c2__"] : [],
+            });
+        }
+        return events.ToArray();
+    }
+
     private static bool IsLogClear(CanonicalEvent e) => e.EventId is 1102 or 104;
     private static bool IsLogClearWindow(EventWindow w) => w.Events.Any(IsLogClear);
 

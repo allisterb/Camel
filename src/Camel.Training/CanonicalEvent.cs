@@ -34,6 +34,20 @@ public sealed record CanonicalEvent
     /// <summary>Windows event-log Event ID parsed from the message (e.g. 4624), or null for non-EVTX events.</summary>
     public int? EventId { get; init; }
 
+    /// <summary>
+    /// Character length of the event's rendered message — a leakage-safe content <em>scalar</em> (the count, never
+    /// the literal text). Encoded-PowerShell blobs and verbose error records run far longer than routine messages,
+    /// so an outlier length is a cheap signal the structural fields miss (after Studiawan 2020, Ch. 7).
+    /// </summary>
+    public int MsgLength { get; init; }
+
+    /// <summary>
+    /// Count of suspicious DFIR keywords (download cradles, LOLBin/offensive-tooling names) found in the message —
+    /// a curated, training-free "content surprisal" scalar (see <see cref="ContentSignals"/>). Targets the gap the
+    /// type/sequence/timing detectors are blind to: malicious <em>content</em> inside a common event type.
+    /// </summary>
+    public int BadWordCount { get; init; }
+
     /// <summary>Registry artifact class for registry events (Run / Service / Shimcache / …), else <see cref="RegClass.None"/>.</summary>
     public RegClass Reg { get; init; }
 

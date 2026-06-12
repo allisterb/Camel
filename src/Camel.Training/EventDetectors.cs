@@ -165,6 +165,57 @@ public sealed class TimingBurstDetector(double windowSeconds = 60.0, double minB
 }
 
 /// <summary>
+/// Flags events whose <em>content</em> is suspicious — the detector that addresses what type/sequence/timing miss
+/// (malicious content inside a common event type). Two leakage-safe scalars (see <see cref="ContentSignals"/>):
+/// a curated DFIR <see cref="CanonicalEvent.BadWordCount"/> (knowledge-based — a download cradle / LOLBin keyword
+/// is intrinsically notable) and an <see cref="CanonicalEvent.MsgLength"/> far above the baseline for that event
+/// type (an encoded blob among short routine records). After Studiawan 2020, Ch. 7.
+/// </summary>
+public sealed class ContentDetector(double minBits = 6.0, double bitsPerBadWord = 4.0) : IEventDetector
+{
+    public string Name => "content";
+
+    public IEnumerable<Finding> Detect(CanonicalEvent[] baseline, CanonicalEvent[] target)
+    {
+        // Per-token message-length baseline (mean/std) so "long" is judged relative to the event type's own norm.
+        var n = new Dictionary<string, int>();
+        var sum = new Dictionary<string, double>();
+        var sumSq = new Dictionary<string, double>();
+        foreach (var e in baseline)
+        {
+            var t = EventType.TokenOf(e);
+            n[t] = n.GetValueOrDefault(t) + 1;
+            sum[t] = sum.GetValueOrDefault(t) + e.MsgLength;
+            sumSq[t] = sumSq.GetValueOrDefault(t) + (double)e.MsgLength * e.MsgLength;
+        }
+
+        for (int i = 0; i < target.Length; i++)
+        {
+            var e = target[i];
+            double bwBits = bitsPerBadWord * e.BadWordCount;
+
+            double lenBits = 0;
+            var token = EventType.TokenOf(e);
+            if (n.TryGetValue(token, out int c) && c >= 2)
+            {
+                double mean = sum[token] / c;
+                double variance = Math.Max(0, sumSq[token] / c - mean * mean);
+                double hi = mean + 3 * Math.Sqrt(variance);     // upper "normal" bound for this type's length
+                if (e.MsgLength > hi) lenBits = Math.Log2(1 + (e.MsgLength - hi));
+            }
+
+            double bits = bwBits + lenBits;
+            if (bits < minBits) continue;
+
+            var why = new List<string>(2);
+            if (e.BadWordCount > 0) why.Add($"{e.BadWordCount} suspicious keyword(s)");
+            if (lenBits > 0) why.Add($"message length {e.MsgLength} chars (atypical for '{token}')");
+            yield return new Finding(i, e.Ts, token, bits, Name, string.Join(", ", why) + $" ({bits:F1} bits)");
+        }
+    }
+}
+
+/// <summary>
 /// One surprising <em>episode</em> the ensemble surfaced — a run of same-type events in a time bucket, collapsed to
 /// a single shortlist entry (peak event as exemplar) so a 2000-event burst takes one slot, not 2000. Carries the
 /// member event indices so recall can credit covering the whole episode.
@@ -199,9 +250,9 @@ public sealed class DetectorEnsemble
 
     public DetectorEnsemble(params IEventDetector[] detectors) => this.detectors = detectors;
 
-    /// <summary>The default (event_id, Δt) suite: rare type + rare transition + timing burst.</summary>
+    /// <summary>The default suite: rare type + rare transition + timing burst + suspicious content.</summary>
     public static DetectorEnsemble Default() =>
-        new(new RareTypeDetector(), new RareTransitionDetector(), new TimingBurstDetector());
+        new(new RareTypeDetector(), new RareTransitionDetector(), new TimingBurstDetector(), new ContentDetector());
 
     public TriageReport Triage(CanonicalEvent[] baseline, CanonicalEvent[] target, int budget, double episodeGapSeconds = 60.0)
     {

