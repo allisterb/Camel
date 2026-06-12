@@ -346,6 +346,28 @@ public class TimelineWorkflow : Workflow
     }
 
     /// <summary>
+    /// Triages the <em>lateral-movement</em> view of a timeline: scopes the export to the artifact classes that
+    /// carry the FOR508 "Event Logs + File Copy + Execution" signal — Windows event logs (network/RDP/explicit-
+    /// credential logons, admin-share access, service installs), prefetch (tool execution), and LNK (file copy) —
+    /// then runs the anomaly ensemble over that merged per-host stream. The <see cref="RareTransitionDetector"/> is
+    /// what earns its keep here: lateral movement is a <em>sequence</em> of individually-common events (a network
+    /// logon, then a service install, then an execution) in an order the host rarely produces, which a per-event
+    /// rarity check misses. Reuses <see cref="TriageTimelineAsync"/> over the scoped subset (no re-parse).
+    /// </summary>
+    public Task<WorkflowResult<TimelineTriageReport>> HuntLateralMovementTimelineAsync(string storageFile, int budget = 200) =>
+        TriageTimelineAsync(storageFile, budget, highSignalOnly: true, filter: LateralMovementScope);
+
+    /// <summary>
+    /// Triages the <em>program-execution</em> view of a timeline: scopes the export to the "Evidence of Execution"
+    /// artifacts — prefetch, Shimcache (AppCompatCache), Amcache, BAM, and UserAssist — then runs the anomaly
+    /// ensemble. Here <see cref="RareTypeDetector"/> surfaces never-before-run binaries and
+    /// <see cref="TimingBurstDetector"/>/<see cref="TimingBeaconDetector"/> catch off-hours or scripted/periodic
+    /// execution. Reuses <see cref="TriageTimelineAsync"/> over the scoped subset (no re-parse).
+    /// </summary>
+    public Task<WorkflowResult<TimelineTriageReport>> ProgramExecutionTimelineAsync(string storageFile, int budget = 200) =>
+        TriageTimelineAsync(storageFile, budget, highSignalOnly: true, filter: ExecutionScope);
+
+    /// <summary>
     /// Keyword/IOC-searches the timeline in <paramref name="storageFile"/> for any of <paramref name="keywords"/>
     /// — the "use keywords to identify pivot points" step. Each keyword is matched (case-insensitively, as a
     /// literal) against the rendered event text including the human-readable message (see
@@ -391,6 +413,15 @@ public class TimelineWorkflow : Workflow
                   string.Join(", ", hits.Select(h => $"{h.Keyword}={h.Count}")) + ".");
     }
     #endregion
+
+    // psort data_type scopes for the investigation-specific triage recipes (data_type is a stored attribute, so it
+    // filters reliably — unlike the formatter-derived message). Lateral movement = event logs + execution + file
+    // copy; program execution = the "Evidence of Execution" artifact set.
+    private const string LateralMovementScope =
+        "data_type contains 'evtx' OR data_type contains 'prefetch' OR data_type contains 'lnk'";
+    private const string ExecutionScope =
+        "data_type contains 'prefetch' OR data_type contains 'appcompatcache' OR data_type contains 'amcache' " +
+        "OR data_type contains 'bam' OR data_type contains 'userassist'";
 
     // The "Evidence of…" categories defined by the Plaso Windows tagging file (tag_windows.txt).
     private static readonly string[] WindowsTagCategories =

@@ -231,6 +231,36 @@ public class TimelineWorkflowTests : TestsRuntime
     // cats the whole file back into one CLR string, which is extremely slow / memory-heavy (the same transfer wall
     // that motivated the slim-CSV staging in the anomaly eval). TriageTimelineAsync is fine for moderate timelines;
     // scaling to a full super timeline needs a streaming/sampled export or psort-side reduction (future work).
+    [Fact]
+    public async Task CanTriageProgramExecutionTimeline()
+    {
+        // Scope the SYSTEM-hive timeline to the "Evidence of Execution" artifacts (Shimcache is present here) and
+        // triage that subset — validates the execution-scoped recipe end to end.
+        var r = await workflow.ProgramExecutionTimelineAsync(RegPlaso, budget: 50);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.True(r.Result.TotalEvents > 0, "execution scope matched no events (expected Shimcache from the SYSTEM hive)");
+        var bits = r.Result.Pivots.Select(p => p.Bits).ToArray();
+        Assert.True(bits.SequenceEqual(bits.OrderByDescending(b => b)));   // ranked (vacuously true if none surfaced)
+    }
+
+    // Validated 2026-06-12 against the SRL 3-log evtx plaso (lateral-movement scope = event logs + prefetch + lnk):
+    // surfaces the attacker's auth/service bursts and rare EID transitions. [Skip] (slow ~2m: reduced export of
+    // 145k evtx events; depends on the ad-hoc plaso) — same path as the suite-tested TriageTimelineAsync.
+    [Fact(Skip = "one-off real-data validation (~2m, needs /tmp/camel_srl_3logs.plaso); run manually")]
+    public async Task HuntsLateralMovementInSrlTimeline()
+    {
+        var r = await workflow.HuntLateralMovementTimelineAsync("/tmp/camel_srl_3logs.plaso", budget: 200);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.True(r.Result.TotalEvents > 0);
+        Assert.NotEmpty(r.Result.Pivots);
+        System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "camel_wf_latmov_srl.txt"),
+            $"{r.Message}\n" + string.Join("\n", r.Result.Pivots.Take(20).Select(p => $"  [{p.Bits,7:F1}] {p.Time:u} {p.EventType} ×{p.EventCount} — {string.Join("; ", p.Reasons)}")));
+    }
+
     // Validated 2026-06-12 (~2m15s): triage(RegPlaso) → 5 pivots expanded, each ranked + with reasons + a non-empty
     // slice. [Skip] in the suite because each psort --slice re-scans the whole storage (~20s × topPivots); the
     // chaining is thin glue over the (suite-tested) TriageTimelineAsync + (tested) PivotAround/--slice export.
