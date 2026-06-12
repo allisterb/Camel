@@ -15,23 +15,28 @@ public class CamelToolkitsApi : Runtime
     {
         this.env = env;
         this.config = config;
-        this.MemoryAnalysis = new MemoryAnalysisToolkit(env, config);
-        this.DiskAnalysis = new DiskAnalysisToolkit(env, config);
-        this.WindowsAnalysis = new WindowsAnalysisToolkit(env, config);
     }
     #endregion
 
     #region Fields
     private readonly AuditEnvironment env;
     private new readonly IConfigurationRoot? config;
+    private MemoryAnalysisToolkit? _memory;
+    private DiskAnalysisToolkit? _disk;
+    private WindowsAnalysisToolkit? _windows;
     private YaraToolkit? _yara;
     private TimelineToolkit? _timeline;
     #endregion
 
     #region Properties
-    public MemoryAnalysisToolkit MemoryAnalysis { get; }
-    public DiskAnalysisToolkit DiskAnalysis { get; }
-    public WindowsAnalysisToolkit WindowsAnalysis { get; }
+    // All toolkits are constructed lazily on first access. Construction can run one-time tool provisioning
+    // (Toolkit.InstallMissingTools downloads via wget/apt for WindowsAnalysis/Yara/Timeline), so eager
+    // construction would make session creation — and any operation that touches the api — block on installs
+    // for tools it never uses. Lazy construction means e.g. a mount (DiskAnalysis only) never pays for the
+    // YARA rules pack or hayabusa.
+    public MemoryAnalysisToolkit MemoryAnalysis => _memory ??= new MemoryAnalysisToolkit(env, config);
+    public DiskAnalysisToolkit DiskAnalysis => _disk ??= new DiskAnalysisToolkit(env, config);
+    public WindowsAnalysisToolkit WindowsAnalysis => _windows ??= new WindowsAnalysisToolkit(env, config);
 
     /// <summary>
     /// The YARA toolkit (classic <c>yara</c> file scanner + the bundled rules pack). Constructed lazily on

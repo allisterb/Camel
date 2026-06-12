@@ -51,7 +51,7 @@ public class CamelMCPTools : Runtime
         var session = registry.GetOrCreate(sessioid);
         StringBuilder output = new StringBuilder();
         var jsinterp = new Engine(jsoptions)
-           
+
           .SetValue("log", new Action<string>((s) => output.AppendLine(s)))
           .SetValue("error", new Action<string>((s) => output.AppendLine(s)))
           .SetValue("table", new Action<string[], object[][]>((headers, dataRows) =>
@@ -59,23 +59,34 @@ public class CamelMCPTools : Runtime
               output.AppendLine(headers.ToString());
 
           }))
-          // The SIFT tool surface (each toolkit is lazily constructed + cached on the per-session CamelApi, so
-          // first access provisions it once per session). Config for all toolkits is assumed present at runtime.
-          .SetValue("MemoryAnalysisToolkit", session.ToolkitsApi.MemoryAnalysis)
-          .SetValue("DiskAnalysisToolkit", session.ToolkitsApi.DiskAnalysis)
-          .SetValue("WindowsAnalysisToolkit", session.ToolkitsApi.WindowsAnalysis)
-          .SetValue("TimelineAnalysisToolkit", session.ToolkitsApi.Timeline)
-          .SetValue("YaraToolkit", session.ToolkitsApi.Yara)
           // Pure-compute anomaly triage over a canonical timeline (no AuditEnvironment); see Camel.Inference.
           // Typical flow: const ev = await timeline.PsortAsync(plaso); log(anomaly.Summarize(anomaly.TriageTimeline(ev, 200)));
           .SetValue("AnomalyDetectionToolkit", new Camel.Inference.AnomalyDetectionToolkit())
-          
+
+          // Workflows are cheap to construct (they just hold a reference to the toolkits api and resolve toolkits
+          // lazily on use), so bind them all unconditionally.
           .SetValue("MemoryAnalysisWorkflow", session.WorkflowsApi.MemoryAnalysis)
           .SetValue("DiskAnalysisWorkflow", session.WorkflowsApi.DiskAnalysis)
           .SetValue("WindowsAnalysisWorkflow", session.WorkflowsApi.WindowsAnalysis)
           .SetValue("TimelineAnalysisWorkflow", session.WorkflowsApi.TimelineAnalysis)
           .SetValue("AntiForensicsAnalysisWorkflow", session.WorkflowsApi.AntiForensicsAnalysis)
           .SetValue("WebServerWorkflow", session.WorkflowsApi.WebServer);
+
+        // Bind a SIFT toolkit global only when the script actually references it by name. Constructing a toolkit
+        // can run one-time provisioning (Toolkit.InstallMissingTools = synchronous wget/apt for the EZ tools,
+        // YARA rules pack, hayabusa, …). Binding every toolkit on every call would make the first call in a fresh
+        // session block on installing tools the script never uses — e.g. a mount-only script (DiskAnalysis only)
+        // would otherwise stall on the YARA/hayabusa downloads and exceed the client's tool timeout. Workflows
+        // resolve their toolkits lazily through the api, so a workflow that needs a toolkit still provisions it.
+        void BindToolkitIfUsed(string name, Func<object> resolve)
+        {
+            if (script.Contains(name, StringComparison.Ordinal)) jsinterp.SetValue(name, resolve());
+        }
+        BindToolkitIfUsed("MemoryAnalysisToolkit", () => session.ToolkitsApi.MemoryAnalysis);
+        BindToolkitIfUsed("DiskAnalysisToolkit", () => session.ToolkitsApi.DiskAnalysis);
+        BindToolkitIfUsed("WindowsAnalysisToolkit", () => session.ToolkitsApi.WindowsAnalysis);
+        BindToolkitIfUsed("TimelineAnalysisToolkit", () => session.ToolkitsApi.Timeline);
+        BindToolkitIfUsed("YaraToolkit", () => session.ToolkitsApi.Yara);
 
         try
         {

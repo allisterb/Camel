@@ -91,6 +91,34 @@ public class McpServerSshIntegrationTests : TestsRuntime, IAsyncLifetime
     }
 
     [Fact]
+    public async Task MountWorkflowDoesNotBlockOnToolInstalls()
+    {
+        if (!connected) { Warn("SIFT workstation not reachable; skipping SSH integration test."); return; }
+        await using var client = await NewClientAsync();
+
+        // A mount-only script touches only the disk-analysis surface — it must NOT trigger the YARA/EZ-tools/
+        // hayabusa provisioning that other toolkits run on construction, so it returns promptly even on a fresh
+        // session. (Regression for the first-call-blocks-on-installs bug: binding every toolkit per call used to
+        // construct them all, stalling a mount on unrelated downloads past the client tool timeout.)
+        const string img = "/mnt/artifacts/srl-2018/base-rd-01-cdrive.E01";
+        var script = $@"
+            var r = await DiskAnalysisWorkflow.MountEwfImageAsync('{img}','/mnt/camel_diag');
+            await DiskAnalysisToolkit.UnmountAsync('/mnt/camel_diag');
+            log('mounted=' + r.IsSuccess + ' raw=' + (r.IsSuccess ? r.Result.RawDevice : r.Message));
+        ";
+        var sw = Stopwatch.StartNew();
+        var r = await client.CallToolAsync("ExecuteJavaScript",
+            new Dictionary<string, object?> { ["script"] = script });
+        sw.Stop();
+
+        Assert.NotEqual(true, r.IsError);
+        Assert.Contains("mounted=true", Text(r));
+        // Generous bound: the mount itself is ~100ms; this just guards against a regression that reintroduces a
+        // multi-minute install stall on the mount path.
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(30), $"mount path took {sw.Elapsed} — unexpected install stall?");
+    }
+
+    [Fact]
     public async Task CancelExecutionsAbortsInFlightCommand()
     {
         if (!connected) { Warn("SIFT workstation not reachable; skipping SSH integration test."); return; }
