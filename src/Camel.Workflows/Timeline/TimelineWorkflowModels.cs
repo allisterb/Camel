@@ -138,3 +138,92 @@ public record TimelineKeywordHits
     public TimelineEvent[] Events { get; init; } = [];
     public int Count => Events.Length;
 }
+
+/// <summary>
+/// The result of <em>automatically</em> triaging a timeline for pivot points with the label-free (event_id, Δt)
+/// anomaly detectors (Camel.Inference). Where <see cref="TimelinePivotReport"/> finds pivots from known Sigma
+/// signatures and <see cref="TimelineSearchReport"/> from analyst-supplied keywords, this surfaces the
+/// statistically <em>unusual</em> — rare event types, rare transitions, volume bursts, periodic beacons, and
+/// suspicious content — answering the FOR508 question "where do I begin to look?" when you have no starting point.
+/// <see cref="Pivots"/> is the ranked review shortlist; <see cref="CompressionRatio"/> shows how much the timeline
+/// was reduced. Each pivot's <see cref="TimelineTriagePivot.Time"/> can be fed to <c>PivotAroundAsync</c> to examine
+/// its temporal proximity.
+/// </summary>
+public record TimelineTriageReport
+{
+    /// <summary>The storage file (.plaso) that was triaged.</summary>
+    public required string StorageFile { get; init; }
+
+    /// <summary>The ranked pivot shortlist (most surprising first), capped at the requested review budget.</summary>
+    public TimelineTriagePivot[] Pivots { get; init; } = [];
+
+    /// <summary>Canonical events scored (after any high-signal filtering).</summary>
+    public int TotalEvents { get; init; }
+
+    /// <summary>Distinct anomalous episodes any detector flagged (the candidate pool the shortlist heads).</summary>
+    public int Candidates { get; init; }
+
+    /// <summary>Shortlist size as a fraction of the scored timeline — how aggressively triage narrowed the review set.</summary>
+    public double CompressionRatio => TotalEvents > 0 ? (double)Pivots.Length / TotalEvents : 0;
+}
+
+/// <summary>
+/// The result of <em>auto-pivot expansion</em>: triage surfaces the anomalous pivots, then the top ones are each
+/// expanded into their surrounding mini-timeline (the events within ±N minutes), automating the full FOR508 loop
+/// — "where do I begin to look?" (the detectors) followed by "what happened before and after?" (the slice). Each
+/// <see cref="ExpandedPivot"/> pairs an anomaly with the full-detail context around it.
+/// </summary>
+public record AutoPivotReport
+{
+    /// <summary>The storage file (.plaso) that was triaged and sliced.</summary>
+    public required string StorageFile { get; init; }
+
+    /// <summary>The expanded pivots, ordered by descending anomaly score.</summary>
+    public ExpandedPivot[] Pivots { get; init; } = [];
+
+    /// <summary>Canonical events triaged (after high-signal filtering).</summary>
+    public int TotalEvents { get; init; }
+
+    /// <summary>Distinct anomalous episodes the detectors flagged (the pool the expanded pivots were taken from).</summary>
+    public int Candidates { get; init; }
+
+    /// <summary>The ±minutes window sliced around each pivot.</summary>
+    public int SliceSizeMinutes { get; init; }
+}
+
+/// <summary>An anomalous pivot paired with its temporal-proximity slice — the events within ±N minutes of it (full
+/// detail, including the filesystem churn triage filtered out, so the analyst sees the complete context).</summary>
+public record ExpandedPivot
+{
+    /// <summary>The anomaly that flagged this moment (time, event type, bits, detector reasons).</summary>
+    public required TimelineTriagePivot Pivot { get; init; }
+
+    /// <summary>The timeline events within ±N minutes of the pivot, in time order.</summary>
+    public TimelineEvent[] Surrounding { get; init; } = [];
+
+    /// <summary>Number of surrounding events.</summary>
+    public int SurroundingCount => Surrounding.Length;
+}
+
+/// <summary>
+/// One anomalous pivot the detectors surfaced: a moment in the timeline, the behavioural event type involved, its
+/// total surprisal in bits, and the human-readable reason(s) the detectors fired — what an analyst would read to
+/// decide whether to pivot there.
+/// </summary>
+public record TimelineTriagePivot
+{
+    /// <summary>The pivot time (UTC) — the exemplar event of the flagged episode.</summary>
+    public required DateTimeOffset Time { get; init; }
+
+    /// <summary>The behavioural event-type token (e.g. "evtx:1102", "reg:run", "file:exe").</summary>
+    public required string EventType { get; init; }
+
+    /// <summary>Total surprisal in bits across the detectors that fired (higher = more anomalous).</summary>
+    public double Bits { get; init; }
+
+    /// <summary>Number of events in the collapsed episode this pivot represents (e.g. a whole burst).</summary>
+    public int EventCount { get; init; }
+
+    /// <summary>Why it was flagged — one reason per detector that fired (rare type / transition / burst / beacon / content).</summary>
+    public string[] Reasons { get; init; } = [];
+}

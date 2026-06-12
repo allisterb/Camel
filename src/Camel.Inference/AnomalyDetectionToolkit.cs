@@ -25,6 +25,12 @@ public sealed class AnomalyDetectionToolkit
     /// (rare type + rare transition + timing burst + timing beacon + suspicious content).</param>
     public AnomalyDetectionToolkit(DetectorEnsemble? ensemble = null) => this.ensemble = ensemble ?? DetectorEnsemble.Default();
 
+    // NOTE (possible future): a threshold cutoff mode as an alternative to the fixed review budget — keep every
+    // episode whose total bits exceed t = μ + c·σ of the candidate bits (Studiawan 2020, Ch. 7, which thresholds
+    // reconstruction error this way). Caveat: a *global* μ/σ over summed bits is dominated by TimingBurst's huge
+    // magnitudes (the same cross-detector incommensurability the per-detector quota in DetectorEnsemble already
+    // solves), so it would need to be applied per detector, not globally. The budget cutoff is the validated path.
+
     /// <summary>Triage a canonical stream against itself (self-baseline) — the single-host "what's worth examining?" case.</summary>
     public TriageReport Triage(CanonicalEvent[] events, int budget = 200) => ensemble.Triage(events, events, budget);
 

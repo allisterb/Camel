@@ -412,6 +412,18 @@ public class LocalEnvironment : AuditEnvironment
         }
 
     }
+    public override FileInfo? GetFileAsLocal(string remotePath, string localPath)
+    {
+        // "Remote" is the local filesystem here, so this is just a copy to the requested path (skip a no-op self-copy).
+        try
+        {
+            if (!string.Equals(Path.GetFullPath(remotePath), Path.GetFullPath(localPath), StringComparison.OrdinalIgnoreCase))
+                File.Copy(remotePath, localPath, true);
+            return new FileInfo(localPath);
+        }
+        catch (Exception e) { Error(this.Here(), e); return null; }
+    }
+
     public override Dictionary<AuditFileInfo, string> ReadFilesAsText(List<AuditFileInfo> files)
     {
         CallerInformation here = this.Here();

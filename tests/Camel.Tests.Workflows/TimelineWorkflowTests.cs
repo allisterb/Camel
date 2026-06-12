@@ -205,6 +205,74 @@ public class TimelineWorkflowTests : TestsRuntime
         Assert.True(times.SequenceEqual(times.OrderBy(t => t)));
     }
 
+    [Fact]
+    public async Task CanTriageTimelineForAnomalousPivots()
+    {
+        // Auto-discover pivots in the SYSTEM-hive timeline via the (event_id, Δt) detectors — end to end through the
+        // real psort → canonicalize → ensemble path (registry events: tokens like reg:run / reg:shimcache).
+        var r = await workflow.TriageTimelineAsync(RegPlaso, budget: 50);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.Equal(RegPlaso, r.Result.StorageFile);
+        Assert.True(r.Result.TotalEvents > 0, "no canonical events scored");
+        Assert.True(r.Result.Pivots.Length <= 50);                          // capped at the budget
+        // The shortlist is ranked most-surprising-first and each pivot carries a reason an analyst can act on.
+        var bits = r.Result.Pivots.Select(p => p.Bits).ToArray();
+        Assert.True(bits.SequenceEqual(bits.OrderByDescending(b => b)));
+        Assert.All(r.Result.Pivots, p =>
+        {
+            Assert.False(string.IsNullOrEmpty(p.EventType));
+            Assert.NotEmpty(p.Reasons);
+        });
+    }
+
+    // NOTE: impractical through PsortAsync at this scale — it exports all ~145k events to json_line (~540MB) and
+    // cats the whole file back into one CLR string, which is extremely slow / memory-heavy (the same transfer wall
+    // that motivated the slim-CSV staging in the anomaly eval). TriageTimelineAsync is fine for moderate timelines;
+    // scaling to a full super timeline needs a streaming/sampled export or psort-side reduction (future work).
+    // Validated 2026-06-12 (~2m15s): triage(RegPlaso) → 5 pivots expanded, each ranked + with reasons + a non-empty
+    // slice. [Skip] in the suite because each psort --slice re-scans the whole storage (~20s × topPivots); the
+    // chaining is thin glue over the (suite-tested) TriageTimelineAsync + (tested) PivotAround/--slice export.
+    [Fact(Skip = "slow: psort --slice re-scans storage per pivot (×topPivots); validated one-off, run manually")]
+    public async Task CanAutoPivotExpandFromAnomalies()
+    {
+        // Triage the SYSTEM-hive timeline for anomalies, then expand the top pivots into their ±N-min slices.
+        var r = await workflow.AutoPivotExpansionAsync(RegPlaso, budget: 50, topPivots: 5, sliceSizeMinutes: 5);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        Assert.Equal(RegPlaso, r.Result.StorageFile);
+        Assert.True(r.Result.TotalEvents > 0);
+        Assert.True(r.Result.Pivots.Length <= 5);                          // capped at topPivots
+        Assert.Equal(5, r.Result.SliceSizeMinutes);
+        // Expanded pivots stay ranked by anomaly score, each carries its triggering anomaly, and the slice around a
+        // real pivot contains at least the pivot event itself.
+        var bits = r.Result.Pivots.Select(p => p.Pivot.Bits).ToArray();
+        Assert.True(bits.SequenceEqual(bits.OrderByDescending(b => b)));
+        Assert.All(r.Result.Pivots, e => Assert.NotEmpty(e.Pivot.Reasons));
+        Assert.Contains(r.Result.Pivots, e => e.SurroundingCount > 0);
+    }
+
+    // Validated 2026-06-12 (~2m2s): 145,756 events → 147 pivots (0.10%); top = the attacker's PowerShell 4103
+    // bursts (one flagged "2 suspicious keyword(s)" = the squirreldirectory C2) + 4907/4945 audit bursts, with the
+    // 1102/104 log-clears surfaced. Works now via PsortReducedAsync (server-side reduce → SCP download → stream
+    // parse); ~110s of that is psort's own export. [Skip] in the suite (slow + depends on the ad-hoc 3-log plaso).
+    [Fact(Skip = "one-off real-data validation (~2m, needs the staged /tmp/camel_srl_3logs.plaso); run manually")]
+    public async Task TriagesRealSrlTimelineEndToEnd()
+    {
+        // Full workflow over the real compromised host (Security+System+PowerShell, ~145k events): should surface
+        // the anti-forensics log-clears (1102/104) and the squirreldirectory C2 PowerShell among the top pivots.
+        var r = await workflow.TriageTimelineAsync("/tmp/camel_srl_3logs.plaso", budget: 200);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "camel_wf_triage_srl.txt"),
+            $"{r.Message}\nTotalEvents={r.Result.TotalEvents} Candidates={r.Result.Candidates} Pivots={r.Result.Pivots.Length} Compression={r.Result.CompressionRatio:P2}\n" +
+            string.Join("\n", r.Result.Pivots.Take(20).Select(p => $"  [{p.Bits,7:F1}] {p.Time:u} {p.EventType} ×{p.EventCount} — {string.Join("; ", p.Reasons)}")));
+        Assert.Contains(r.Result.Pivots, p => p.EventType is "evtx:1102" or "evtx:104");   // log-clears surfaced
+    }
+
     // Writes UTF-8 text to a file on the SIFT box via base64 (avoids shell-escaping the YAML backslashes).
     private void WriteRemoteFile(string path, string content)
     {

@@ -2,6 +2,7 @@ namespace Camel.Toolkits;
 
 using System;
 using System.Collections.Generic;
+using System.Text;
 
 using Microsoft.Extensions.Configuration;
 
@@ -109,6 +110,57 @@ public class TimelineToolkit : Toolkit
         finally { try { auditEnvironment.ExecuteCommand("rm", $"-f {file}", out _, false); } catch { } }
     }
 
+    /// <summary>
+    /// Like <see cref="PsortAsync"/> but server-side <em>reduced</em> for scale: psort exports json_line on the
+    /// workstation, then a small Python pass strips the bulky <c>strings</c>/<c>xml_string</c> payloads and
+    /// truncates each rendered <c>message</c> to <paramref name="maxMessageChars"/> before only the slim file
+    /// crosses the wire. A full super timeline's json_line export is dominated by the per-event message (rendered
+    /// Strings arrays — often well over 0.5&#160;KB/event), so reduction shrinks the transfer roughly 10x while
+    /// keeping every field the canonicalization / anomaly pipeline needs: <c>timestamp</c>, <c>timestamp_desc</c>,
+    /// <c>data_type</c>, the path (<c>display_name</c>/<c>filename</c>), and enough of the message for the Event-ID
+    /// prefix and content keywords. This is what makes triaging a large timeline feasible where
+    /// <see cref="PsortAsync"/>'s whole-file transfer would overrun memory. NB: message length is capped at
+    /// <paramref name="maxMessageChars"/>, so the content detector's length-outlier signal saturates there (the
+    /// keyword signal is unaffected). Requires <c>python3</c> on the workstation (ships with Plaso).
+    /// </summary>
+    public async Task<TimelineEvent[]?> PsortReducedAsync(string storageFile, string? filter = null, int maxMessageChars = 1024)
+    {
+        var id = Guid.NewGuid().ToString("N");
+        string big = $"/tmp/camel_ts_{id}.jsonl", slim = $"/tmp/camel_ts_{id}.slim.jsonl", script = $"/tmp/camel_reduce_{id}.py";
+        string localSlim = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"camel_ts_{id}.slim.jsonl");
+        try
+        {
+            if (await ExecuteToolTextAsync("Psort",
+                    $"-q -o json_line -w {Q(big)} {Q(storageFile)}" + (filter is not null ? $" {Qd(filter)}" : "")) is null)
+                return null;
+
+            if (!await WriteRemoteTextAsync(script, ReduceScript))
+                return null;
+
+            // Reduce server-side: only the slim json (truncated messages, no Strings/xml payloads) is produced.
+            var reduced = await auditEnvironment.ExecuteCommandAsync("python3", $"{Q(script)} {Q(big)} {Q(slim)} {maxMessageChars}", false);
+            if (!reduced.IsCompleted)
+            {
+                Error($"Server-side timeline reduction failed for '{storageFile}': {reduced.Output}");
+                return null;
+            }
+
+            // SCP the slim file down (a binary stream — far faster than capturing a huge file through stdout) and
+            // stream-parse it from disk, so neither the wire nor memory holds the whole export at once.
+            if (auditEnvironment.GetFileAsLocal(slim, localSlim) is null)
+            {
+                Error($"Failed to download the reduced timeline '{slim}' from the workstation.");
+                return null;
+            }
+            return ParseJsonLinesFile<TimelineEvent>(localSlim);
+        }
+        finally
+        {
+            try { auditEnvironment.ExecuteCommand("rm", $"-f {big} {slim} {script}", out _, false); } catch { }
+            try { System.IO.File.Delete(localSlim); } catch { }
+        }
+    }
+
     /// <summary>Inspects a .plaso storage file and returns parser hit statistics and the total event count.</summary>
     public async Task<PlasoInfo?> PinfoAsync(string storageFile) =>
         await ExecuteToolTextAsync("Pinfo", $"--output-format json {Q(storageFile)}") is { } o ? PlasoInfo.Parse(o) : null;
@@ -185,6 +237,40 @@ public class TimelineToolkit : Toolkit
     ];
 
     // Single-quote a path so spaces survive the shell.
+    // Writes UTF-8 text to a workstation file via base64 (the payload is alphanumeric, so it survives the shell
+    // unescaped — used to drop the reducer script on the box without quoting a multi-line Python source).
+    private async Task<bool> WriteRemoteTextAsync(string path, string content)
+    {
+        var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(content));
+        return (await auditEnvironment.ExecuteCommandAsync("bash", $"-c {Qd($"echo {b64} | base64 -d > {path}")}", false)).IsCompleted;
+    }
+
+    // Server-side json_line reducer (args: in, out, max-message-chars). Keeps only the fields the canonical/anomaly
+    // pipeline reads and truncates the rendered message, so the slim output is a fraction of the full export.
+    private const string ReduceScript =
+        """
+        import sys, json
+        inf, outf, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+        with open(inf) as f, open(outf, 'w') as o:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except Exception:
+                    continue
+                m = e.get('message') or ''
+                o.write(json.dumps({
+                    'timestamp': e.get('timestamp'),
+                    'timestamp_desc': e.get('timestamp_desc'),
+                    'data_type': e.get('data_type'),
+                    'display_name': e.get('display_name'),
+                    'filename': e.get('filename'),
+                    'message': m[:n],
+                }) + '\n')
+        """;
+
     private static string Q(string path) => $"'{path}'";
     // hayabusa source selector: -f for a single .evtx file, -d for a directory.
     private static string Src(string path, bool directory) => $"{(directory ? "-d" : "-f")} {Q(path)}";

@@ -14,6 +14,7 @@
     <ProjectReference Include="..\Camel.Environments\Camel.Environments.csproj" />
     <ProjectReference Include="..\Camel.Runtime\Camel.Runtime.csproj" />
     <ProjectReference Include="..\Camel.Toolkits\Camel.Toolkits.csproj" />
+    <ProjectReference Include="..\Camel.Inference\Camel.Inference.csproj" />
   </ItemGroup>
 
 </Project>

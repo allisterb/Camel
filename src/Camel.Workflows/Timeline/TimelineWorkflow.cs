@@ -10,6 +10,7 @@ using SerilogTimings;
 using Camel.Toolkits;
 using Camel.Toolkits.Models;
 using Camel.Workflows.Models;
+using Camel.Inference;
 
 /// <summary>
 /// Timeline-creation workflows built on the Plaso toolkit (log2timeline → pinfo → psort), codifying the FOR508
@@ -236,6 +237,112 @@ public class TimelineWorkflow : Workflow
                 ? $"No hayabusa alerts at or above '{minLevel}' on '{evtxPath}' — no pivots detected."
                 : $"Detected {pivots.Length} pivot(s) from {alerts.Length} '{minLevel}'+ alert(s): " +
                   string.Join("; ", report.Pivots.Take(5).Select(p => $"{p.PivotTime:u} '{p.Alert.RuleTitle}' ({p.SurroundingCount} ev)")) + ".");
+    }
+
+    /// <summary>
+    /// Auto-discovers pivot points by triaging the timeline with the label-free (event_id, Δt) anomaly detectors
+    /// (Camel.Inference): exports the events from <paramref name="storageFile"/>, canonicalizes them, runs the
+    /// <see cref="AnomalyDetectionToolkit"/> ensemble (rare type / rare transition / volume burst / periodic beacon
+    /// / suspicious content), and returns the most-surprising episodes as a ranked review shortlist. This answers
+    /// the FOR508 "where do I begin to look?" problem when there is no known signature (<see cref="DetectTimelinePivotsAsync"/>)
+    /// or keyword (<see cref="SearchTimelineAsync"/>) to start from — the detectors generate the starting points
+    /// statistically. Self-baselining: the host's own stream defines "normal".
+    /// <para><paramref name="highSignalOnly"/> (default true) drops the filesystem-metadata firehose first (see
+    /// <see cref="NoiseFilters.KeepHighSignal"/>), focusing on event-log / registry / web / prefetch / LNK artifacts;
+    /// set false to also include filesystem events (e.g. to surface a burst of newly created executables).
+    /// <paramref name="filter"/> optionally pre-narrows the psort export (e.g. a date window).</para>
+    /// </summary>
+    /// <param name="storageFile">The .plaso to triage (e.g. one built by <see cref="CreateTriageTimelineAsync"/>).</param>
+    /// <param name="budget">Maximum pivots to return — the analyst's review budget (default 200).</param>
+    /// <param name="highSignalOnly">Drop raw filesystem-metadata churn before triaging (default true).</param>
+    /// <param name="filter">Optional psort filter applied to the export (e.g. a "date &gt; …" window).</param>
+    public async Task<WorkflowResult<TimelineTriageReport>> TriageTimelineAsync(
+        string storageFile, int budget = 200, bool highSignalOnly = true, string? filter = null)
+    {
+        using var op = Begin("Triaging timeline {0} for anomalous pivots (budget {1})", storageFile, budget);
+
+        // Reduced export: only the canonical-relevant fields (with truncated messages) cross the wire, so this
+        // scales to large super timelines that would overrun PsortAsync's whole-file transfer.
+        var events = await Timeline.PsortReducedAsync(storageFile, filter);
+        if (events is null)
+            return WorkflowResult<TimelineTriageReport>.Failure($"psort export/reduction failed for '{storageFile}'.");
+
+        var canonical = EventCanonicalizer.Canonicalize(events, highSignalOnly ? NoiseFilters.KeepHighSignal : null);
+        if (canonical.Length == 0)
+            return WorkflowResult<TimelineTriageReport>.Failure(
+                $"No events to triage from '{storageFile}'" + (highSignalOnly ? " after high-signal filtering (try highSignalOnly: false)." : "."));
+
+        var triage = new AnomalyDetectionToolkit().Triage(canonical, budget);
+        var pivots = triage.Shortlist.Select(i => new TimelineTriagePivot
+        {
+            Time = i.Time,
+            EventType = i.Token,
+            Bits = i.TotalBits,
+            EventCount = i.Count,
+            Reasons = i.Findings.Select(f => f.Reason).ToArray(),
+        }).ToArray();
+
+        op.Complete();
+        var report = new TimelineTriageReport
+        {
+            StorageFile = storageFile,
+            Pivots = pivots,
+            TotalEvents = canonical.Length,
+            Candidates = triage.Candidates,
+        };
+        return WorkflowResult<TimelineTriageReport>.Success(report,
+            pivots.Length == 0
+                ? $"Triaged {canonical.Length} event(s); nothing surfaced above the detectors' thresholds."
+                : $"Triaged {canonical.Length} event(s) → {pivots.Length} pivot(s) worth review " +
+                  $"({report.CompressionRatio:P2}, {triage.Candidates} candidates). Top: " +
+                  string.Join("; ", pivots.Take(3).Select(p => $"{p.Time:u} {p.EventType} [{p.Bits:F0} bits]")) + ".");
+    }
+
+    /// <summary>
+    /// The full FOR508 analysis loop, automated: <see cref="TriageTimelineAsync"/> surfaces the anomalous pivots,
+    /// then the top <paramref name="topPivots"/> are each expanded into their <em>temporal proximity</em> — the
+    /// events within <paramref name="sliceSizeMinutes"/> minutes either side (psort <c>--slice</c>, full detail
+    /// including the filesystem churn triage filtered out). This turns "where do I begin to look?" (the detectors)
+    /// straight into "what happened before and after?" (the slices), so an analyst gets ranked anomalies already
+    /// in context. Slices are cheap (a few minutes of events each) and fetched in parallel.
+    /// </summary>
+    /// <param name="storageFile">The .plaso to triage and slice.</param>
+    /// <param name="budget">Triage review budget (anomaly shortlist size) before taking the top pivots.</param>
+    /// <param name="topPivots">How many of the top-ranked pivots to expand (default 10).</param>
+    /// <param name="sliceSizeMinutes">Minutes either side of each pivot to slice (default 5).</param>
+    /// <param name="highSignalOnly">Drop raw filesystem-metadata churn before triaging (default true).</param>
+    public async Task<WorkflowResult<AutoPivotReport>> AutoPivotExpansionAsync(
+        string storageFile, int budget = 200, int topPivots = 10, int sliceSizeMinutes = 5, bool highSignalOnly = true)
+    {
+        using var op = Begin("Auto-pivot expansion on {0} (top {1} of budget {2}, ±{3} min)", storageFile, topPivots, budget, sliceSizeMinutes);
+
+        var triage = await TriageTimelineAsync(storageFile, budget, highSignalOnly);
+        if (!triage.IsSuccess || triage.Result is null)
+            return WorkflowResult<AutoPivotReport>.Failure(triage.Message ?? $"Triage failed for '{storageFile}'.");
+
+        var top = triage.Result.Pivots.Take(topPivots).ToArray();
+
+        // Slice the timeline around each pivot in parallel (psort --slice is near-instant; the env throttles concurrency).
+        var expanded = await Task.WhenAll(top.Select(async p =>
+        {
+            var slice = await Timeline.PsortAsync(storageFile, slice: Iso(p.Time), sliceSize: sliceSizeMinutes) ?? [];
+            return new ExpandedPivot { Pivot = p, Surrounding = slice };
+        }));
+
+        op.Complete();
+        var report = new AutoPivotReport
+        {
+            StorageFile = storageFile,
+            Pivots = expanded.OrderByDescending(e => e.Pivot.Bits).ToArray(),
+            TotalEvents = triage.Result.TotalEvents,
+            Candidates = triage.Result.Candidates,
+            SliceSizeMinutes = sliceSizeMinutes,
+        };
+        return WorkflowResult<AutoPivotReport>.Success(report,
+            expanded.Length == 0
+                ? $"Triaged {report.TotalEvents} event(s); no pivots to expand."
+                : $"Expanded {expanded.Length} pivot(s) from {report.Candidates} candidates (±{sliceSizeMinutes} min): " +
+                  string.Join("; ", report.Pivots.Take(3).Select(e => $"{e.Pivot.Time:u} {e.Pivot.EventType} ({e.SurroundingCount} ev)")) + ".");
     }
 
     /// <summary>

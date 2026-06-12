@@ -447,7 +447,7 @@ public class SshAuditEnvironment : AuditEnvironment
     #endregion
 
     #region Methods
-    public FileInfo? GetFileAsLocal(string remote_path, string local_path)
+    public override FileInfo? GetFileAsLocal(string remote_path, string local_path)
     {
         CallerInformation here = this.Here();
         Stopwatch sw = new Stopwatch();
@@ -559,7 +559,9 @@ public class SshAuditEnvironment : AuditEnvironment
     internal ScpClient? CreateScpClient([CallerMemberName] string memberName = "", [CallerFilePath] string fileName = "", [CallerLineNumber] int lineNumber = 0)
     {
         CallerInformation caller = new CallerInformation(memberName, fileName, lineNumber);
-        ScpClient c = new ScpClient(this.HostName, this.User, ToInsecureString(this.ssh_client_pass));
+        // ssh_client_pass is already the plaintext password string (ScpClient takes a string); do NOT pass it
+        // through ToInsecureString, which expects a SecureString and would throw.
+        ScpClient c = new ScpClient(this.HostName, this.User, this.ssh_client_pass ?? "");
         Stopwatch sw = new Stopwatch();
         try
         {

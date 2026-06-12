@@ -265,6 +265,15 @@ public abstract class Toolkit : Runtime
             .Select(l => System.Text.Json.JsonSerializer.Deserialize<T>(l, JsonLineOptions))
             .Where(x => x is not null).Select(x => x!).ToArray();
 
+    /// <summary>Streams newline-delimited JSON from a local file (read lazily, line by line) into
+    /// <typeparamref name="T"/>[] — avoids materializing a large export as one in-memory string.</summary>
+    protected static T[] ParseJsonLinesFile<T>(string localPath) =>
+        System.IO.File.ReadLines(localPath)
+            .Select(l => l.Trim().TrimStart('﻿'))
+            .Where(l => l.StartsWith('{'))
+            .Select(l => System.Text.Json.JsonSerializer.Deserialize<T>(l, JsonLineOptions))
+            .Where(x => x is not null).Select(x => x!).ToArray();
+
     /// <summary>
     /// Runs a tool that writes CSV output to a directory (EZ Tools <c>--csv</c>), reads the produced
     /// file, and maps each row (keyed by header column) with <paramref name="map"/>. Returns an empty

@@ -55,6 +55,11 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     public abstract AuditFileInfo ConstructFile(string file_path);
     public abstract AuditDirectoryInfo ConstructDirectory(string dir_path);
     public abstract Dictionary<AuditFileInfo, string> ReadFilesAsText(List<AuditFileInfo> files);
+
+    /// <summary>Copies a file from this environment to <paramref name="localPath"/> and returns it (SCP for a remote
+    /// SSH environment; a plain file copy locally), so a large output can be streamed/parsed from disk instead of
+    /// captured through a command's stdout. Returns null on failure.</summary>
+    public abstract FileInfo? GetFileAsLocal(string remotePath, string localPath);
     protected abstract TraceSource TraceSource { get; set; }
     #endregion
 
