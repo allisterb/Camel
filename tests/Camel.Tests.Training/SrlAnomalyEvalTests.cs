@@ -130,7 +130,7 @@ public class SrlAnomalyEvalTests
 
     // Measured one-off — the content detector (Studiawan Ch.7 bad-words + message-length) closes the C2 gap:
     //   content-only: C2 recall 100% (24/24) · shortlist 65 · firstRank 8   ← previously UNDETECTABLE
-    //   ensemble 200: C2 100% (24/24) | log-clear 100% (8/8) | ALL 100% (32/32) · shortlist 180 (compression 0.12%, ~810x)
+    //   ensemble 200: C2 100% (24/24) | log-clear 100% (8/8) | ALL 100% (32/32) · shortlist 148 (compression 0.10%, ~985x), full 5-detector ensemble
     // CONCLUSION: adding the two leakage-safe content scalars lets the toolkit recover BOTH IOC classes — the C2
     // PowerShell (squirreldirectory download cradle, caught by keywords + 25k-char encoded-blob length on 4103/4104)
     // AND the anti-forensics log-clears — in a 180-event review set out of 145,756. The thesis idea works.

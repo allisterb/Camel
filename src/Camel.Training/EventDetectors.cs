@@ -165,6 +165,63 @@ public sealed class TimingBurstDetector(double windowSeconds = 60.0, double minB
 }
 
 /// <summary>
+/// Flags event types that recur on a regular <em>cadence</em> — a low-jitter periodic beat is the signature of an
+/// automated process (a C2 beacon, a scheduled task, a polling agent), and a content-free one: it shows up in the
+/// timing alone even when the message is encrypted or stripped. For each token it takes the inter-arrival intervals
+/// of its (de-duplicated) timestamps, and flags the token when a strong fraction of intervals cluster tightly
+/// around the median period (robust to an intermittent beacon's occasional long gaps). The score grows with how
+/// many beats are regular and how tight they are. Sub-second cadence is left to <see cref="TimingBurstDetector"/>.
+/// </summary>
+public sealed class TimingBeaconDetector(
+    int minEvents = 8, double minPeriodSeconds = 2.0, double maxPeriodSeconds = 6 * 3600,
+    double toleranceFraction = 0.25, double minRegularFraction = 0.5, int minRegular = 6, double minBits = 6.0) : IEventDetector
+{
+    public string Name => "timing-beacon";
+
+    public IEnumerable<Finding> Detect(CanonicalEvent[] baseline, CanonicalEvent[] target)
+    {
+        var byToken = new Dictionary<string, List<int>>();
+        for (int i = 0; i < target.Length; i++)
+        {
+            var t = EventType.TokenOf(target[i]);
+            (byToken.TryGetValue(t, out var l) ? l : (byToken[t] = [])).Add(i);
+        }
+
+        foreach (var (token, idxs) in byToken)
+        {
+            if (idxs.Count < minEvents) continue;
+
+            // De-duplicate identical timestamps (an EVTX record emits several MACB-role events at the same instant,
+            // which would otherwise read as a perfect zero-period beacon).
+            var times = new List<long>(idxs.Count);
+            foreach (var i in idxs) if (times.Count == 0 || target[i].Ts != times[^1]) times.Add(target[i].Ts);
+            if (times.Count < minEvents) continue;
+
+            var intervals = new double[times.Count - 1];
+            for (int k = 1; k < times.Count; k++) intervals[k - 1] = (times[k] - times[k - 1]) / 1_000_000.0;
+
+            var sorted = (double[])intervals.Clone();
+            Array.Sort(sorted);
+            double median = sorted[sorted.Length / 2];
+            if (median < minPeriodSeconds || median > maxPeriodSeconds) continue;
+
+            double tol = median * toleranceFraction;
+            int regular = 0;
+            foreach (var v in intervals) if (Math.Abs(v - median) <= tol) regular++;
+            double frac = (double)regular / intervals.Length;
+            if (regular < minRegular || frac < minRegularFraction) continue;
+
+            double bits = 0.6 * regular * frac;             // heuristic: confidence grows with run length × tightness
+            if (bits < minBits) continue;
+
+            int rep = idxs[0];
+            yield return new Finding(rep, target[rep].Ts, token, bits, Name,
+                $"'{token}' beacons every ~{median:F1}s ({regular}/{intervals.Length} intervals within ±{toleranceFraction:P0}) ({bits:F1} bits)");
+        }
+    }
+}
+
+/// <summary>
 /// Flags events whose <em>content</em> is suspicious — the detector that addresses what type/sequence/timing miss
 /// (malicious content inside a common event type). Two leakage-safe scalars (see <see cref="ContentSignals"/>):
 /// a curated DFIR <see cref="CanonicalEvent.BadWordCount"/> (knowledge-based — a download cradle / LOLBin keyword
@@ -250,9 +307,10 @@ public sealed class DetectorEnsemble
 
     public DetectorEnsemble(params IEventDetector[] detectors) => this.detectors = detectors;
 
-    /// <summary>The default suite: rare type + rare transition + timing burst + suspicious content.</summary>
+    /// <summary>The default suite: rare type + rare transition + timing burst + timing beacon + suspicious content.</summary>
     public static DetectorEnsemble Default() =>
-        new(new RareTypeDetector(), new RareTransitionDetector(), new TimingBurstDetector(), new ContentDetector());
+        new(new RareTypeDetector(), new RareTransitionDetector(), new TimingBurstDetector(),
+            new TimingBeaconDetector(), new ContentDetector());
 
     public TriageReport Triage(CanonicalEvent[] baseline, CanonicalEvent[] target, int budget, double episodeGapSeconds = 60.0)
     {

@@ -58,6 +58,23 @@ public class EventDetectorTests
         Assert.True(peak.Bits > 6, $"a 30x rate spike should be surprising: {peak.Bits}");
     }
 
+    // --- TimingBeaconDetector ---
+
+    [Fact]
+    public void TimingBeaconFlagsRegularCadenceNotJitter()
+    {
+        // A token beating every 60s for 30 beats (a beacon), plus an irregularly-spaced token (not a beacon).
+        var beacon = Enumerable.Range(0, 30).Select(k => Evtx(1000 * Sec + k * 60 * Sec, 9999));
+        var jitter = new long[] { 5, 9, 40, 41, 120, 121, 400, 980, 1001, 3000 }.Select(s => Evtx(s * Sec, 1111));
+        var target = beacon.Concat(jitter).OrderBy(e => e.Ts).ToArray();
+
+        var findings = new TimingBeaconDetector().Detect([], target).ToArray();
+
+        var hit = Assert.Single(findings);
+        Assert.Equal("evtx:9999", hit.Token);
+        Assert.Contains("beacons every ~60", hit.Reason);
+    }
+
     // --- ContentSignals + ContentDetector ---
 
     [Fact]
