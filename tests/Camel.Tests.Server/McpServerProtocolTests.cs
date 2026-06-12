@@ -71,6 +71,28 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
     }
 
     [Fact]
+    public async Task TableRendersAsciiGrid()
+    {
+        await using var client = await NewClientAsync();
+
+        // Mixed cell types (string/number/bool/null) and a ragged short row — exercises sizing + padding.
+        var r = await client.CallToolAsync("ExecuteJavaScript", Script(
+            "table(['Process','PID','Hidden'], [['svchost.exe', 880, false], ['evil', 1337, true], ['x']]);"));
+
+        Assert.NotEqual(true, r.IsError);
+        var text = Text(r);
+        var expected = string.Join("\n",
+            "+-------------+------+--------+",
+            "| Process     | PID  | Hidden |",
+            "+-------------+------+--------+",
+            "| svchost.exe | 880  | false  |",
+            "| evil        | 1337 | true   |",
+            "| x           |      |        |",
+            "+-------------+------+--------+");
+        Assert.Contains(expected, text.Replace("\r\n", "\n"));
+    }
+
+    [Fact]
     public async Task ThrowingScriptReturnsError()
     {
         await using var client = await NewClientAsync();

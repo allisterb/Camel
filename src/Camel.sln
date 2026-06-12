@@ -49,6 +49,11 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Camel.Tests.Training", "..\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Camel.Inference", "Camel.Inference\Camel.Inference.csproj", "{26996E46-4933-429A-B508-AB5ABE20B2C0}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Agent", "Agent", "{1513A316-D374-45FA-9CED-37F6B2E3534C}"
+	ProjectSection(SolutionItems) = preProject
+		..\tests\agent\CLAUDE.md = ..\tests\agent\CLAUDE.md
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -257,6 +262,7 @@ Global
 		{C72ADD51-4EC6-4E0C-982A-59877DBBAE27} = {C17BDA0E-EB4C-44D5-B32E-19A2CE189AAA}
 		{9E4A6899-1AE8-95E0-6FC0-44AE1281788C} = {E8840196-B3E7-4537-AB77-8C1B8F75486A}
 		{26996E46-4933-429A-B508-AB5ABE20B2C0} = {E8840196-B3E7-4537-AB77-8C1B8F75486A}
+		{1513A316-D374-45FA-9CED-37F6B2E3534C} = {C17BDA0E-EB4C-44D5-B32E-19A2CE189AAA}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {97AB5048-4498-43FE-8CB8-B2FC147FCDE7}

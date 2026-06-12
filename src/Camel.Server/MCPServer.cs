@@ -33,7 +33,8 @@ public class CamelMCPTools : Runtime
         jsoptions.Host.StringCompilationAllowed = false;        
         // Lets generated JS `await` async toolkit methods (CLR Task<T> -> awaitable JS promise). Required so
         // tool calls run on the async path, where per-session cancellation (CancelExecutions) takes effect.
-        jsoptions.ExperimentalFeatures = ExperimentalFeature.TaskInterop;                
+        jsoptions.ExperimentalFeatures = ExperimentalFeature.TaskInterop;
+        jsoptions.Constraints.PromiseTimeout = TimeSpan.FromHours(24);
     }
 
     [McpServerTool(Name = "ExecuteJavaScript"), Description(
@@ -51,14 +52,10 @@ public class CamelMCPTools : Runtime
         var session = registry.GetOrCreate(sessioid);
         StringBuilder output = new StringBuilder();
         var jsinterp = new Engine(jsoptions)
-
           .SetValue("log", new Action<string>((s) => output.AppendLine(s)))
           .SetValue("error", new Action<string>((s) => output.AppendLine(s)))
           .SetValue("table", new Action<string[], object[][]>((headers, dataRows) =>
-          {
-              output.AppendLine(headers.ToString());
-
-          }))
+              output.AppendLine(RenderAsciiTable(headers, dataRows))))
           // Pure-compute anomaly triage over a canonical timeline (no AuditEnvironment); see Camel.Inference.
           // Typical flow: const ev = await timeline.PsortAsync(plaso); log(anomaly.Summarize(anomaly.TriageTimeline(ev, 200)));
           .SetValue("AnomalyDetectionToolkit", new Camel.Inference.AnomalyDetectionToolkit())
@@ -129,6 +126,69 @@ public class CamelMCPTools : Runtime
     
     // Stdio (and any transport that doesn't assign one) yields a null/empty session id; bucket those under "default".
     static string SessionId(McpServer server) => string.IsNullOrEmpty(server.SessionId) ? "default" : server.SessionId;
+
+    /// <summary>
+    /// Renders the JS <c>table(headers, rows)</c> call as a fixed-width ASCII grid (psql/GitHub style) for the
+    /// script's text output. <paramref name="headers"/> are the column titles; <paramref name="rows"/> is a jagged
+    /// array of cell values (Jint marshals JS strings/numbers/bools/null). Columns are sized to the widest cell,
+    /// cells are left-aligned, and short/long rows are padded/extended so the grid stays rectangular.
+    /// </summary>
+    internal static string RenderAsciiTable(string[]? headers, object[][]? rows)
+    {
+        headers ??= [];
+        rows ??= [];
+
+        // Column count spans the header and the widest row (ragged rows are tolerated).
+        int cols = headers.Length;
+        foreach (var r in rows) cols = Math.Max(cols, r?.Length ?? 0);
+        if (cols == 0) return "(empty table)";
+
+        // Stringify every cell up front (header row first), normalising control chars so they can't break the grid.
+        string[] Header() => Array.ConvertAll(Pad(headers, cols), Cell);
+        var grid = new List<string[]> { Header() };
+        grid.AddRange(rows.Select(r => Array.ConvertAll(Pad(r ?? [], cols), Cell)));
+
+        // Width of each column = widest cell in it.
+        var widths = new int[cols];
+        foreach (var row in grid)
+            for (int c = 0; c < cols; c++)
+                widths[c] = Math.Max(widths[c], row[c].Length);
+
+        string separator = "+" + string.Join("+", widths.Select(w => new string('-', w + 2))) + "+";
+        string Line(string[] row) =>
+            "| " + string.Join(" | ", row.Select((c, i) => c.PadRight(widths[i]))) + " |";
+
+        var sb = new StringBuilder();
+        sb.AppendLine(separator);
+        sb.AppendLine(Line(grid[0]));     // header
+        sb.AppendLine(separator);
+        for (int i = 1; i < grid.Count; i++) sb.AppendLine(Line(grid[i]));
+        sb.Append(separator);
+        return sb.ToString();
+
+        // Pad/extend a row to exactly `cols` entries so every grid row is rectangular.
+        static object?[] Pad(object?[] row, int cols)
+        {
+            if (row.Length == cols) return row;
+            var padded = new object?[cols];
+            Array.Copy(row, padded, Math.Min(row.Length, cols));
+            return padded;
+        }
+
+        // One cell -> its display string. Numbers/bools use invariant formatting; null -> empty; control chars -> spaces.
+        static string Cell(object? v)
+        {
+            string s = v switch
+            {
+                null => "",
+                bool b => b ? "true" : "false",
+                string str => str,
+                IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
+                _ => v.ToString() ?? "",
+            };
+            return s.Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ');
+        }
+    }
 
     readonly SessionRegistry registry;
     readonly Options jsoptions;
