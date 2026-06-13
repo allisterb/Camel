@@ -570,7 +570,62 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
         Assert.Empty(r.Result.Findings);
     }
 
+    // ── FOR500.3+4 workflows, against the CFREDS Data-Leakage PC image (/mnt/dlpc) ───────────────────────────────
+
+    [Fact]
+    public async Task CanAnalyzeShellItems()
+    {
+        var r = await workflow.AnalyzeShellItemsAsync(DlpcUser);
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotNull(r.Result);
+        // The informant browsed folders and opened files; at least one of the shell-item buckets is populated.
+        Assert.True(r.Result!.OpenedFiles.Length > 0 || r.Result.FoldersAccessed.Length > 0,
+            "expected opened files or browsed folders for the informant profile");
+    }
+
+    [Fact]
+    public async Task CanAnalyzeUsbDevices()
+    {
+        var r = await workflow.AnalyzeUsbDevicesAsync(DlpcSystem, DlpcSoftware,
+            setupApiLog: $"{Dlpc}/Windows/inf/setupapi.dev.log");
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotEmpty(r.Result!.Devices);
+        // The exfiltration thumb drive (SanDisk Cruzer Fit) should be profiled with a serial.
+        Assert.Contains(r.Result.Devices, d => (d.Product ?? "").Contains("Cruzer", StringComparison.OrdinalIgnoreCase)
+                                            && d.SerialNumber is { Length: > 0 });
+    }
+
+    [Fact]
+    public async Task CanAnalyzeEmailArchives()
+    {
+        // Analyse the informant's Outlook OST directly (full-volume search is slow; the single-archive path is exercised).
+        var r = await workflow.AnalyzeEmailArchivesAsync(DlpcUser, DlpcOst);
+
+        Assert.True(r.IsSuccess, r.Message);
+        var archive = Assert.Single(r.Result!.Archives);
+        Assert.NotEmpty(archive.Messages);
+        Assert.Contains("OST", archive.Store?.ContentType ?? "");
+    }
+
+    [Fact]
+    public async Task CanAnalyzeBrowserActivity()
+    {
+        var r = await workflow.AnalyzeBrowserActivityAsync($"{Dlpc}/Users/admin11");
+
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.NotEmpty(r.Result!.Sources);              // Chrome History and/or WebCacheV01.dat discovered
+        Assert.NotEmpty(r.Result.History);
+        Assert.All(r.Result.History, h => Assert.Contains("://", h.Url));
+    }
+
     const string Modern = "/mnt/ewf";
+    const string Dlpc = "/mnt/dlpc";
+    const string DlpcUser = "/mnt/dlpc/Users/informant";
+    const string DlpcSystem = "/mnt/dlpc/Windows/System32/config/SYSTEM";
+    const string DlpcSoftware = "/mnt/dlpc/Windows/System32/config/SOFTWARE";
+    const string DlpcOst = "/mnt/dlpc/Users/informant/AppData/Local/Microsoft/Outlook/iaman.informant@nist.gov.ost";
 
     AuditEnvironment sshenv;
     CamelToolkitsApi api;

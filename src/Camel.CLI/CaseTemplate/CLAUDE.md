@@ -171,6 +171,14 @@ via known signatures, keywords, and "evidence of…" categories), and anti-foren
   `GetKnownExecutablesFromShimcacheAsync`.
 - Persistence: `FindRegistryPersistenceMechanismsAsync` (Run/Services/Tasks/AppInit/shell),
   `FindWmiPersistenceAsync` (WMI event consumers), `FindDllHijackingAsync`.
+- Process-tree validation: `ValidateProcessTreeAsync(processes, checkInstanceCounts?)` — check processes (or a
+  `MemoryAnalysis.WindowsPsListAsync` result) against the MemProcFS/SANS expectation dataset for injection
+  (lsass/csrss/dwm spawning children), suspicious parents (Office/browser/LOLBin → shell), and bad parent/path/user.
+- Shell items / USB / e-mail / browser (FOR500.3+4): `AnalyzeShellItemsAsync(userProfileRoot)` (LNK + jump lists +
+  shellbags → files opened / folders browsed / external-device refs), `AnalyzeUsbDevicesAsync(systemHive,
+  softwareHive, ntuserHive?, setupApiLog?)` (USB device profiling + first/last connect),
+  `AnalyzeEmailArchivesAsync(volumeRoot, singleArchive?)` (PST/OST messages + attachments), and
+  `AnalyzeBrowserActivityAsync(userProfileRoot, webCacheDb?)` (Chrome/Edge/Firefox history + downloads + IE WebCache).
 - Authentication & lateral movement: `AnalyzeLogonsAsync`, `HuntLateralMovementAsync`, `DetectKerberosAttacksAsync`
   (DC), `AnalyzeExternalShareConnectionsAsync`.
 - Credential theft on disk: `DetectCredentialDumpingAsync` (ntds.dit / hive / LSASS / .kirbi).

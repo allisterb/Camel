@@ -669,3 +669,171 @@ public record ProcessTreeValidationReport
 
     public ProcessExpectationCheck[] SuspiciousProcesses => Processes.Where(p => p.Suspicious).ToArray();
 }
+
+// ── FOR500.3+4: Shell-item analysis (LNK + Jump Lists + Shellbags) ─────────────────────────────────────────────
+
+/// <summary>
+/// A file a user opened, recovered from a shortcut (LNK) or Jump List entry. <see cref="Path"/> is the target's
+/// full path; the <c>Target*</c> times are the target file's MAC timestamps captured when the shortcut was last
+/// written (so they can pre-date or post-date the live filesystem). <see cref="Source"/> records the artifact it
+/// came from (e.g. <c>LNK</c> or <c>JumpList</c>), and <see cref="Drive"/> the drive letter / UNC root the target
+/// lived on — the hook to USB/remote-share correlation.
+/// </summary>
+public record OpenedFileItem
+{
+    public string Path { get; init; } = "";
+    public string Source { get; init; } = "";
+    public string? AppId { get; init; }
+    public DateTime? TargetCreated { get; init; }
+    public DateTime? TargetModified { get; init; }
+    public DateTime? TargetAccessed { get; init; }
+    public long FileSize { get; init; }
+    public string? Arguments { get; init; }
+    public string? Drive { get; init; }
+    public string? VolumeSerialNumber { get; init; }
+    public DateTime? OpenedAround { get; init; }
+}
+
+/// <summary>A folder a user browsed, recovered from a Shellbag — its path and the first/last time the user
+/// interacted with that folder view (Explorer recorded its window position).</summary>
+public record FolderAccessItem
+{
+    public string Path { get; init; } = "";
+    public string? ShellType { get; init; }
+    public DateTime? FirstInteracted { get; init; }
+    public DateTime? LastInteracted { get; init; }
+}
+
+/// <summary>A shell-item reference to a non-local volume — a removable/secondary drive letter, a UNC share, or a
+/// named volume — surfaced as a lead for USB / remote-share correlation (cross-reference with
+/// <c>AnalyzeUsbDevicesAsync</c>). <see cref="Indicator"/> explains why it was flagged.</summary>
+public record ExternalDeviceRef
+{
+    public string Path { get; init; } = "";
+    public string Indicator { get; init; } = "";
+    public string Source { get; init; } = "";
+    public string? VolumeSerialNumber { get; init; }
+    public DateTime? When { get; init; }
+}
+
+/// <summary>
+/// The result of shell-item analysis for a user profile: the files they opened (<see cref="OpenedFiles"/>, from
+/// LNK + Jump Lists), the folders they browsed (<see cref="FoldersAccessed"/>, from Shellbags), and the references
+/// to external/removable/remote volumes (<see cref="ExternalDeviceEvidence"/>) that tie file activity to USB keys
+/// and network shares. These are leads to corroborate, not verdicts.
+/// </summary>
+public record ShellItemReport
+{
+    public OpenedFileItem[] OpenedFiles { get; init; } = [];
+    public FolderAccessItem[] FoldersAccessed { get; init; } = [];
+    public ExternalDeviceRef[] ExternalDeviceEvidence { get; init; } = [];
+}
+
+// ── FOR500.3+4: USB device analysis ───────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// One USB mass-storage device profiled from the registry, correlating the FOR500.3 key set: USBSTOR/USB
+/// (vendor/product/revision/serial/VID/PID, first &amp; last connect from the device-property timestamps),
+/// the Windows Portable Devices key (<see cref="VolumeName"/>/<see cref="DriveLetter"/>), MountedDevices /
+/// MountPoints2 (<see cref="DeviceGuid"/>, <see cref="User"/>), and — when given — the setupapi.dev.log first
+/// install time. <see cref="Sources"/> records which artifacts contributed.
+/// </summary>
+public record UsbDevice
+{
+    public string? SerialNumber { get; init; }
+    public string? Vendor { get; init; }
+    public string? Product { get; init; }
+    public string? Revision { get; init; }
+    public string? FriendlyName { get; init; }
+    public string? Vid { get; init; }
+    public string? Pid { get; init; }
+    public string? VolumeName { get; init; }
+    public string? DriveLetter { get; init; }
+    public string? DeviceGuid { get; init; }
+    public string? ParentIdPrefix { get; init; }
+    public string? User { get; init; }
+    public DateTime? FirstConnected { get; init; }
+    public DateTime? LastConnected { get; init; }
+    public DateTime? LastRemoved { get; init; }
+    public bool InSetupApiLog { get; init; }
+    public string[] Sources { get; init; } = [];
+}
+
+/// <summary>The result of USB device analysis: the devices reconstructed from the registry (and, optionally,
+/// corroborated against setupapi.dev.log). These are the keys/serials to correlate with shell-item
+/// volume references from <c>AnalyzeShellItemsAsync</c>.</summary>
+public record UsbDeviceReport
+{
+    public UsbDevice[] Devices { get; init; } = [];
+}
+
+// ── FOR500.4: Email archive analysis ──────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// One e-mail store recovered from disk: its path, the <see cref="PstStoreInfo"/> metadata (PST vs OST,
+/// encryption), and the messages parsed from it (<see cref="Messages"/>, header/metadata level). The computed
+/// properties give the triage summary — message count, the folders present, the date span, and how many messages
+/// carried attachments (the exfiltration channel the methodology highlights).
+/// </summary>
+public record EmailArchive
+{
+    public string Path { get; init; } = "";
+    public PstStoreInfo? Store { get; init; }
+    public EmailMessage[] Messages { get; init; } = [];
+
+    public int MessageCount => Messages.Length;
+    public string[] Folders => Messages.Select(m => m.Folder).Where(f => f is { Length: > 0 })
+        .Select(f => f!).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(f => f).ToArray();
+    public int MessagesWithAttachments => Messages.Count(m => m.AttachmentNames.Length > 0);
+    public DateTime? EarliestMessage => Messages.Where(m => m.Date is not null).Min(m => m.Date);
+    public DateTime? LatestMessage => Messages.Where(m => m.Date is not null).Max(m => m.Date);
+}
+
+/// <summary>The result of e-mail archive analysis over a volume: one <see cref="EmailArchive"/> per PST/OST store
+/// found (or the single store requested). Messages are surfaced at header/metadata level for triage.</summary>
+public record EmailArchiveReport
+{
+    public EmailArchive[] Archives { get; init; } = [];
+}
+
+// ── FOR500.4: Browser forensics ───────────────────────────────────────────────────────────────────────────────
+
+/// <summary>One visited-URL record, normalised across browsers: <see cref="Browser"/> names the source
+/// (Chrome/Edge/Firefox/"IE-Edge(WebCache)"), <see cref="Url"/>/<see cref="Title"/> the page,
+/// <see cref="VisitCount"/> how often, and <see cref="LastVisited"/> when (timestamps converted from each
+/// browser's epoch to UTC). <see cref="Source"/> is the database file it came from.</summary>
+public record BrowserHistoryEntry
+{
+    public string Browser { get; init; } = "";
+    public string Url { get; init; } = "";
+    public string? Title { get; init; }
+    public long VisitCount { get; init; }
+    public DateTime? LastVisited { get; init; }
+    public string? Source { get; init; }
+}
+
+/// <summary>One file download recovered from a browser's history database — the originating URL, where it was
+/// saved (<see cref="TargetPath"/>), its size, and when it started — the data-exfiltration / malware-delivery
+/// lead the methodology highlights.</summary>
+public record BrowserDownload
+{
+    public string Browser { get; init; } = "";
+    public string? Url { get; init; }
+    public string? TargetPath { get; init; }
+    public long TotalBytes { get; init; }
+    public DateTime? StartTime { get; init; }
+    public string? Source { get; init; }
+}
+
+/// <summary>
+/// The result of browser forensics for a user profile: the unified visited-URL <see cref="History"/> and file
+/// <see cref="Downloads"/> recovered across Chrome/Edge (Chromium <c>History</c>), Firefox (<c>places.sqlite</c>),
+/// and legacy IE/Edge (<c>WebCacheV01.dat</c>). <see cref="Sources"/> lists the databases parsed. Leads for
+/// reconstructing user web activity (and the e-mail accounts / cloud services in use, per the methodology).
+/// </summary>
+public record BrowserActivityReport
+{
+    public BrowserHistoryEntry[] History { get; init; } = [];
+    public BrowserDownload[] Downloads { get; init; } = [];
+    public string[] Sources { get; init; } = [];
+}

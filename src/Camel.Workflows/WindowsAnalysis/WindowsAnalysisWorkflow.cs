@@ -10,7 +10,7 @@ using Camel.Toolkits;
 using Camel.Toolkits.Models;
 using Camel.Workflows.Models;
 
-public class WindowsAnalysisWorkflow : Workflow
+public partial class WindowsAnalysisWorkflow : Workflow
 {
     public WindowsAnalysisWorkflow(CamelToolkitsApi api) : base(api) {}
 

@@ -658,3 +658,234 @@ public class RecycleBinEntry
         DeletedOn = EzParse.ToDate(r.Get("DeletedOn")),
     };
 }
+
+// ── FOR500.3+4: email (libpst/libpff), ESE (libesedb), USB (usbdeviceforensics) ───────────────────────────────
+
+/// <summary>pffinfo: metadata for a Personal/Offline Folder store (PST/OST) — parsed from its text output.</summary>
+public class PstStoreInfo
+{
+    public string SourceFile { get; set; } = "";
+    public long FileSize { get; set; }
+    /// <summary>"Personal Storage Tables (PST)" / "Offline Storage Tables (OST)".</summary>
+    public string? ContentType { get; set; }
+    /// <summary>e.g. "64-bit with 4k page".</summary>
+    public string? FileFormat { get; set; }
+    /// <summary>"none" / "compressible" / "high".</summary>
+    public string? EncryptionType { get; set; }
+
+    public static PstStoreInfo Parse(string stdout, string sourceFile)
+    {
+        string? Field(string label) => Regex.Match(stdout, $@"{Regex.Escape(label)}:\s*(.+)").Groups[1].Value.Trim() is { Length: > 0 } v ? v : null;
+        return new PstStoreInfo
+        {
+            SourceFile = sourceFile,
+            FileSize = EzParse.ToLong(Regex.Match(stdout, @"File size:\s*(\d+)").Groups[1].Value),
+            ContentType = Field("File content type"),
+            FileFormat = Field("File type"),
+            EncryptionType = Field("Encryption type"),
+        };
+    }
+}
+
+/// <summary>readpst: the mbox files (one per mail folder) produced when exporting a PST/OST, plus the parsed messages.</summary>
+public class EmailExportResult
+{
+    public string OutputDirectory { get; set; } = "";
+    public string[] MboxFiles { get; set; } = [];
+    public EmailMessage[] Messages { get; set; } = [];
+}
+
+/// <summary>One e-mail parsed (header/metadata level) from an exported mbox folder — From/To/Subject/Date,
+/// the X-Originating-IP when present, and any attachment filenames declared in the MIME parts.</summary>
+public class EmailMessage
+{
+    public string? Folder { get; set; }
+    public string? From { get; set; }
+    public string? To { get; set; }
+    public string? Cc { get; set; }
+    public string? Subject { get; set; }
+    public DateTime? Date { get; set; }
+    public string? SourceIp { get; set; }
+    public string[] AttachmentNames { get; set; } = [];
+
+    // Splits an mbox into messages on the "From " separator line and parses each message's headers. Header
+    // parsing stops at the first blank line; attachment filenames are scraped from Content-Disposition parts.
+    public static EmailMessage[] ParseMbox(string mbox, string folder)
+    {
+        var messages = new List<EmailMessage>();
+        var lines = mbox.Replace("\r\n", "\n").Split('\n');
+        int i = 0;
+        while (i < lines.Length)
+        {
+            if (!lines[i].StartsWith("From ", StringComparison.Ordinal)) { i++; continue; }
+            i++;                                                            // consume the "From " separator
+            var headers = new List<string>();
+            // Unfold and collect headers up to the blank line that ends the header block.
+            string? cur = null;
+            for (; i < lines.Length && lines[i].Length > 0; i++)
+            {
+                if ((lines[i][0] == ' ' || lines[i][0] == '\t') && cur is not null) cur += " " + lines[i].Trim();
+                else { if (cur is not null) headers.Add(cur); cur = lines[i]; }
+            }
+            if (cur is not null) headers.Add(cur);
+            // Scan the body for attachment filenames until the next "From " separator.
+            var attachments = new List<string>();
+            for (; i < lines.Length && !lines[i].StartsWith("From ", StringComparison.Ordinal); i++)
+            {
+                var m = Regex.Match(lines[i], @"(?:filename|name)\*?=""?([^"";]+)", RegexOptions.IgnoreCase);
+                if (m.Success && lines[i].Contains("disposition: attachment", StringComparison.OrdinalIgnoreCase)
+                                 || m.Success && lines[i].Contains("filename", StringComparison.OrdinalIgnoreCase))
+                    attachments.Add(m.Groups[1].Value.Trim());
+            }
+            string? H(string name) => headers.FirstOrDefault(h => h.StartsWith(name + ":", StringComparison.OrdinalIgnoreCase))?[(name.Length + 1)..].Trim();
+            messages.Add(new EmailMessage
+            {
+                Folder = folder,
+                From = H("From"), To = H("To"), Cc = H("Cc"), Subject = H("Subject"),
+                Date = EzParse.ToDate(H("Date")),
+                SourceIp = H("X-Originating-IP")?.Trim('[', ']', ' '),
+                AttachmentNames = attachments.Distinct().ToArray(),
+            });
+        }
+        return messages.ToArray();
+    }
+}
+
+/// <summary>esedbinfo: the tables catalogued in an ESE (EDB) database (e.g. WebCacheV01.dat, Windows.edb).</summary>
+public class EseDatabaseInfo
+{
+    public string SourceFile { get; set; } = "";
+    public string[] Tables { get; set; } = [];
+
+    public static EseDatabaseInfo Parse(string stdout, string sourceFile) => new()
+    {
+        SourceFile = sourceFile,
+        Tables = Regex.Matches(stdout, @"^Table:\s*\d+\s+(\S+)", RegexOptions.Multiline)
+            .Select(m => m.Groups[1].Value).ToArray(),
+    };
+}
+
+/// <summary>esedbexport: the directory of exported table dumps (one tab-separated file per ESE table).</summary>
+public class EseExportResult
+{
+    public string ExportDirectory { get; set; } = "";
+    public string[] TableFiles { get; set; } = [];
+}
+
+/// <summary>One URL record recovered from an IE/Edge <c>WebCacheV01.dat</c> ESE database — the container it came
+/// from (History/Content/Cookies/…), the URL, when it was accessed, and the access count.</summary>
+public class WebCacheEntry
+{
+    public string? Container { get; set; }
+    public string Url { get; set; } = "";
+    public DateTime? AccessedTime { get; set; }
+    public DateTime? ModifiedTime { get; set; }
+    public long AccessCount { get; set; }
+}
+
+/// <summary>Parses the tab-separated table dumps esedbexport produces from a WebCacheV01.dat.</summary>
+internal static class WebCacheParse
+{
+    // The Containers index maps each ContainerId to a friendly name (History / Content / Cookies / …).
+    public static Dictionary<string, string> ContainerNames(string tsv)
+    {
+        var map = new Dictionary<string, string>();
+        foreach (var r in Rows(tsv))
+            if (r.Get("ContainerId") is { } id && r.Get("Name") is { } name) map[id] = name;
+        return map;
+    }
+
+    // WebCache wraps URLs as e.g. "Visited: user@http://site/path", ":2015…: user@file:///C:/x", or
+    // "feedplat:http://…" — recover the real URL by locating its scheme (http/https/file/ftp/…).
+    private static readonly Regex UrlScheme = new(@"[a-z][a-z0-9+.\-]*://\S*", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // URL records from a Container_<id> table: the cleaned URL + timestamps. Rows with no real URL (content
+    // headers, "Host:" markers, …) are skipped.
+    public static IEnumerable<WebCacheEntry> Entries(string tsv, string? container)
+    {
+        foreach (var r in Rows(tsv))
+        {
+            var m = UrlScheme.Match(r.Get("Url") ?? "");
+            if (!m.Success) continue;
+            yield return new WebCacheEntry
+            {
+                Container = container, Url = m.Value,
+                AccessedTime = Date(r.Get("AccessedTime")),
+                ModifiedTime = Date(r.Get("ModifiedTime")),
+                AccessCount = EzParse.ToLong(r.Get("AccessCount")),
+            };
+        }
+    }
+
+    // Tab-separated rows keyed by the header line's column names.
+    private static IEnumerable<IReadOnlyDictionary<string, string>> Rows(string tsv)
+    {
+        var lines = tsv.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        if (lines.Length < 2) yield break;
+        var header = lines[0].Split('\t');
+        foreach (var line in lines.Skip(1))
+        {
+            var cells = line.Split('\t');
+            var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < header.Length && i < cells.Length; i++) d[header[i]] = cells[i];
+            yield return d;
+        }
+    }
+
+    // esedbexport renders ESE date columns as "Mmm d, yyyy HH:mm:ss.fffffffff"; truncate the sub-second tail
+    // (more digits than .NET parses) and read it as a UTC instant.
+    private static DateTime? Date(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        int dot = s.IndexOf('.');
+        var trimmed = dot > 0 ? s[..dot] : s;
+        return DateTime.TryParse(trimmed, CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var d) ? d : null;
+    }
+}
+
+/// <summary>usbdeviceforensics: one USB mass-storage device profiled from the registry (TSV output row).</summary>
+public class UsbDeviceRecord
+{
+    public string? Vendor { get; set; }
+    public string? Product { get; set; }
+    public string? Version { get; set; }
+    public string? SerialNumber { get; set; }
+    public string? Vid { get; set; }
+    public string? Pid { get; set; }
+    public string? ParentIdPrefix { get; set; }
+    public string? DriveLetter { get; set; }
+    public string? VolumeName { get; set; }
+    public string? Guid { get; set; }
+    public string? MountPoint { get; set; }
+    public DateTime? FirstInstallDate { get; set; }
+    public DateTime? LastArrivalDate { get; set; }
+    public DateTime? LastRemovalDate { get; set; }
+
+    public static UsbDeviceRecord FromRow(IReadOnlyDictionary<string, string> r) => new()
+    {
+        Vendor = r.Get("Vendor"), Product = r.Get("Product"), Version = r.Get("Version"),
+        SerialNumber = r.Get("SerialNumber"), Vid = r.Get("VID"), Pid = r.Get("PID"),
+        ParentIdPrefix = r.Get("ParentIDPrefix"), DriveLetter = r.Get("DriveLetter"),
+        VolumeName = r.Get("VolumeName"), Guid = r.Get("GUID"), MountPoint = r.Get("MountPoint"),
+        FirstInstallDate = EzParse.ToDate(r.Get("USBSTOR Properties (First Install Date)")),
+        LastArrivalDate = EzParse.ToDate(r.Get("USBSTOR Properties (Last Arrival Date)")),
+        LastRemovalDate = EzParse.ToDate(r.Get("USBSTOR Properties (Last Removal Date)")),
+    };
+
+    // Parses usbdeviceforensics' tab-separated, double-quoted output into rows keyed by header column.
+    public static UsbDeviceRecord[] ParseTsv(string tsv)
+    {
+        var lines = tsv.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        if (lines.Length < 2) return [];
+        string[] Cells(string l) => l.Split('\t').Select(c => c.Trim().Trim('"')).ToArray();
+        var header = Cells(lines[0]);
+        return lines.Skip(1).Select(l =>
+        {
+            var cells = Cells(l);
+            var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < header.Length && i < cells.Length; i++) d[header[i]] = cells[i];
+            return FromRow(d);
+        }).Where(x => x.SerialNumber is { Length: > 0 } || x.Product is { Length: > 0 }).ToArray();
+    }
+}

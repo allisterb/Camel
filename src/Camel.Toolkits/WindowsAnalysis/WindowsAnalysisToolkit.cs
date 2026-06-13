@@ -23,6 +23,10 @@ public class WindowsAnalysisToolkit : Toolkit
         InstallZimmermanTool("RECmd", "https://download.ericzimmermanstools.com/net9/RECmd.zip", "/opt/zimmermantools/RECmd/RECmd.dll");
         InstallFile("DFIRBatch.reb", "https://github.com/EricZimmerman/RECmd/raw/refs/heads/master/BatchExamples/DFIRBatch.reb", "/opt/zimmermantools/RECmd/DFIRBatch.reb");
         InstallFile("lolbas.json", "https://lolbas-project.github.io/api/lolbas.json", LolbasPath);
+        // FOR500.3+4 email/ESE parsers (apt). usbdeviceforensics/hindsight are pip/custom and pre-installed on SIFT;
+        // their wrappers degrade to null if absent rather than auto-installing.
+        InstallAptPackage("pst-utils", "/usr/bin/readpst");
+        InstallAptPackage("libesedb-utils", "/usr/bin/esedbexport");
     }
 
     /// <summary>
@@ -93,6 +97,10 @@ public class WindowsAnalysisToolkit : Toolkit
     }
 
     public Task<LnkFile[]?> LECmdAsync(string file) => ExecuteToolJsonAsync<LnkFile>("LECmd", $"-f {Q(file)}");
+
+    /// <summary>Parses every <c>.lnk</c> under <paramref name="directory"/> (<c>-d</c>, recursive) with LECmd —
+    /// the directory variant of <see cref="LECmdAsync"/>, used to sweep a Recent folder / Desktop in one pass.</summary>
+    public Task<LnkFile[]?> LECmdDirectoryAsync(string directory) => ExecuteToolJsonAsync<LnkFile>("LECmd", $"-d {Q(directory)}");
 
     public Task<ShellBag[]?> SBECmdAsync(string hiveDirectory) => ExecuteToolJsonAsync<ShellBag>("SBECmd", $"-d {Q(hiveDirectory)}");
 
@@ -332,12 +340,165 @@ public class WindowsAnalysisToolkit : Toolkit
     }
     #endregion
 
+    #region Email / ESE / USB tools (FOR500.3+4)
+    /// <summary>Reads PST/OST store metadata (content type PST vs OST, file format, encryption) with pffinfo
+    /// (libpff). Returns null if the file could not be read.</summary>
+    public async Task<PstStoreInfo?> PffInfoAsync(string pstFile)
+    {
+        var stdout = await ExecuteToolTextAsync("Pffinfo", Q(pstFile));
+        return stdout is null ? null : PstStoreInfo.Parse(stdout, pstFile);
+    }
+
+    /// <summary>
+    /// Exports the e-mail of a PST/OST with readpst (libpst) into a temp directory as one mbox file per mail
+    /// folder, then parses each mbox's messages at the header/metadata level (From/To/Subject/Date/X-Originating-IP
+    /// + attachment names). The export directory is cleaned up before returning. Returns null on failure.
+    /// </summary>
+    public async Task<EmailExportResult?> ReadPstAsync(string pstFile, int maxMessagesPerFolder = 5000)
+    {
+        string dir = "/tmp/camel_pst_" + Guid.NewGuid().ToString("N");
+        await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {dir}", false);
+        try
+        {
+            // -t e: e-mail items only; -q quiet; default output is mbox-per-folder.
+            if (await ExecuteToolTextAsync("ReadPst", $"-o {Q(dir)} -t e -q {Q(pstFile)}") is null) return null;
+            var find = await auditEnvironment.ExecuteCommandAsync("find", $"{Q(dir)} -type f", false);
+            var files = find.IsCompleted
+                ? find.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                : [];
+            var messages = new List<EmailMessage>();
+            foreach (var f in files)
+            {
+                var r = await auditEnvironment.ExecuteCommandAsync("cat", Q(f), false);
+                if (!r.IsCompleted) continue;
+                var folder = System.IO.Path.GetFileNameWithoutExtension(f);
+                messages.AddRange(EmailMessage.ParseMbox(r.Output, folder).Take(maxMessagesPerFolder));
+            }
+            return new EmailExportResult { OutputDirectory = dir, MboxFiles = files, Messages = messages.ToArray() };
+        }
+        finally { try { auditEnvironment.ExecuteCommand("rm", $"-rf {dir}", out _, false); } catch { } }
+    }
+
+    /// <summary>Lists the tables in an ESE (EDB) database — e.g. <c>WebCacheV01.dat</c> or <c>Windows.edb</c> —
+    /// with esedbinfo (libesedb). Returns null if the file could not be read.</summary>
+    public async Task<EseDatabaseInfo?> EsedbInfoAsync(string edbFile)
+    {
+        var stdout = await ExecuteToolTextAsync("EsedbInfo", Q(edbFile));
+        return stdout is null ? null : EseDatabaseInfo.Parse(stdout, edbFile);
+    }
+
+    /// <summary>
+    /// Recovers browser-history URL records from an IE/Edge(legacy) <c>WebCacheV01.dat</c> by exporting its ESE
+    /// tables with esedbexport, mapping each <c>Container_N</c> to its name via the <c>Containers</c> index, and
+    /// parsing the URL/AccessedTime rows. The temp export directory is cleaned up before returning. Returns null
+    /// on failure (e.g. a dirty database that needs <c>esentutl</c> recovery first).
+    /// </summary>
+    public async Task<WebCacheEntry[]?> WebCacheHistoryAsync(string webCacheDbFile)
+    {
+        string target = "/tmp/camel_ese_" + Guid.NewGuid().ToString("N");
+        string exportDir = target + ".export";
+        try
+        {
+            if (await ExecuteToolTextAsync("EsedbExport", $"-t {Q(target)} {Q(webCacheDbFile)}") is null) return null;
+            // Containers index: ContainerId -> friendly name (History / Content / Cookies / …).
+            var idx = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"cat {exportDir}/Containers.* 2>/dev/null\"", false);
+            var nameById = WebCacheParse.ContainerNames(idx.IsCompleted ? idx.Output : "");
+            // Each Container_<id>.<table> file holds that container's URL records.
+            var ls = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"ls -1 {exportDir}/Container_*.* 2>/dev/null\"", false);
+            if (!ls.IsCompleted) return [];
+            var entries = new List<WebCacheEntry>();
+            foreach (var file in ls.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var idMatch = System.Text.RegularExpressions.Regex.Match(System.IO.Path.GetFileName(file), @"Container_(\d+)\.");
+                var container = idMatch.Success && nameById.TryGetValue(idMatch.Groups[1].Value, out var n) ? n : null;
+                var cat = await auditEnvironment.ExecuteCommandAsync("cat", Q(file), false);
+                if (cat.IsCompleted) entries.AddRange(WebCacheParse.Entries(cat.Output, container));
+            }
+            return entries.ToArray();
+        }
+        finally { try { auditEnvironment.ExecuteCommand("rm", $"-rf {exportDir}", out _, false); } catch { } }
+    }
+
+    /// <summary>
+    /// Profiles USB mass-storage devices from the registry with usbdeviceforensics. The SYSTEM/SOFTWARE (and
+    /// optional NTUSER) hives are staged into a writable temp directory first, because the tool fails to open
+    /// hives directly off a read-only forensic mount. Returns the per-device records, or null on failure.
+    /// </summary>
+    public async Task<UsbDeviceRecord[]?> UsbDeviceForensicsAsync(string systemHive, string softwareHive, string? ntuserHive = null)
+    {
+        string dir = "/tmp/camel_usb_" + Guid.NewGuid().ToString("N");
+        string outFile = $"{dir}/usb.tsv";
+        await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {dir}", false);
+        try
+        {
+            await auditEnvironment.ExecuteCommandAsync("cp", $"{Q(systemHive)} {dir}/SYSTEM", false);
+            await auditEnvironment.ExecuteCommandAsync("cp", $"{Q(softwareHive)} {dir}/SOFTWARE", false);
+            if (ntuserHive is not null) await auditEnvironment.ExecuteCommandAsync("cp", $"{Q(ntuserHive)} {dir}/NTUSER.DAT", false);
+            if (await ExecuteToolTextAsync("UsbDeviceForensics", $"-r {Q(dir)} -f tsv -o {Q(outFile)} -q") is null) return null;
+            var r = await auditEnvironment.ExecuteCommandAsync("cat", Q(outFile), false);
+            return r.IsCompleted ? UsbDeviceRecord.ParseTsv(r.Output) : [];
+        }
+        finally { try { auditEnvironment.ExecuteCommand("rm", $"-rf {dir}", out _, false); } catch { } }
+    }
+
+    /// <summary>
+    /// Runs a read-only SQL query against a SQLite database (Chrome/Edge <c>History</c>, Firefox
+    /// <c>places.sqlite</c>, …) with the <c>sqlite3</c> CLI in <c>-json</c> mode, returning the rows as raw
+    /// key/value records. The database and any sidecar <c>-wal/-shm/-journal</c> files are staged into a writable
+    /// temp directory first (a forensic mount is read-only, which blocks WAL recovery), then queried with
+    /// <c>-readonly</c>. SQLECmd's EZ build is unusable on SIFT (missing <c>SQLite.Interop.dll</c>), so browser
+    /// SQLite parsing goes through this. Returns null on failure.
+    /// </summary>
+    public async Task<Dictionary<string, System.Text.Json.JsonElement>[]?> SqliteQueryAsync(string dbFile, string sql)
+    {
+        string dir = "/tmp/camel_sqlite_" + Guid.NewGuid().ToString("N");
+        await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {dir}", false);
+        try
+        {
+            // Stage the DB plus any WAL/journal sidecars so sqlite3 can open it read-write off the read-only mount.
+            await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"cp {Q(dbFile)} {Q(dbFile)}-wal {Q(dbFile)}-shm {Q(dbFile)}-journal {dir}/ 2>/dev/null; true\"", false);
+            string staged = $"{dir}/{System.IO.Path.GetFileName(dbFile)}";
+            var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(sql));
+            // Ship the SQL base64-encoded to dodge all shell quoting of quotes/semicolons in the query.
+            var r = await auditEnvironment.ExecuteCommandAsync("bash",
+                $"-c \"sqlite3 -readonly -json {Q(staged)} \\\"$(echo {b64} | base64 -d)\\\"\"", false);
+            if (!r.IsCompleted) return null;
+            var json = r.Output.Trim();
+            if (json.Length == 0) return [];   // sqlite3 prints nothing for an empty result set
+            return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>[]>(json, JsonLineOptionsPublic) ?? [];
+        }
+        catch { return []; }
+        finally { try { auditEnvironment.ExecuteCommand("rm", $"-rf {dir}", out _, false); } catch { } }
+    }
+
+    private static readonly System.Text.Json.JsonSerializerOptions JsonLineOptionsPublic = new() { PropertyNameCaseInsensitive = true };
+
+    /// <summary>
+    /// Runs Hindsight over a Chrome/Chromium user-data profile directory, producing a unified browsing-activity
+    /// timeline. Output is requested as JSON-lines and returned as raw key/value records (heterogeneous row
+    /// shapes, like SQLECmd). Returns null on failure. Optional — SQLECmd already covers Chromium history/downloads.
+    /// </summary>
+    public async Task<Dictionary<string, System.Text.Json.JsonElement>[]?> HindsightAsync(string chromeProfileDir)
+    {
+        string outBase = "/tmp/camel_hs_" + Guid.NewGuid().ToString("N");
+        try
+        {
+            if (await ExecuteToolTextAsync("Hindsight", $"-i {Q(chromeProfileDir)} -o {Q(outBase)} -f jsonl") is null) return null;
+            var r = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"cat {outBase}*.jsonl 2>/dev/null\"", false);
+            return r.IsCompleted ? ParseJsonLines<Dictionary<string, System.Text.Json.JsonElement>>(r.Output) : [];
+        }
+        finally { try { auditEnvironment.ExecuteCommand("rm", $"-rf {outBase}*", out _, false); } catch { } }
+    }
+    #endregion
+
     // Single-quote a path so spaces and NTFS '$' names (e.g. $MFT) survive the shell literally.
     private static string Q(string path) => $"'{path}'";
 
     public override string[] ToolList { get; } =
     [
         "AmcacheParser", "AppCompatCacheParser", "MFTECmd", "JLECmd", "LECmd", "WxTCmd",
-        "SBECmd", "RBCmd", "Bstrings", "EvtxECmd", "RECmd", "SQLECmd", "RegRipper"
+        "SBECmd", "RBCmd", "Bstrings", "EvtxECmd", "RECmd", "SQLECmd", "RegRipper",
+        // FOR500.3+4: email (libpst/libpff), ESE (libesedb), USB, Chrome, browser SQLite
+        "ReadPst", "Pffinfo", "EsedbExport", "EsedbInfo", "UsbDeviceForensics", "Hindsight", "Sqlite3"
     ];
 }

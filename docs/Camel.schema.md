@@ -1086,6 +1086,104 @@ types are defined once (in the toolkit that owns them) and referenced by name el
   "LastWrite": { "type": "string" },
   "Suspicious": { "type": "boolean" }, "Reasons": { "type": "array", "items": { "type": "string" } } } }
 ```
+### ProcessNode Schema (input to ValidateProcessTreeAsync)
+```json
+{ "type": "object", "properties": {
+  "Name": { "type": "string", "description": "Process image name, e.g. cmd.exe (required)." },
+  "ParentName": { "type": "string", "description": "Parent image name — drives the tree checks." },
+  "Path": { "type": "string", "description": "Full executable path — enables the path check when known." },
+  "User": { "type": "string", "description": "User context — enables the SYSTEM/USER check when known." },
+  "Pid": { "type": "integer" }, "Ppid": { "type": "integer" } } }
+```
+### ProcessExpectation Schema (entries of GetProcessExpectations)
+```json
+{ "type": "object", "properties": {
+  "ProcessName": { "type": "string" },
+  "ValidParents": { "type": "array", "items": { "type": "string" }, "description": "Whitelist; null/empty = any parent." },
+  "SuspiciousParents": { "type": "array", "items": { "type": "string" }, "description": "Blacklist; null/empty = none." },
+  "NeverSpawnsChildren": { "type": "boolean", "description": "Any child = process injection (critical)." },
+  "ParentExits": { "type": "boolean" },
+  "ValidPaths": { "type": "array", "items": { "type": "string" }, "description": "null/empty = any location." },
+  "UserType": { "type": "string", "description": "SYSTEM, USER, or EITHER." },
+  "ValidUsers": { "type": "array", "items": { "type": "string" } },
+  "MinInstances": { "type": "integer" }, "MaxInstances": { "type": "integer" },
+  "PerSession": { "type": "boolean" }, "RequiredArgs": { "type": "string" },
+  "Source": { "type": "string" }, "Notes": { "type": "string" } } }
+```
+### ProcessExpectationFinding Schema
+```json
+{ "type": "object", "properties": {
+  "Type": { "type": "string", "description": "injection_detected | suspicious_parent | unexpected_parent | unexpected_path | unexpected_user | too_few_instances | too_many_instances." },
+  "Severity": { "type": "string", "description": "critical | high | medium." },
+  "Description": { "type": "string" },
+  "Expected": { "type": "array", "items": { "type": "string" } }, "Actual": { "type": "string" } } }
+```
+### ProcessExpectationCheck Schema
+```json
+{ "type": "object", "properties": {
+  "Name": { "type": "string" }, "ParentName": { "type": "string" }, "Pid": { "type": "integer" },
+  "InExpectationsDb": { "type": "boolean", "description": "false = no expectation for this name; reported, not validated." },
+  "Findings": { "type": "array", "items": { "$ref": "ProcessExpectationFinding" } },
+  "Suspicious": { "type": "boolean" } } }
+```
+### ProcessTreeValidationReport Schema
+```json
+{ "type": "object", "properties": {
+  "Processes": { "type": "array", "items": { "$ref": "ProcessExpectationCheck" } },
+  "InstanceFindings": { "type": "array", "items": { "$ref": "ProcessExpectationFinding" }, "description": "Host-wide cardinality anomalies (only when checkInstanceCounts=true)." },
+  "SuspiciousProcesses": { "type": "array", "items": { "$ref": "ProcessExpectationCheck" } } } }
+```
+### ShellItemReport Schema (AnalyzeShellItemsAsync)
+```json
+{ "type": "object", "properties": {
+  "OpenedFiles": { "type": "array", "items": { "type": "object", "properties": {
+    "Path": { "type": "string" }, "Source": { "type": "string", "description": "LNK | JumpList" }, "AppId": { "type": "string" },
+    "TargetCreated": { "type": "string" }, "TargetModified": { "type": "string" }, "TargetAccessed": { "type": "string" },
+    "FileSize": { "type": "integer" }, "Arguments": { "type": "string" }, "Drive": { "type": "string" },
+    "VolumeSerialNumber": { "type": "string" }, "OpenedAround": { "type": "string" } } } },
+  "FoldersAccessed": { "type": "array", "items": { "type": "object", "properties": {
+    "Path": { "type": "string" }, "ShellType": { "type": "string" },
+    "FirstInteracted": { "type": "string" }, "LastInteracted": { "type": "string" } } } },
+  "ExternalDeviceEvidence": { "type": "array", "items": { "type": "object", "properties": {
+    "Path": { "type": "string" }, "Indicator": { "type": "string", "description": "non-system drive X: | UNC/network share" },
+    "Source": { "type": "string" }, "VolumeSerialNumber": { "type": "string" }, "When": { "type": "string" } } } } } }
+```
+### UsbDeviceReport Schema (AnalyzeUsbDevicesAsync)
+```json
+{ "type": "object", "properties": {
+  "Devices": { "type": "array", "items": { "type": "object", "properties": {
+    "SerialNumber": { "type": "string" }, "Vendor": { "type": "string" }, "Product": { "type": "string" }, "Revision": { "type": "string" },
+    "FriendlyName": { "type": "string" }, "Vid": { "type": "string" }, "Pid": { "type": "string" },
+    "VolumeName": { "type": "string" }, "DriveLetter": { "type": "string" }, "DeviceGuid": { "type": "string" },
+    "ParentIdPrefix": { "type": "string" }, "User": { "type": "string" },
+    "FirstConnected": { "type": "string" }, "LastConnected": { "type": "string" }, "LastRemoved": { "type": "string" },
+    "InSetupApiLog": { "type": "boolean" }, "Sources": { "type": "array", "items": { "type": "string" } } } } } } }
+```
+### EmailArchiveReport Schema (AnalyzeEmailArchivesAsync)
+```json
+{ "type": "object", "properties": {
+  "Archives": { "type": "array", "items": { "type": "object", "properties": {
+    "Path": { "type": "string" },
+    "Store": { "type": "object", "properties": { "ContentType": { "type": "string", "description": "PST | OST" }, "FileFormat": { "type": "string" }, "EncryptionType": { "type": "string" }, "FileSize": { "type": "integer" } } },
+    "Messages": { "type": "array", "items": { "type": "object", "properties": {
+      "Folder": { "type": "string" }, "From": { "type": "string" }, "To": { "type": "string" }, "Cc": { "type": "string" },
+      "Subject": { "type": "string" }, "Date": { "type": "string" }, "SourceIp": { "type": "string" },
+      "AttachmentNames": { "type": "array", "items": { "type": "string" } } } } },
+    "MessageCount": { "type": "integer" }, "Folders": { "type": "array", "items": { "type": "string" } },
+    "MessagesWithAttachments": { "type": "integer" }, "EarliestMessage": { "type": "string" }, "LatestMessage": { "type": "string" } } } } } }
+```
+### BrowserActivityReport Schema (AnalyzeBrowserActivityAsync)
+```json
+{ "type": "object", "properties": {
+  "History": { "type": "array", "items": { "type": "object", "properties": {
+    "Browser": { "type": "string", "description": "Chrome | Edge | Firefox | IE-Edge(WebCache)" },
+    "Url": { "type": "string" }, "Title": { "type": "string" }, "VisitCount": { "type": "integer" },
+    "LastVisited": { "type": "string", "description": "UTC" }, "Source": { "type": "string" } } } },
+  "Downloads": { "type": "array", "items": { "type": "object", "properties": {
+    "Browser": { "type": "string" }, "Url": { "type": "string" }, "TargetPath": { "type": "string" },
+    "TotalBytes": { "type": "integer" }, "StartTime": { "type": "string" }, "Source": { "type": "string" } } } },
+  "Sources": { "type": "array", "items": { "type": "string" } } } }
+```
 
 ---
 

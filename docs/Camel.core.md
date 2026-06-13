@@ -255,6 +255,7 @@ Eric Zimmerman (EZ) tools, RegRipper, and bespoke parsers for Windows host artif
 - `MFTECmdBodyfileAsync(file: string, outputFile?: string, outputDir?: string, driveLetter?: string, vss?: bool)`
   → `MFTECmdResult` — parse to a mactime bodyfile.
 - `LECmdAsync(file: string)` → `LnkFile[]` — parse a LNK shortcut.
+- `LECmdDirectoryAsync(directory: string)` → `LnkFile[]` — parse every `.lnk` under a directory (e.g. a Recent folder).
 - `SBECmdAsync(hiveDirectory: string)` → `ShellBag[]` — shellbags (JSON).
 - `SBECmdCsvAsync(directory: string, outputDir: string)` → `SBECmdCsvResult` — shellbags to per-hive CSVs.
 - `AppCompatCacheParserAsync(systemHive: string, ignoreTransactionLogs?: bool)` → `ShimcacheEntry[]` — Shimcache.
@@ -275,6 +276,13 @@ Eric Zimmerman (EZ) tools, RegRipper, and bespoke parsers for Windows host artif
 - `ScheduledTasksAsync(tasksDirectory: string)` → `ScheduledTaskEntry[]` — parse `\Windows\System32\Tasks` XML.
 - `WmiSubscriptionsAsync(objectsDataPath: string)` → `WmiSubscriptions` — recover WMI subscriptions from `OBJECTS.DATA`.
 - `BstringsAsync(file: string, minLength?: int)` → `string[]` — extract strings.
+- `PffInfoAsync(pstFile: string)` → `PstStoreInfo` — PST/OST store metadata (PST vs OST, encryption) via libpff.
+- `ReadPstAsync(pstFile: string, maxMessagesPerFolder?: int)` → `EmailExportResult` — export a PST/OST and parse messages (From/To/Subject/Date/attachments) via libpst.
+- `EsedbInfoAsync(edbFile: string)` → `EseDatabaseInfo` — list ESE (EDB) tables (WebCacheV01.dat, Windows.edb) via libesedb.
+- `WebCacheHistoryAsync(webCacheDbFile: string)` → `WebCacheEntry[]` — IE/Edge `WebCacheV01.dat` URL history (esedbexport).
+- `UsbDeviceForensicsAsync(systemHive: string, softwareHive: string, ntuserHive?: string)` → `UsbDeviceRecord[]` — profile USB devices from the registry (hives auto-staged to a writable temp dir).
+- `SqliteQueryAsync(dbFile: string, sql: string)` → `object[]` — read-only `sqlite3 -json` query of a browser/app SQLite DB (DB staged to a temp copy). Use this for browser History DBs (SQLECmd's EZ build is unusable on SIFT).
+- `HindsightAsync(chromeProfileDir: string)` → `object[]` — Chrome/Chromium activity timeline (JSON-lines), optional.
 
 ---
 
@@ -453,6 +461,24 @@ Host-artifact analysis: registry, execution evidence, persistence, lateral movem
 - `AnalyzePowerShellAsync(powershellEvtxPath: string)` → `WorkflowResult<PowerShellReport>`.
 - `FindRegistryPersistenceMechanismsAsync(softwareHive: string, systemHive: string, ntuserHive?: string, tasksDirectory?: string, suspiciousPathFragments?: string[])`
   → `WorkflowResult<RegistryPersistenceReport>`.
+- `ValidateProcessTreeAsync(processes: ProcessNode[], checkInstanceCounts?: bool)` → `WorkflowResult<ProcessTreeValidationReport>`
+  — validate processes-under-investigation against the bundled MemProcFS/SANS Hunt-Evil expectation dataset: never-spawns-children
+  injection (lsass/csrss/dwm child = critical), suspicious-parent blacklist (Office/browser/LOLBin → shell), valid-parent whitelist,
+  plus optional path/user and instance-count checks. Also accepts a `WindowsPsList[]` (resolves parent names by PID/PPID).
+  `checkInstanceCounts` only meaningful on a complete process listing.
+- `GetProcessExpectations()` → `{ [processName: string]: ProcessExpectation }` — the raw expectation dataset, keyed by lowercase name.
+- `AnalyzeShellItemsAsync(userProfileRoot: string, hiveDirectory?: string)` → `WorkflowResult<ShellItemReport>`
+  — FOR500.3 shell-item analysis: correlate LNK + Jump Lists (files opened) and Shellbags (folders browsed) for a
+  user profile, and surface references to external/removable/remote volumes (the hook to USB correlation).
+- `AnalyzeUsbDevicesAsync(systemHive: string, softwareHive: string, ntuserHive?: string, setupApiLog?: string)` → `WorkflowResult<UsbDeviceReport>`
+  — FOR500.3 USB methodology: profile each USB device (vendor/product/serial/VID-PID), map volume name/drive
+  letter/GUID/user, and resolve first/last-connect times (usbdeviceforensics + RegRipper usbstor + setupapi.dev.log).
+- `AnalyzeEmailArchivesAsync(volumeRoot: string, singleArchive?: string)` → `WorkflowResult<EmailArchiveReport>`
+  — FOR500.4 e-mail: find PST/OST stores on a volume (or analyse one), read store metadata, and parse messages at
+  header level (From/To/Subject/Date/X-Originating-IP + attachment names).
+- `AnalyzeBrowserActivityAsync(userProfileRoot: string, webCacheDb?: string, useHindsight?: bool)` → `WorkflowResult<BrowserActivityReport>`
+  — FOR500.4 browser forensics: unify visited-URL history + downloads across Chromium `History` (Chrome/Edge),
+  Firefox `places.sqlite`, and IE/Edge `WebCacheV01.dat`, timestamps normalised to UTC.
 
 ---
 

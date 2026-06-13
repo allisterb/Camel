@@ -22,8 +22,11 @@ public class WindowsAnalysisTests : TestsRuntime
         {
             Assert.True(toolkit.Tools.ContainsKey(name));
             var cmd = toolkit.Tools[name].Command;
-            // EZ Tools run via dotnet from /opt/zimmermantools; RegRipper is the on-PATH rip.pl Perl script.
-            Assert.True(cmd.StartsWith("dotnet /opt/zimmermantools/") || cmd == "rip.pl", $"unexpected command for {name}: {cmd}");
+            // EZ Tools run via dotnet from /opt/zimmermantools; RegRipper is the on-PATH rip.pl Perl script; the
+            // FOR500.3+4 email/ESE/USB/browser tools are native binaries under /usr/bin or /usr/local/bin.
+            Assert.True(cmd.StartsWith("dotnet /opt/zimmermantools/") || cmd == "rip.pl"
+                        || cmd.StartsWith("/usr/bin/") || cmd.StartsWith("/usr/local/bin/"),
+                $"unexpected command for {name}: {cmd}");
             Assert.NotEmpty(toolkit.Tools[name].Descriptioon);
         });
     }
@@ -340,9 +343,81 @@ public class WindowsAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, false);
     }
 
+    // ── FOR500.3+4 wrappers (email / ESE / USB / browser SQLite), against the CFREDS Data-Leakage mount ──────────
+
+    [Fact]
+    public async Task CanGetPstStoreInfo()
+    {
+        var r = await toolkit.PffInfoAsync(DlpcOst);
+        Assert.NotNull(r);
+        Assert.Contains("OST", r!.ContentType ?? "");            // iaman.informant@nist.gov.ost is an Exchange OST
+        Assert.True(r.FileSize > 0);
+    }
+
+    [Fact]
+    public async Task CanReadPstMessages()
+    {
+        var r = await toolkit.ReadPstAsync(DlpcOst);
+        Assert.NotNull(r);
+        Assert.NotEmpty(r!.Messages);
+        // The Data-Leakage scenario seeds a conversation with spy.conspirator@nist.gov.
+        Assert.Contains(r.Messages, m => (m.From ?? "").Contains("nist.gov", StringComparison.OrdinalIgnoreCase)
+                                      || (m.To ?? "").Contains("nist.gov", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task CanListEseTablesAndParseWebCacheHistory()
+    {
+        var info = await toolkit.EsedbInfoAsync(DlpcWebCache);
+        Assert.NotNull(info);
+        Assert.Contains("Containers", info!.Tables);
+
+        var entries = await toolkit.WebCacheHistoryAsync(DlpcWebCache);
+        Assert.NotNull(entries);
+        Assert.NotEmpty(entries!);
+        // Every recovered record is a real URL (http/https/file/…), not a content header or "Host:" marker.
+        Assert.All(entries!, e => Assert.Contains("://", e.Url));
+    }
+
+    [Fact]
+    public async Task CanProfileUsbDevices()
+    {
+        var r = await toolkit.UsbDeviceForensicsAsync(DlpcSystem, DlpcSoftware);
+        Assert.NotNull(r);
+        Assert.NotEmpty(r!);
+        // The case features a SanDisk Cruzer Fit thumb drive used to exfiltrate data.
+        Assert.Contains(r!, d => (d.Product ?? "").Contains("Cruzer", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task CanQueryBrowserSqlite()
+    {
+        var rows = await toolkit.SqliteQueryAsync(DlpcChromeHistory,
+            "SELECT url,title,visit_count,last_visit_time FROM urls ORDER BY last_visit_time DESC LIMIT 10");
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows!);
+        Assert.Contains(rows!, r => r.ContainsKey("url"));
+    }
+
+    [Fact]
+    public async Task CanParseLnkDirectory()
+    {
+        var r = await toolkit.LECmdDirectoryAsync($"{DlpcUser}/AppData/Roaming/Microsoft/Windows/Recent");
+        Assert.NotNull(r);   // an empty Recent folder yields [] (not null); a parse failure yields null
+    }
+
     const string Modern = "/mnt/ewf";
     const string GregSchardt = "/mnt/windows_mount2"; // 'Greg Schardt' XP image (4Dell Latitude CPi.E01)
     const string DfirBatch = "/opt/zimmermantools/RECmd/DFIRBatch.reb";
+
+    // CFREDS "Data Leakage" PC image, mounted at /mnt/dlpc (registry hives, an Outlook OST, WebCache, Chrome).
+    const string Dlpc = "/mnt/dlpc";
+    const string DlpcUser = "/mnt/dlpc/Users/informant";
+    const string DlpcSystem = "/mnt/dlpc/Windows/System32/config/SYSTEM";
+    const string DlpcSoftware = "/mnt/dlpc/Windows/System32/config/SOFTWARE";
+    const string DlpcOst = "/mnt/dlpc/Users/informant/AppData/Local/Microsoft/Outlook/iaman.informant@nist.gov.ost";
+    const string DlpcWebCache = "/mnt/dlpc/Users/admin11/AppData/Local/Microsoft/Windows/WebCache/WebCacheV01.dat";
+    const string DlpcChromeHistory = "/mnt/dlpc/Users/admin11/AppData/Local/Google/Chrome/User Data/Default/History";
 
     LocalEnvironment localenv;
     AuditEnvironment sshenv;
