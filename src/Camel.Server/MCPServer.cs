@@ -88,10 +88,11 @@ public class CamelMCPTools : Runtime
 
         StringBuilder output = new StringBuilder();
         var jsinterp = new Engine(jsoptions)
-          .SetValue("log", new Action<string>((s) => output.AppendLine(s)))
-          .SetValue("error", new Action<string>((s) => output.AppendLine(s)))
+          .SetValue("log", new Action<string>((s) => Log(s, output)))
+          .SetValue("error", new Action<string>((s) => Log("Error: " + s, output)))
           .SetValue("table", new Action<string[], object[][]>((headers, dataRows) =>
               output.AppendLine(RenderAsciiTable(headers, dataRows))))
+
           // Pure-compute anomaly triage over a canonical timeline (no AuditEnvironment); see Camel.Inference.
           // Typical flow: const ev = await timeline.PsortAsync(plaso); log(anomaly.Summarize(anomaly.TriageTimeline(ev, 200)));
           .SetValue("AnomalyDetectionToolkit", new Camel.Inference.AnomalyDetectionToolkit())
@@ -194,6 +195,12 @@ public class CamelMCPTools : Runtime
         };
     }
 
+    protected void Log(string text, StringBuilder output)
+    {
+        AuditEvent("execution", text);
+        output.AppendLine(text);
+    }
+     
     /// <summary>
     /// The audit-handle block appended to every <c>Execute</c> result: the case id and this call's
     /// execution id. The agent cites these in its report so a judge can grep the per-case audit file
