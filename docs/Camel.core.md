@@ -32,7 +32,8 @@ nullish coalescing `??`, `Array`/`Map`/`Set`/`JSON`, etc.). Tailor generated cod
   explicitly (use `null` for nullable types) to reach a later one.
 - **Toolkit methods return their payload or `null` on tool failure; workflow methods return `WorkflowResult<T>`.**
   Always check before using the value.
-- Output via the globals `log` / `error` / `table`. There is no interactive prompting. `eval`/`new Function` are disabled.
+- Output via the globals `log` / `error` / `table`; `auditInfo` / `auditError` additionally persist a line to the
+  per-case audit log. There is no interactive prompting. `eval`/`new Function` are disabled.
 
 Path arguments are paths **on the SIFT workstation** (local or over SSH). Each MCP session has its own isolated
 environment; toolkits are constructed lazily on first access and cached for the session.
@@ -58,11 +59,17 @@ agent when the script finishes).
 
 `error(message: string)` — write an error line to the output buffer (same mechanism as `log`; use it to mark a problem).
 
+`auditInfo(message: string)` — like `log`, but **also** records the line in the per-case audit log (`audit-<caseId>.clef`)
+as an `information` event. Use it for findings and conclusions you want preserved in the trail, not just returned to you.
+
+`auditError(message: string)` — like `error`, but **also** records the line in the per-case audit log as an `error` event.
+
 `table(headers: string[], dataRows: object[][])` — write a tabular block to the output buffer (`headers` are the
 column headers; `dataRows` is one inner array of cell values per row).
 
 > Output is accumulated and returned as the tool result. If the script throws, output produced before the
-> failure is still returned, followed by the error message.
+> failure is still returned, followed by the error message. `auditInfo`/`auditError` persist beyond the response:
+> they land in the case audit file so a reviewer can reconstruct the investigation from the logs alone.
 
 ## WorkflowResult&lt;T&gt; (returned by every workflow method)
 

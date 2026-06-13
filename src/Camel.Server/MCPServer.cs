@@ -88,8 +88,12 @@ public class CamelMCPTools : Runtime
 
         StringBuilder output = new StringBuilder();
         var jsinterp = new Engine(jsoptions)
-          .SetValue("log", new Action<string>((s) => Log(s, output)))
-          .SetValue("error", new Action<string>((s) => Log("Error: " + s, output)))
+          .SetValue("log", new Action<string>((s) => output.AppendLine(s)))
+          .SetValue("error", new Action<string>((s) => output.AppendLine(s)))
+          // auditInfo/auditError additionally record the line in the per-case audit log (CLEF) as an
+          // information/error event, so agent-surfaced findings survive in the trail, not just the response.
+          .SetValue("auditInfo", new Action<string>((s) => AuditInfo(s, output)))
+          .SetValue("auditError", new Action<string>((s) => AuditError(s, output)))
           .SetValue("table", new Action<string[], object[][]>((headers, dataRows) =>
               output.AppendLine(RenderAsciiTable(headers, dataRows))))
 
@@ -195,12 +199,18 @@ public class CamelMCPTools : Runtime
         };
     }
 
-    protected void Log(string text, StringBuilder output)
+    protected void AuditInfo(string text, StringBuilder output)
     {
-        AuditEvent("execution", text);
+        AuditEvent("information", text);
         output.AppendLine(text);
     }
-     
+
+    protected void AuditError(string text, StringBuilder output)
+    {
+        AuditEvent("error", text);
+        output.AppendLine(text);
+    }
+
     /// <summary>
     /// The audit-handle block appended to every <c>Execute</c> result: the case id and this call's
     /// execution id. The agent cites these in its report so a judge can grep the per-case audit file

@@ -181,6 +181,10 @@ For each finding, cite the `execution` id (and the toolkit/workflow method) of t
 the finding is traceable to its exact tool executions in the case's audit log (`audit-<caseId>.clef`). This is the
 chain of custody: a reviewer must be able to go from any claim in your report to the command that produced it.
 
+**Persist findings to the trail.** Beyond `log`/`error` (which only return text to you), call `auditInfo(message)`
+to write a finding or conclusion into the case audit log as an `information` event, and `auditError(message)` for an
+`error` event. Use these for the conclusions you'd cite, so the investigation is reconstructable from the logs alone.
+
 ## Findings
 
 ## Known IOCs
