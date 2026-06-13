@@ -430,3 +430,4 @@ FodyWeavers.xsd
 
 **/*appsettings.json
 reference/*
+cases/*
