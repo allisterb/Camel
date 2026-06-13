@@ -53,6 +53,13 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Agent", "Agent", "{1513A316
 		..\tests\agent\CLAUDE.md = ..\tests\agent\CLAUDE.md
 	EndProjectSection
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "protocol-sift-camel", "protocol-sift-camel", "{02A9EE14-CB94-4EDA-81A8-79EDE6E20145}"
+	ProjectSection(SolutionItems) = preProject
+		..\ext\protocol-sift-camel\global\CLAUDE.md = ..\ext\protocol-sift-camel\global\CLAUDE.md
+		..\ext\protocol-sift-camel\case-templates\CLAUDE.md = ..\ext\protocol-sift-camel\case-templates\CLAUDE.md
+		..\ext\protocol-sift-camel\README.md = ..\ext\protocol-sift-camel\README.md
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -264,6 +271,7 @@ Global
 		{7524FE8B-33C8-41CF-9DD7-4028D2F3EA6A} = {C17BDA0E-EB4C-44D5-B32E-19A2CE189AAA}
 		{26996E46-4933-429A-B508-AB5ABE20B2C0} = {E8840196-B3E7-4537-AB77-8C1B8F75486A}
 		{1513A316-D374-45FA-9CED-37F6B2E3534C} = {C17BDA0E-EB4C-44D5-B32E-19A2CE189AAA}
+		{02A9EE14-CB94-4EDA-81A8-79EDE6E20145} = {33539284-7586-41FB-93C2-4894BE3E05D5}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {97AB5048-4498-43FE-8CB8-B2FC147FCDE7}
