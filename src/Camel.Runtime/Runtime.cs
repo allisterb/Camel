@@ -102,7 +102,7 @@ public abstract class Runtime
         
     public static void WithFileLogging(string toolname, string logname, bool debug, string? logdir = null)
     {        
-        var filePath= logdir is null ? Path.Combine(AssemblyLocation, toolname + "-" + logname + ".log") : Path.Combine(logdir, toolname + "-" + logname + ".log");
+        var filePath= logdir is null ? Path.Combine(AssemblyLocation, toolname + ".log") : Path.Combine(logdir, toolname + ".log");
         _logger = new LoggerConfiguration()
              .Enrich.FromLogContext()
              .MinimumLevel.Is(debug ? Serilog.Events.LogEventLevel.Verbose : Serilog.Events.LogEventLevel.Information)    
@@ -115,7 +115,7 @@ public abstract class Runtime
 
     public static void WithFileAndConsoleLogging(string toolname, string logname, bool debug, string? logdir = null)
     {
-        var filePath = logdir is null ? Path.Combine(AssemblyLocation, toolname + "-" + logname + ".log") : Path.Combine(logdir, toolname + "-" + logname + ".log");
+        var filePath = logdir is null ? Path.Combine(AssemblyLocation, toolname + "-" + ".log") : Path.Combine(logdir, toolname + ".log");
         _logger = new LoggerConfiguration()
              .Enrich.FromLogContext()
              .MinimumLevel.Is(debug ? Serilog.Events.LogEventLevel.Verbose : Serilog.Events.LogEventLevel.Information)

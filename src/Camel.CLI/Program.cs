@@ -16,11 +16,7 @@ using Camel.Environments;
 internal class Program : Runtime
 {
     static Program()
-    {
-        Runtime.WithFileAndConsoleLogging("Camel", "CLI", true);
-        // Dedicated per-case audit trail (structured CLEF), separate from the verbose run log, so any finding is
-        // traceable to the tool execution that produced it and a case is reconstructable from its file alone.
-        Runtime.WithAuditLog(Path.Combine(AssemblyLocation, "audit"));
+    {               
         config = LoadConfigFile(Path.Combine(AssemblyLocation, "appsettings.json"));
         if (config is null) throw new Exception("Configuration not loaded.");
         environmentType = Enum.Parse<EnvironmentType>(GetRequiredValue(config, "SIFT:Environment"));
@@ -30,6 +26,7 @@ internal class Program : Runtime
     static async Task Main(string[] args)
     {
         PrintLogo();
+        Runtime.WithFileAndConsoleLogging("Camel", "CLI", args.Contains("--debug"));        
         var parser = new Parser(with =>
         {
             with.CaseInsensitiveEnumValues = true;
@@ -55,7 +52,9 @@ internal class Program : Runtime
     static async Task HandleServerArgs(ServerOptions opts)
     {
         if (config is null) throw new Exception("Configuration not loaded.");
-        
+
+        Runtime.WithAuditLog(Path.Combine(AssemblyLocation, "audit"));
+
         if (opts.Ssh)
         {
             config["SIFT:Environment"] = "Ssh";
