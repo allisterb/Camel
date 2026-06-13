@@ -1,0 +1,2 @@
+#! /bin/bash
+dotnet build src/Camel.CLI/Camel.CLI.csproj -p Configuration=Release

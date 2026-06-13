@@ -1,0 +1,3 @@
+#! /bin/bash
+dotnet src/Camel.CLI/bin/Release/net9.0/Camel.CLI.dll $*
+
