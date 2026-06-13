@@ -31,13 +31,13 @@ folder — distinguished by filename:
 
 ```
 <case>/
-├── CLAUDE.md          ← the case brief and the agent's findings
+├── CLAUDE.md          ← the analyst's case brief (instructions to the agent)
 ├── logs/
-│   ├── audit-<caseId>.clef        ← the tool-execution audit trail   (THIS document)
+│   ├── audit-<caseId>.clef        ← the audit trail: tool executions + the agent's findings   (THIS document)
 │   ├── chatlog-<session>-<UTC>.jsonl  ← the full agent conversation transcript
 │   └── token-usage.json           ← client-side token consumption (efficiency/cost)
 ├── exports/           ← raw data the agent extracted
-└── reports/           ← the agent's written report(s)
+└── reports/           ← the agent's written deliverables: report.md + iocs.csv
 ```
 
 There is **one audit file per case**, named for the case id the analyst chose (e.g.
@@ -89,6 +89,38 @@ A real command event (from the bundled demo, formatted for readability):
 
 Read plainly: *under case `srl-2018-rd01`, agent step `7f3a9c21`, the WMI-persistence workflow read the
 WMI repository on host `192.168.8.117`; the command exited 0 in 1.28 s.*
+
+### 3. Analysis events — the agent's findings and judgements
+
+Execution and command events are emitted *structurally*: the agent cannot run a tool without them (see
+[Why the trail is trustworthy](#why-the-trail-is-trustworthy-by-design-not-by-request)). On top of that
+mechanical record, the agent annotates the trail with its **reasoning** — the conclusions it reached, the
+leads it rejected, the gaps it hit — so a reviewer can reconstruct the case at the level of *findings*, not
+just commands.
+
+| Event type | Written when | Why it matters |
+|------------|--------------|----------------|
+| `finding` | A corroborated conclusion is recorded. Carries `Observation` (what was seen), `Interpretation` (what it means), `Confidence` (`SPECULATIVE`/`LOW`/`MEDIUM`/`HIGH`), and `EvidenceExecutionIds` (the execution ids that prove it). | The primary unit of result — fact kept separate from inference, each finding linked to the commands that support it. |
+| `human-judgement-recommended` | The agent reaches a high-consequence, under-determined conclusion (root cause, attribution, scope, exfiltration, insider). | Marks where a human should review. The agent presents candidates and keeps going; a reviewer greps these to land on every such decision. |
+| `false-positive` | A lead was checked and cleared as benign. | Shows leads were run down and rejected — positive evidence of rigour, and a counterweight to over-flagging. |
+| `missing-evidence` | An evidentiary gap — logs absent, cleared, rotated, or disabled; an artifact unavailable. | Records "no evidence found", *not* "did not happen" — the distinction that keeps conclusions honest. |
+| `hallucination` | The agent caught itself inventing an artifact/method/field — **or** the server detected a script referencing a non-existent toolkit/workflow (auto-emitted). | Makes invented-API failures visible and self-correcting rather than silent. See [IRAccuracy.md](IRAccuracy.md). |
+| `information` / `error` | The agent notes a notable step or problem worth keeping. | General-purpose annotation. |
+
+A real `finding` event (formatted for readability):
+
+```json
+{ "@t": "2026-06-13T14:44:40.42Z",
+  "EventType": "finding", "Confidence": "HIGH",
+  "Observation": "ntds.dit MFT $SI Created 2018-09-05 12:16:54Z; DC inbound 4624/4768/4769 for 'spsql' from 172.16.6.11; rd-01 4648 spsql->172.16.4.4",
+  "Interpretation": "AD database dump on the DC, performed as 'spsql' driven from rd-01 — triple-corroborated",
+  "EvidenceExecutionIds": "c4b23ed6, 0ca8473e, 1bce2f3e",
+  "ExecutionId": "0003b5fa", "CaseId": "SRL-2018-TEST5" }
+```
+
+Note the two id fields. `ExecutionId` is the agent step that *recorded* the finding; `EvidenceExecutionIds`
+are the steps that **prove** it — each a real execution whose command events a reviewer can pull and check.
+A finding is the agent's claim; the cited executions are the structural evidence behind it.
 
 ---
 
@@ -194,8 +226,10 @@ The integrity of the audit trail does not depend on the agent choosing to log th
 |-------|-----------|
 | `execution` | `Phase` (`started`/`completed`/`failed`/`cancelled`), `Script` (on `started`), `Success`, `DurationMs`, `ExecutionId`, `CaseId` |
 | `command` | `Command`, `Arguments`, `Host`, `Sudo`, `ExitCode`, `DurationMs`, `Completed`, `Workflow`, `WorkflowOperation`, `Toolkit`, `Operation`, `ExecutionId`, `CaseId` |
+| `finding` | `Observation`, `Interpretation`, `Confidence`, `EvidenceExecutionIds`, `ExecutionId`, `CaseId` |
+| `human-judgement-recommended`, `false-positive`, `missing-evidence`, `hallucination`, `information`, `error` | `Message`, `ExecutionId`, `CaseId` |
 
-Common to both: `@t` (UTC timestamp), `@mt` (the human-readable message template), `EventType`.
+Common to all: `@t` (UTC timestamp), `@mt` (the human-readable message template), `EventType`.
 
 ---
 
@@ -203,3 +237,4 @@ Common to both: `@t` (UTC timestamp), `@mt` (the human-readable message template
 
 - [Architecture.md](Architecture.md) — how code-mode works and what the SDK provides.
 - [Constraints.md](Constraints.md) — the architectural guardrails that bound the agent.
+- [IRAccuracy.md](IRAccuracy.md) — the prompt and architectural measures that keep findings accurate.
