@@ -1,0 +1,1176 @@
+# Process Expectations for Windows Process Tree Validation
+# Sources: MemProcFS m_evil_proc2.c, SANS Hunt Evil Poster, Custom research
+#
+# Three validation approaches:
+#   1. Whitelist (valid_parents): For system processes like svchost.exe,
+#      flag if parent is NOT in expected list.
+#   2. Blacklist (suspicious_parents): For shells (cmd, powershell, pwsh),
+#      flag if parent IS in suspicious list.
+#   3. Never-spawns (never_spawns_children): For injection targets like lsass.exe,
+#      flag if this process spawns ANY child - indicates process injection.
+#
+# Fields:
+#   process_name: Process executable name (lowercase)
+#   valid_parents: Whitelist - expected parent processes (null = any parent OK)
+#   suspicious_parents: Blacklist - parents that indicate attack (null = none)
+#   never_spawns_children: If true, this process should NEVER spawn any child.
+#                          If seen as parent of ANY process = injection (critical)
+#   parent_exits: True if parent normally exits after spawning this process
+#   valid_paths: Expected executable paths (null = kernel process or any location)
+#   user_type: SYSTEM, USER, or EITHER
+#   valid_users: Specific user accounts expected (null = any user of type)
+#   min_instances: Minimum expected running instances
+#   max_instances: Maximum expected (null = unlimited)
+#   per_session: True if one instance expected per user session
+#   required_args: Command line arguments that should always be present
+#   source: Data source reference
+#
+# Never-Spawns-Children Processes (injection detection):
+#   If ANY of these are seen as a parent process, it's critical - likely injection:
+#   - lsass.exe: Credential theft target, never spawns children
+#   - csrss.exe: Windows subsystem, never spawns user processes
+#   - audiodg.exe: Audio isolation process
+#   - dwm.exe: Desktop Window Manager
+#   - fontdrvhost.exe: Font driver host
+#   - lsaiso.exe: Credential Guard isolated LSA
+#   - searchindexer.exe: Windows Search (common injection target)
+#   - spoolsv.exe: Print Spooler (PrintNightmare target)
+#
+# Suspicious Parents (80 total for cmd.exe/powershell.exe/pwsh.exe):
+#   - Microsoft Office (10): winword, excel, powerpnt, outlook, etc.
+#   - Browsers (9): chrome, firefox, msedge, iexplore, brave, opera, etc.
+#   - PDF Readers (6): acrord32, acrobat, foxitreader, etc.
+#   - Java (3): java, javaw, javaws (Log4j, deserialization)
+#   - Collaboration (7): teams, slack, zoom, discord, etc.
+#   - Media Players (4): wmplayer, vlc, mpc-hc
+#   - Archive Tools (5): winrar, 7zfm, winzip, peazip
+#   - Text Editors (3): notepad, notepad++, wordpad
+#   - Image Viewers (4): photos, irfanview, xnview
+#   - LOLBins (7): regsvr32, rundll32, mshta, certutil, etc.
+#   - DCOM Abuse (9): mmc, dllhost, wmiprvse, scrcons, etc. (T1021.003)
+#   - System Services (13): lsass, csrss, smss, spoolsv, etc. (injection targets)
+
+processes:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # KERNEL / SYSTEM CORE PROCESSES
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - process_name: system
+    valid_parents: []
+    parent_exits: false
+    valid_paths: null
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 1
+    max_instances: 1
+    per_session: false
+    source: MemProcFS/SANS
+
+  - process_name: registry
+    valid_parents: [system]
+    parent_exits: false
+    valid_paths: null
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 1
+    max_instances: 1
+    per_session: false
+    source: MemProcFS
+
+  - process_name: memcompression
+    valid_parents: [system]
+    parent_exits: false
+    valid_paths: null
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 1
+    max_instances: 1
+    per_session: false
+    source: MemProcFS
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SESSION MANAGER SUBSYSTEM
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - process_name: smss.exe
+    valid_parents: [system]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\smss.exe"]
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 1
+    max_instances: null
+    per_session: false
+    source: MemProcFS/SANS
+
+  - process_name: csrss.exe
+    valid_parents: [smss.exe]
+    # Note: csrss.exe legitimately spawns conhost.exe, so NOT never_spawns_children
+    parent_exits: true
+    valid_paths: ["\\windows\\system32\\csrss.exe"]
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 2
+    max_instances: null
+    per_session: true
+    source: MemProcFS/SANS
+
+  - process_name: wininit.exe
+    valid_parents: [smss.exe]
+    parent_exits: true
+    valid_paths: ["\\windows\\system32\\wininit.exe", "\\windows\\syswow64\\wininit.exe"]
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 1
+    max_instances: 1
+    per_session: false
+    source: MemProcFS/SANS
+
+  - process_name: winlogon.exe
+    valid_parents: [smss.exe]
+    parent_exits: true
+    valid_paths: ["\\windows\\system32\\winlogon.exe", "\\windows\\syswow64\\winlogon.exe"]
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 1
+    max_instances: null
+    per_session: true
+    source: MemProcFS/SANS
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SERVICES AND SECURITY
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - process_name: services.exe
+    valid_parents: [wininit.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\services.exe", "\\windows\\syswow64\\services.exe"]
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 1
+    max_instances: 1
+    per_session: false
+    source: MemProcFS/SANS
+
+  - process_name: lsass.exe
+    valid_parents: [wininit.exe]
+    never_spawns_children: true  # CRITICAL: If lsass spawns anything = injection
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\lsass.exe"]
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 1
+    max_instances: 1
+    per_session: false
+    source: MemProcFS/SANS
+
+  - process_name: lsaiso.exe
+    valid_parents: [wininit.exe]
+    never_spawns_children: true  # CRITICAL: Credential Guard LSA never spawns children
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\lsaiso.exe"]
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 0
+    max_instances: 1
+    per_session: false
+    source: SANS
+    notes: Only present with Credential Guard enabled
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SERVICE HOST AND CHILDREN
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - process_name: svchost.exe
+    valid_parents: [services.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\svchost.exe", "\\windows\\syswow64\\svchost.exe"]
+    user_type: EITHER
+    valid_users: ["NT AUTHORITY\\SYSTEM", "NT AUTHORITY\\LOCAL SERVICE", "NT AUTHORITY\\NETWORK SERVICE"]
+    min_instances: 5
+    max_instances: null
+    per_session: false
+    required_args: "-k"
+    source: MemProcFS/SANS
+
+  - process_name: sihost.exe
+    valid_parents: [svchost.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\sihost.exe"]
+    user_type: USER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: true
+    source: MemProcFS
+
+  - process_name: runtimebroker.exe
+    valid_parents: [svchost.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\runtimebroker.exe"]
+    user_type: USER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: true
+    source: SANS
+
+  - process_name: taskhostw.exe
+    valid_parents: [svchost.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\taskhostw.exe"]
+    user_type: EITHER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: SANS
+
+  - process_name: dllhost.exe
+    valid_parents: [svchost.exe, services.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\dllhost.exe", "\\windows\\syswow64\\dllhost.exe"]
+    user_type: EITHER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: SANS
+
+  - process_name: wuauclt.exe
+    valid_parents: [svchost.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\wuauclt.exe"]
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: SANS
+    notes: Windows Update client
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # USER SESSION PROCESSES
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - process_name: userinit.exe
+    valid_parents: [winlogon.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\userinit.exe"]
+    user_type: USER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: true
+    source: MemProcFS/SANS
+    notes: Exits quickly after starting explorer
+
+  - process_name: explorer.exe
+    valid_parents: [userinit.exe]
+    parent_exits: true
+    valid_paths: ["\\windows\\explorer.exe", "\\windows\\syswow64\\explorer.exe"]
+    user_type: USER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: true
+    source: MemProcFS/SANS
+
+  - process_name: dwm.exe
+    valid_parents: [winlogon.exe]
+    never_spawns_children: true  # CRITICAL: Desktop Window Manager never spawns children
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\dwm.exe"]
+    user_type: SYSTEM
+    valid_users: ["DWM-1", "DWM-2", "DWM-3"]
+    min_instances: 1
+    max_instances: null
+    per_session: true
+    source: SANS
+
+  - process_name: fontdrvhost.exe
+    valid_parents: [wininit.exe, winlogon.exe]
+    never_spawns_children: true  # CRITICAL: Font driver host never spawns children
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\fontdrvhost.exe", "\\windows\\syswow64\\fontdrvhost.exe"]
+    user_type: EITHER
+    valid_users: ["UMFD-0", "UMFD-1", "UMFD-2"]
+    min_instances: 0
+    max_instances: null
+    per_session: true
+    source: SANS
+    notes: User-mode Font Driver Host
+
+  - process_name: logonui.exe
+    valid_parents: [winlogon.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\logonui.exe", "\\windows\\syswow64\\logonui.exe"]
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 0
+    max_instances: null
+    per_session: true
+    source: SANS
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SYSTEM SERVICES
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - process_name: spoolsv.exe
+    valid_parents: [services.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\spoolsv.exe"]
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 0
+    max_instances: 1
+    per_session: false
+    source: SANS
+    notes: Print Spooler
+
+  - process_name: searchindexer.exe
+    valid_parents: [services.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\searchindexer.exe", "\\windows\\syswow64\\searchindexer.exe"]
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 0
+    max_instances: 1
+    per_session: false
+    source: SANS
+
+  - process_name: searchhost.exe
+    valid_parents: [svchost.exe, searchindexer.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\systemapps\\microsoftwindows.client.cbs_cw5n1h2txyewy\\searchhost.exe"]
+    user_type: USER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: true
+    source: SANS
+    notes: Windows 11 Search
+
+  - process_name: wmiprvse.exe
+    valid_parents: [svchost.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\wbem\\wmiprvse.exe", "\\windows\\syswow64\\wbem\\wmiprvse.exe"]
+    user_type: EITHER
+    valid_users: ["NT AUTHORITY\\SYSTEM", "NT AUTHORITY\\LOCAL SERVICE", "NT AUTHORITY\\NETWORK SERVICE"]
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: SANS
+    notes: WMI Provider Host
+
+  - process_name: audiodg.exe
+    valid_parents: [svchost.exe]
+    never_spawns_children: true  # CRITICAL: Audio isolation process never spawns children
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\audiodg.exe", "\\windows\\syswow64\\audiodg.exe"]
+    user_type: SYSTEM
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: SANS
+    notes: Windows Audio Device Graph Isolation
+
+  - process_name: ctfmon.exe
+    valid_parents: [svchost.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\ctfmon.exe", "\\windows\\syswow64\\ctfmon.exe"]
+    user_type: USER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: true
+    source: SANS
+    notes: CTF Loader (Text Input)
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # WINDOWS DEFENDER / SECURITY
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - process_name: msmpeng.exe
+    valid_parents: [services.exe]
+    parent_exits: false
+    valid_paths: ["\\programdata\\microsoft\\windows defender\\platform\\*\\msmpeng.exe", "\\program files\\windows defender\\msmpeng.exe"]
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 0
+    max_instances: 1
+    per_session: false
+    source: SANS
+    notes: Windows Defender Antimalware Service
+
+  - process_name: nissrv.exe
+    valid_parents: [services.exe]
+    parent_exits: false
+    valid_paths: ["\\programdata\\microsoft\\windows defender\\platform\\*\\nissrv.exe", "\\program files\\windows defender\\nissrv.exe"]
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\LOCAL SERVICE"]
+    min_instances: 0
+    max_instances: 1
+    per_session: false
+    source: SANS
+    notes: Windows Defender Network Inspection Service
+
+  - process_name: securityhealthservice.exe
+    valid_parents: [services.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\securityhealthservice.exe"]
+    user_type: SYSTEM
+    valid_users: ["NT AUTHORITY\\SYSTEM"]
+    min_instances: 0
+    max_instances: 1
+    per_session: false
+    source: SANS
+
+  - process_name: securityhealthsystray.exe
+    valid_parents: [explorer.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\securityhealthsystray.exe"]
+    user_type: USER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: true
+    source: SANS
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CONSOLE AND SHELL
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - process_name: conhost.exe
+    valid_parents: [csrss.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\conhost.exe"]
+    user_type: EITHER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: SANS
+    notes: Console Window Host
+
+  - process_name: cmd.exe
+    valid_parents: null
+    suspicious_parents:
+      # Microsoft Office - macro malware, OLE exploits
+      - winword.exe
+      - excel.exe
+      - powerpnt.exe
+      - outlook.exe
+      - msaccess.exe
+      - onenote.exe
+      - mspub.exe
+      - visio.exe
+      - msword.exe
+      - excelcnv.exe
+      # Browsers - drive-by downloads, browser exploits
+      - chrome.exe
+      - firefox.exe
+      - msedge.exe
+      - iexplore.exe
+      - brave.exe
+      - opera.exe
+      - safari.exe
+      - microsoftedge.exe
+      - microsoftedgecp.exe
+      # PDF readers - malicious PDF exploitation
+      - acrord32.exe
+      - acrobat.exe
+      - foxitreader.exe
+      - foxitphantompdf.exe
+      - pdfxcview.exe
+      - sumatrapdf.exe
+      # Java - Log4j, deserialization attacks
+      - java.exe
+      - javaw.exe
+      - javaws.exe
+      # Collaboration apps - social engineering, app vulns
+      - teams.exe
+      - ms-teams.exe
+      - slack.exe
+      - zoom.exe
+      - webex.exe
+      - discord.exe
+      - skype.exe
+      # Media players - exploit via malicious media
+      - wmplayer.exe
+      - vlc.exe
+      - mpc-hc.exe
+      - mpc-hc64.exe
+      # Archive tools - exploit via malicious archives
+      - winrar.exe
+      - 7zfm.exe
+      - 7zg.exe
+      - winzip.exe
+      - peazip.exe
+      # Text editors (no reason to spawn cmd)
+      - notepad.exe
+      - notepad++.exe
+      - wordpad.exe
+      # Image viewers
+      - photos.exe
+      - microsoft.photos.exe
+      - irfanview.exe
+      - xnview.exe
+      # LOLBins commonly used for execution
+      - regsvr32.exe
+      - rundll32.exe
+      - certutil.exe
+      - bitsadmin.exe
+      - mshta.exe
+      - wscript.exe
+      - cscript.exe
+      # DCOM abuse - lateral movement (T1021.003)
+      - mmc.exe              # MMC20.Application DCOM object
+      - dllhost.exe          # COM surrogate - DCOM execution
+      - wmiprvse.exe         # WMI provider host - DCOM/WMI abuse
+      - scrcons.exe          # WMI script consumer
+      - verclsid.exe         # COM class ID verification
+      - wsmprovhost.exe      # WinRM/PowerShell remoting host
+      - wmiapsrv.exe         # WMI performance adapter
+      - winmgmt.exe          # WMI service executable
+      - unsecapp.exe         # WMI sink for async callbacks
+      # System services - injection targets, never spawn cmd legitimately
+      - lsass.exe            # Credential theft target - NEVER spawns cmd
+      - csrss.exe            # Client/Server Runtime - NEVER spawns cmd
+      - smss.exe             # Session Manager - NEVER spawns cmd
+      - wininit.exe          # Windows Init - NEVER spawns cmd
+      - winlogon.exe         # Windows Logon - NEVER spawns cmd
+      - spoolsv.exe          # Print Spooler - common injection target
+      - searchindexer.exe    # Windows Search - injection target
+      - audiodg.exe          # Audio Device Graph - NEVER spawns cmd
+      - dwm.exe              # Desktop Window Manager - NEVER spawns cmd
+      - fontdrvhost.exe      # Font Driver Host - NEVER spawns cmd
+      - sihost.exe           # Shell Infrastructure Host
+      - taskhostw.exe        # Task Host Window
+      - runtimebroker.exe    # Runtime Broker
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\cmd.exe", "\\windows\\syswow64\\cmd.exe"]
+    user_type: EITHER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: MemProcFS/SANS/Custom
+    notes: SYSTEM context without services.exe/svchost.exe parent is also suspicious
+
+  - process_name: powershell.exe
+    valid_parents: null
+    suspicious_parents:
+      # Microsoft Office - macro malware, OLE exploits
+      - winword.exe
+      - excel.exe
+      - powerpnt.exe
+      - outlook.exe
+      - msaccess.exe
+      - onenote.exe
+      - mspub.exe
+      - visio.exe
+      - msword.exe
+      - excelcnv.exe
+      # Browsers - drive-by downloads, browser exploits
+      - chrome.exe
+      - firefox.exe
+      - msedge.exe
+      - iexplore.exe
+      - brave.exe
+      - opera.exe
+      - safari.exe
+      - microsoftedge.exe
+      - microsoftedgecp.exe
+      # PDF readers - malicious PDF exploitation
+      - acrord32.exe
+      - acrobat.exe
+      - foxitreader.exe
+      - foxitphantompdf.exe
+      - pdfxcview.exe
+      - sumatrapdf.exe
+      # Java - Log4j, deserialization attacks
+      - java.exe
+      - javaw.exe
+      - javaws.exe
+      # Collaboration apps
+      - teams.exe
+      - ms-teams.exe
+      - slack.exe
+      - zoom.exe
+      - webex.exe
+      - discord.exe
+      - skype.exe
+      # Media players - exploit via malicious media
+      - wmplayer.exe
+      - vlc.exe
+      - mpc-hc.exe
+      - mpc-hc64.exe
+      # Archive tools - exploit via malicious archives
+      - winrar.exe
+      - 7zfm.exe
+      - 7zg.exe
+      - winzip.exe
+      - peazip.exe
+      # Text editors (no reason to spawn powershell)
+      - notepad.exe
+      - notepad++.exe
+      - wordpad.exe
+      # Image viewers
+      - photos.exe
+      - microsoft.photos.exe
+      - irfanview.exe
+      - xnview.exe
+      # LOLBins spawning PowerShell is suspicious
+      - regsvr32.exe
+      - rundll32.exe
+      - mshta.exe
+      - certutil.exe
+      - bitsadmin.exe
+      - wscript.exe
+      - cscript.exe
+      # DCOM abuse - lateral movement (T1021.003)
+      - mmc.exe              # MMC20.Application DCOM object
+      - dllhost.exe          # COM surrogate - DCOM execution
+      - wmiprvse.exe         # WMI provider host - DCOM/WMI abuse
+      - scrcons.exe          # WMI script consumer
+      - verclsid.exe         # COM class ID verification
+      - wsmprovhost.exe      # WinRM/PowerShell remoting host
+      - wmiapsrv.exe         # WMI performance adapter
+      - winmgmt.exe          # WMI service executable
+      - unsecapp.exe         # WMI sink for async callbacks
+      # System services - injection targets, never spawn powershell legitimately
+      - lsass.exe            # Credential theft target - NEVER spawns powershell
+      - csrss.exe            # Client/Server Runtime - NEVER spawns powershell
+      - smss.exe             # Session Manager - NEVER spawns powershell
+      - wininit.exe          # Windows Init - NEVER spawns powershell
+      - winlogon.exe         # Windows Logon - NEVER spawns powershell
+      - spoolsv.exe          # Print Spooler - common injection target
+      - searchindexer.exe    # Windows Search - injection target
+      - audiodg.exe          # Audio Device Graph - NEVER spawns powershell
+      - dwm.exe              # Desktop Window Manager - NEVER spawns powershell
+      - fontdrvhost.exe      # Font Driver Host - NEVER spawns powershell
+      - sihost.exe           # Shell Infrastructure Host
+      - taskhostw.exe        # Task Host Window
+      - runtimebroker.exe    # Runtime Broker
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe", "\\windows\\syswow64\\windowspowershell\\v1.0\\powershell.exe"]
+    user_type: EITHER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: MemProcFS/SANS/Custom
+    notes: SYSTEM context without services.exe/svchost.exe parent is also suspicious
+
+  - process_name: pwsh.exe
+    valid_parents: null
+    suspicious_parents:
+      # Microsoft Office - macro malware, OLE exploits
+      - winword.exe
+      - excel.exe
+      - powerpnt.exe
+      - outlook.exe
+      - msaccess.exe
+      - onenote.exe
+      - mspub.exe
+      - visio.exe
+      - msword.exe
+      - excelcnv.exe
+      # Browsers - drive-by downloads, browser exploits
+      - chrome.exe
+      - firefox.exe
+      - msedge.exe
+      - iexplore.exe
+      - brave.exe
+      - opera.exe
+      - safari.exe
+      - microsoftedge.exe
+      - microsoftedgecp.exe
+      # PDF readers - malicious PDF exploitation
+      - acrord32.exe
+      - acrobat.exe
+      - foxitreader.exe
+      - foxitphantompdf.exe
+      - pdfxcview.exe
+      - sumatrapdf.exe
+      # Java - Log4j, deserialization attacks
+      - java.exe
+      - javaw.exe
+      - javaws.exe
+      # Collaboration apps
+      - teams.exe
+      - ms-teams.exe
+      - slack.exe
+      - zoom.exe
+      - webex.exe
+      - discord.exe
+      - skype.exe
+      # Media players - exploit via malicious media
+      - wmplayer.exe
+      - vlc.exe
+      - mpc-hc.exe
+      - mpc-hc64.exe
+      # Archive tools - exploit via malicious archives
+      - winrar.exe
+      - 7zfm.exe
+      - 7zg.exe
+      - winzip.exe
+      - peazip.exe
+      # Text editors (no reason to spawn pwsh)
+      - notepad.exe
+      - notepad++.exe
+      - wordpad.exe
+      # Image viewers
+      - photos.exe
+      - microsoft.photos.exe
+      - irfanview.exe
+      - xnview.exe
+      # LOLBins spawning PowerShell is suspicious
+      - regsvr32.exe
+      - rundll32.exe
+      - mshta.exe
+      - certutil.exe
+      - bitsadmin.exe
+      - wscript.exe
+      - cscript.exe
+      # DCOM abuse - lateral movement (T1021.003)
+      - mmc.exe              # MMC20.Application DCOM object
+      - dllhost.exe          # COM surrogate - DCOM execution
+      - wmiprvse.exe         # WMI provider host - DCOM/WMI abuse
+      - scrcons.exe          # WMI script consumer
+      - verclsid.exe         # COM class ID verification
+      - wsmprovhost.exe      # WinRM/PowerShell remoting host
+      - wmiapsrv.exe         # WMI performance adapter
+      - winmgmt.exe          # WMI service executable
+      - unsecapp.exe         # WMI sink for async callbacks
+      # System services - injection targets, never spawn pwsh legitimately
+      - lsass.exe            # Credential theft target - NEVER spawns pwsh
+      - csrss.exe            # Client/Server Runtime - NEVER spawns pwsh
+      - smss.exe             # Session Manager - NEVER spawns pwsh
+      - wininit.exe          # Windows Init - NEVER spawns pwsh
+      - winlogon.exe         # Windows Logon - NEVER spawns pwsh
+      - spoolsv.exe          # Print Spooler - common injection target
+      - searchindexer.exe    # Windows Search - injection target
+      - audiodg.exe          # Audio Device Graph - NEVER spawns pwsh
+      - dwm.exe              # Desktop Window Manager - NEVER spawns pwsh
+      - fontdrvhost.exe      # Font Driver Host - NEVER spawns pwsh
+      - sihost.exe           # Shell Infrastructure Host
+      - taskhostw.exe        # Task Host Window
+      - runtimebroker.exe    # Runtime Broker
+    parent_exits: false
+    valid_paths: null
+    user_type: EITHER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: SANS/Custom
+    notes: PowerShell Core - can be installed anywhere. SYSTEM context without services.exe/svchost.exe parent is suspicious.
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SCRIPT HOSTS - Same attack vectors as shells
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - process_name: wscript.exe
+    valid_parents: null
+    suspicious_parents: &script_host_suspicious_parents
+      # Microsoft Office - macro malware
+      - winword.exe
+      - excel.exe
+      - powerpnt.exe
+      - outlook.exe
+      - msaccess.exe
+      - onenote.exe
+      - mspub.exe
+      - visio.exe
+      - msword.exe
+      - excelcnv.exe
+      # Browsers - drive-by downloads
+      - chrome.exe
+      - firefox.exe
+      - msedge.exe
+      - iexplore.exe
+      - brave.exe
+      - opera.exe
+      - safari.exe
+      - microsoftedge.exe
+      - microsoftedgecp.exe
+      # PDF readers
+      - acrord32.exe
+      - acrobat.exe
+      - foxitreader.exe
+      - foxitphantompdf.exe
+      - pdfxcview.exe
+      - sumatrapdf.exe
+      # Java
+      - java.exe
+      - javaw.exe
+      - javaws.exe
+      # Collaboration apps
+      - teams.exe
+      - ms-teams.exe
+      - slack.exe
+      - zoom.exe
+      - webex.exe
+      - discord.exe
+      - skype.exe
+      # Media players
+      - wmplayer.exe
+      - vlc.exe
+      - mpc-hc.exe
+      - mpc-hc64.exe
+      # Archive tools
+      - winrar.exe
+      - 7zfm.exe
+      - 7zg.exe
+      - winzip.exe
+      - peazip.exe
+      # Text editors
+      - notepad.exe
+      - notepad++.exe
+      - wordpad.exe
+      # Image viewers
+      - photos.exe
+      - microsoft.photos.exe
+      - irfanview.exe
+      - xnview.exe
+      # DCOM abuse
+      - mmc.exe
+      - dllhost.exe
+      - wmiprvse.exe
+      - scrcons.exe
+      - verclsid.exe
+      - wsmprovhost.exe
+      - wmiapsrv.exe
+      - winmgmt.exe
+      - unsecapp.exe
+      # System services - injection targets
+      - lsass.exe
+      - csrss.exe
+      - smss.exe
+      - wininit.exe
+      - winlogon.exe
+      - spoolsv.exe
+      - searchindexer.exe
+      - audiodg.exe
+      - dwm.exe
+      - fontdrvhost.exe
+      - sihost.exe
+      - taskhostw.exe
+      - runtimebroker.exe
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\wscript.exe", "\\windows\\syswow64\\wscript.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: Windows Script Host - VBScript/JScript execution. Common malware delivery mechanism.
+
+  - process_name: cscript.exe
+    valid_parents: null
+    suspicious_parents: *script_host_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\cscript.exe", "\\windows\\syswow64\\cscript.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: Console Script Host - command-line VBScript/JScript execution.
+
+  - process_name: mshta.exe
+    valid_parents: null
+    suspicious_parents: *script_host_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\mshta.exe", "\\windows\\syswow64\\mshta.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: HTML Application Host - executes .hta files. Common LOLBin for malware.
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # RECONNAISSANCE / DISCOVERY TOOLS
+  # These spawned by Office/browsers is a MAJOR red flag (T1087, T1082, T1016)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - process_name: whoami.exe
+    valid_parents: null
+    suspicious_parents: &recon_suspicious_parents
+      # Microsoft Office - macro malware doing recon
+      - winword.exe
+      - excel.exe
+      - powerpnt.exe
+      - outlook.exe
+      - msaccess.exe
+      - onenote.exe
+      - mspub.exe
+      - visio.exe
+      # Browsers - post-exploitation recon
+      - chrome.exe
+      - firefox.exe
+      - msedge.exe
+      - iexplore.exe
+      - brave.exe
+      - opera.exe
+      # PDF readers
+      - acrord32.exe
+      - acrobat.exe
+      - foxitreader.exe
+      - foxitphantompdf.exe
+      # Java
+      - java.exe
+      - javaw.exe
+      - javaws.exe
+      # Collaboration apps
+      - teams.exe
+      - ms-teams.exe
+      - slack.exe
+      - zoom.exe
+      - discord.exe
+      # Script hosts (recon via scripts)
+      - wscript.exe
+      - cscript.exe
+      - mshta.exe
+      # DCOM abuse
+      - mmc.exe
+      - dllhost.exe
+      - wmiprvse.exe
+      - scrcons.exe
+      # System services - injection
+      - lsass.exe
+      - csrss.exe
+      - audiodg.exe
+      - dwm.exe
+      - fontdrvhost.exe
+      - spoolsv.exe
+      - searchindexer.exe
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\whoami.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: User/privilege enumeration (T1033). First command attackers run.
+
+  - process_name: hostname.exe
+    valid_parents: null
+    suspicious_parents: *recon_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\hostname.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: System identification (T1082).
+
+  - process_name: ipconfig.exe
+    valid_parents: null
+    suspicious_parents: *recon_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\ipconfig.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: Network configuration discovery (T1016).
+
+  - process_name: net.exe
+    valid_parents: null
+    suspicious_parents: *recon_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\net.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: User/group/share enumeration (T1087, T1135). Very common in attacks.
+
+  - process_name: net1.exe
+    valid_parents: [net.exe]  # CRITICAL: net1.exe should ONLY be spawned by net.exe
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\net1.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: Backend for net.exe. Direct execution bypasses net.exe logging/detection. If parent != net.exe, attacker is bypassing detection.
+
+  - process_name: nltest.exe
+    valid_parents: null
+    suspicious_parents: *recon_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\nltest.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: Domain trust enumeration (T1482). Used for lateral movement planning.
+
+  - process_name: dsquery.exe
+    valid_parents: null
+    suspicious_parents: *recon_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\dsquery.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: Active Directory enumeration (T1018, T1087).
+
+  - process_name: systeminfo.exe
+    valid_parents: null
+    suspicious_parents: *recon_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\systeminfo.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: System information gathering (T1082). Patch level, domain info, etc.
+
+  - process_name: tasklist.exe
+    valid_parents: null
+    suspicious_parents: *recon_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\tasklist.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: Process enumeration (T1057). Security software discovery.
+
+  - process_name: netstat.exe
+    valid_parents: null
+    suspicious_parents: *recon_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\netstat.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: Network connection discovery (T1049).
+
+  - process_name: arp.exe
+    valid_parents: null
+    suspicious_parents: *recon_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\arp.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: ARP cache enumeration (T1016). Local network discovery.
+
+  - process_name: nslookup.exe
+    valid_parents: null
+    suspicious_parents: *recon_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\nslookup.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: DNS queries (T1016). Domain enumeration.
+
+  - process_name: ping.exe
+    valid_parents: null
+    suspicious_parents: *recon_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\ping.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: Host discovery (T1018). Network sweep.
+
+  - process_name: tracert.exe
+    valid_parents: null
+    suspicious_parents: *recon_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\tracert.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: Network path discovery (T1016).
+
+  - process_name: quser.exe
+    valid_parents: null
+    suspicious_parents: *recon_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\quser.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: Logged-in user enumeration (T1033).
+
+  - process_name: query.exe
+    valid_parents: null
+    suspicious_parents: *recon_suspicious_parents
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\query.exe"]
+    user_type: EITHER
+    min_instances: 0
+    max_instances: null
+    per_session: false
+    source: Custom
+    notes: Session/process/user query (T1033).
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # WINDOWS 10/11 MODERN APPS
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - process_name: startmenuexperiencehost.exe
+    valid_parents: [svchost.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\systemapps\\microsoft.windows.startmenuexperiencehost_cw5n1h2txyewy\\startmenuexperiencehost.exe"]
+    user_type: USER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: true
+    source: SANS
+
+  - process_name: shellexperiencehost.exe
+    valid_parents: [svchost.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\systemapps\\shellexperiencehost_cw5n1h2txyewy\\shellexperiencehost.exe"]
+    user_type: USER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: true
+    source: SANS
+
+  - process_name: applicationframehost.exe
+    valid_parents: [svchost.exe]
+    parent_exits: false
+    valid_paths: ["\\windows\\system32\\applicationframehost.exe"]
+    user_type: USER
+    valid_users: null
+    min_instances: 0
+    max_instances: null
+    per_session: true
+    source: SANS
+    notes: UWP App Host

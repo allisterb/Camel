@@ -147,7 +147,196 @@ public class WindowsAnalysisWorkflow : Workflow
                 ? "No remote network shares (mapped drives) found in the user's registry."
                 : $"Found {remoteShares.Length} remote share connection(s): {string.Join(", ", remoteShares.Select(s => s.Unc))}.");
     }
+
+    /// <summary>
+    /// The Windows process-expectation dataset (parsed from the bundled <c>process_expectations.yaml</c>, sourced
+    /// from MemProcFS's <c>m_evil_proc2.c</c> and the SANS Hunt Evil poster), keyed by lowercase process name. Use
+    /// it to look up the expected parents/paths/identity/cardinality of a given Windows process, or pass a process
+    /// list to <see cref="ValidateProcessTreeAsync(IEnumerable{ProcessNode}, bool)"/> to validate a whole tree.
+    /// </summary>
+    public IReadOnlyDictionary<string, ProcessExpectation> GetProcessExpectations() => ProcessExpectations.Load();
+
+    /// <summary>
+    /// Validates a host's process tree against the <see cref="ProcessExpectation"/> dataset (MemProcFS / SANS Hunt
+    /// Evil), applying the three complementary checks from the methodology to each process under investigation:
+    /// (1) <em>never-spawns-children</em> — if a process's parent is an injection target that should never spawn a
+    /// child (lsass/csrss/dwm/fontdrvhost/lsaiso/…), the child is a <c>critical</c> process-injection lead;
+    /// (2) <em>suspicious-parent blacklist</em> — a shell (cmd/powershell/pwsh/script host) spawned by a known-bad
+    /// parent (Office, browser, PDF reader, LOLBin, DCOM object, …) is a <c>critical</c> attack pattern; and
+    /// (3) <em>valid-parent whitelist</em> — a system process whose parent is not in its expected set is
+    /// <c>high</c>-severity. When a process carries a <see cref="ProcessNode.Path"/> or <see cref="ProcessNode.User"/>,
+    /// the executable path (against <see cref="ProcessExpectation.ValidPaths"/>) and user context (against
+    /// <see cref="ProcessExpectation.UserType"/>) are also validated. Processes with no expectation are reported but
+    /// not validated. Findings are leads to triage, not verdicts.
+    /// </summary>
+    /// <param name="processes">The processes under investigation (name + parent name are required for the tree
+    /// checks; path/user enable the path/identity checks when known).</param>
+    /// <param name="checkInstanceCounts">When true, also flags processes present with fewer than
+    /// <see cref="ProcessExpectation.MinInstances"/> or more than <see cref="ProcessExpectation.MaxInstances"/>
+    /// instances. Only meaningful when <paramref name="processes"/> is a complete process listing — leave false for
+    /// a partial set to avoid false cardinality findings.</param>
+    public Task<WorkflowResult<ProcessTreeValidationReport>> ValidateProcessTreeAsync(
+        IEnumerable<ProcessNode> processes, bool checkInstanceCounts = false)
+    {
+        using var _audit = AuditScope();
+        using var op = Begin("Validating process tree against expectations");
+
+        var nodes = processes as ProcessNode[] ?? processes.ToArray();
+        var expectations = ProcessExpectations.Load();
+
+        var checks = nodes.Select(n => ValidateNode(n, expectations)).ToArray();
+
+        // Host-wide cardinality: only for process names actually present (a name absent from a partial listing is
+        // not evidence of a missing process), and only when the caller vouches for a complete listing.
+        var instanceFindings = checkInstanceCounts
+            ? nodes.GroupBy(n => n.Name.ToLowerInvariant(), StringComparer.OrdinalIgnoreCase)
+                .Select(g => (name: g.Key, count: g.Count(), exp: expectations.GetValueOrDefault(g.Key)))
+                .Where(x => x.exp is not null)
+                .SelectMany(x => InstanceFindings(x.name, x.count, x.exp!))
+                .ToArray()
+            : [];
+
+        op.Complete();
+        var report = new ProcessTreeValidationReport { Processes = checks, InstanceFindings = instanceFindings };
+        int known = checks.Count(c => c.InExpectationsDb);
+        return Task.FromResult(WorkflowResult<ProcessTreeValidationReport>.Success(report,
+            report.SuspiciousProcesses.Length == 0 && instanceFindings.Length == 0
+                ? $"Validated {checks.Length} process(es) ({known} with a known expectation); none flagged."
+                : $"Validated {checks.Length} process(es) ({known} known); {report.SuspiciousProcesses.Length} flagged" +
+                  (instanceFindings.Length > 0 ? $" + {instanceFindings.Length} instance-count anomal(ies)" : "") + ": " +
+                  string.Join(", ", report.SuspiciousProcesses.Take(5).Select(c =>
+                      $"{c.Name}{(c.ParentName is { } p ? $" <- {p}" : "")} [{c.Findings[0].Type}]")) + "."));
+    }
+
+    /// <summary>
+    /// Validates a process tree from a Volatility <c>windows.pslist</c> result (<paramref name="psList"/>),
+    /// resolving each process's parent name by PID/PPID before delegating to
+    /// <see cref="ValidateProcessTreeAsync(IEnumerable{ProcessNode}, bool)"/>. pslist carries no path/user, so only
+    /// the parent-relationship checks (and optional instance counts) apply.
+    /// </summary>
+    /// <param name="psList">The process list from <c>MemoryAnalysis.WindowsPsListAsync</c> (or psscan/pstree).</param>
+    /// <param name="checkInstanceCounts">See the primary overload.</param>
+    public Task<WorkflowResult<ProcessTreeValidationReport>> ValidateProcessTreeAsync(
+        WindowsPsList[] psList, bool checkInstanceCounts = false)
+    {
+        // Resolve parent image names by PID (last writer wins on PID reuse; good enough for triage).
+        var nameByPid = psList.GroupBy(p => p.PID).ToDictionary(g => g.Key, g => g.Last().ImageFileName);
+        var nodes = psList.Select(p => new ProcessNode
+        {
+            Name = p.ImageFileName,
+            ParentName = nameByPid.GetValueOrDefault(p.PPID),
+            Pid = p.PID,
+            Ppid = p.PPID,
+        });
+        return ValidateProcessTreeAsync(nodes, checkInstanceCounts);
+    }
     #endregion
+
+    // Validates one process node against the expectation dataset, mirroring the methodology's never-spawns /
+    // suspicious-parent / valid-parent / path / user checks. Findings are accumulated as leads.
+    private static ProcessExpectationCheck ValidateNode(ProcessNode n, IReadOnlyDictionary<string, ProcessExpectation> expectations)
+    {
+        var findings = new List<ProcessExpectationFinding>();
+        var parent = n.ParentName?.Trim().ToLowerInvariant();
+
+        // (1) Injection: the PARENT is a process that should never spawn children, yet here it spawned this one.
+        if (parent is not null && expectations.GetValueOrDefault(parent) is { NeverSpawnsChildren: true })
+            findings.Add(new ProcessExpectationFinding
+            {
+                Type = FindingInjection, Severity = SevCritical, Actual = n.ParentName,
+                Description = $"CRITICAL: '{n.ParentName}' should NEVER spawn child processes, yet it spawned '{n.Name}' — indicates process injection (e.g. credential theft, implant).",
+            });
+
+        var exp = expectations.GetValueOrDefault(n.Name.Trim().ToLowerInvariant());
+        if (exp is null)
+            return new ProcessExpectationCheck { Name = n.Name, ParentName = n.ParentName, Pid = n.Pid, InExpectationsDb = false, Findings = findings.ToArray() };
+
+        // (2) Suspicious-parent blacklist (shells spawned by Office/browsers/LOLBins/DCOM/…).
+        if (parent is not null && exp.SuspiciousParents is { Length: > 0 } sus
+            && sus.Any(p => p.Equals(parent, StringComparison.OrdinalIgnoreCase)))
+            findings.Add(new ProcessExpectationFinding
+            {
+                Type = FindingSuspiciousParent, Severity = SevCritical, Actual = n.ParentName,
+                Description = $"Suspicious parent: '{n.ParentName}' spawning '{n.Name}' is a known attack pattern.",
+            });
+
+        // (3) Valid-parent whitelist (system processes with a fixed expected parent set).
+        if (parent is not null && exp.ValidParents is { Length: > 0 } valid
+            && !valid.Any(p => p.Equals(parent, StringComparison.OrdinalIgnoreCase)))
+            findings.Add(new ProcessExpectationFinding
+            {
+                Type = FindingUnexpectedParent, Severity = SevHigh, Expected = valid, Actual = n.ParentName,
+                Description = $"Unexpected parent for '{n.Name}': expected {string.Join("/", valid)}, got '{n.ParentName}'.",
+            });
+
+        // Path check (against the canonical executable locations), when a path is known.
+        if (n.Path is { Length: > 0 } && exp.ValidPaths is { Length: > 0 } paths)
+        {
+            var actual = NormalizePath(n.Path);
+            if (!paths.Any(p => NormalizePath(p) == actual))
+                findings.Add(new ProcessExpectationFinding
+                {
+                    Type = FindingUnexpectedPath, Severity = SevHigh, Expected = paths, Actual = n.Path,
+                    Description = $"Unexpected executable path for '{n.Name}': '{n.Path}'.",
+                });
+        }
+
+        // User-context check (SYSTEM vs USER), when a user is known.
+        if (n.User is { Length: > 0 } && ValidateUser(exp.UserType, n.User) is false)
+            findings.Add(new ProcessExpectationFinding
+            {
+                Type = FindingUnexpectedUser, Severity = SevMedium, Expected = exp.UserType is null ? null : [exp.UserType], Actual = n.User,
+                Description = $"Unexpected user context for '{n.Name}': expected {exp.UserType}, got '{n.User}'.",
+            });
+
+        return new ProcessExpectationCheck { Name = n.Name, ParentName = n.ParentName, Pid = n.Pid, InExpectationsDb = true, Findings = findings.ToArray() };
+    }
+
+    // Cardinality findings for a process present with a count outside its expected [min, max] band.
+    private static IEnumerable<ProcessExpectationFinding> InstanceFindings(string name, int count, ProcessExpectation exp)
+    {
+        if (count < exp.MinInstances)
+            yield return new ProcessExpectationFinding
+            {
+                Type = FindingTooFew, Severity = SevMedium, Expected = [$">= {exp.MinInstances}"], Actual = count.ToString(),
+                Description = $"Only {count} instance(s) of '{name}' present; expected at least {exp.MinInstances}.",
+            };
+        if (exp.MaxInstances is { } max && count > max)
+            yield return new ProcessExpectationFinding
+            {
+                Type = FindingTooMany, Severity = SevHigh, Expected = [$"<= {max}"], Actual = count.ToString(),
+                Description = $"{count} instance(s) of '{name}' present; expected at most {max} (a masquerading/extra instance is a lead).",
+            };
+    }
+
+    // True/false when the user context can be evaluated against the expected type; null when no constraint applies
+    // (EITHER, or an unknown type). Mirrors the reference's SYSTEM/USER account-name buckets.
+    private static bool? ValidateUser(string? userType, string user)
+    {
+        var u = user.Trim().ToUpperInvariant();
+        return userType?.ToUpperInvariant() switch
+        {
+            "SYSTEM" => u is "SYSTEM" or "LOCAL SERVICE" or "NETWORK SERVICE"
+                        or @"NT AUTHORITY\SYSTEM" or @"NT AUTHORITY\LOCAL SERVICE" or @"NT AUTHORITY\NETWORK SERVICE",
+            "USER" => u is not ("SYSTEM" or "LOCAL SERVICE" or "NETWORK SERVICE"
+                        or @"NT AUTHORITY\SYSTEM" or @"NT AUTHORITY\LOCAL SERVICE" or @"NT AUTHORITY\NETWORK SERVICE"),
+            _ => null,    // EITHER / unspecified — no constraint
+        };
+    }
+
+    // Normalizes a Windows path for comparison against the dataset's valid_paths (lowercase, expand the common
+    // env-var/kernel prefixes, strip the drive letter, unify separators, trim trailing slashes) — mirrors the
+    // reference normalize_path so a live "C:\Windows\System32\svchost.exe" matches the rule "\windows\system32\svchost.exe".
+    private static string NormalizePath(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return path;
+        var p = path.ToLowerInvariant();
+        foreach (var (placeholder, replacement) in EnvExpansions)
+            if (p.StartsWith(placeholder, StringComparison.Ordinal)) { p = replacement + p[placeholder.Length..]; break; }
+        if (p.Length > 2 && p[1] == ':') p = p[2..];     // drop drive letter
+        p = p.Replace('/', '\\').TrimEnd('\\');
+        return p.Length == 0 ? "\\" : p;
+    }
 
     // Splits a "\\server\share[\…]" UNC into an ExternalConnection.
     private static ExternalShareConnection MakeExternalShareConnection(string unc, string source, DateTime? lastWrite)
@@ -1223,6 +1412,32 @@ public class WindowsAnalysisWorkflow : Workflow
     #region Fields
     // The DFIR batch file the WindowsAnalysisToolkit constructor installs alongside RECmd.
     public const string DfirBatchFile = "/opt/zimmermantools/RECmd/DFIRBatch.reb";
+
+    // Process-tree validation finding kinds (machine-readable) and severities, mirroring the methodology.
+    public const string FindingInjection = "injection_detected";
+    public const string FindingSuspiciousParent = "suspicious_parent";
+    public const string FindingUnexpectedParent = "unexpected_parent";
+    public const string FindingUnexpectedPath = "unexpected_path";
+    public const string FindingUnexpectedUser = "unexpected_user";
+    public const string FindingTooFew = "too_few_instances";
+    public const string FindingTooMany = "too_many_instances";
+    public const string SevCritical = "critical";
+    public const string SevHigh = "high";
+    public const string SevMedium = "medium";
+
+    // Env-var / kernel-path prefixes expanded before comparing a process path to the dataset's valid_paths, so an
+    // unexpanded autorun placeholder (e.g. %SystemRoot%\System32\…) normalizes to the same \windows\system32\… form.
+    private static readonly (string placeholder, string replacement)[] EnvExpansions =
+    [
+        ("%windir%", @"\windows"),
+        ("%systemroot%", @"\windows"),
+        ("%programfiles(x86)%", @"\program files (x86)"),
+        ("%programfiles%", @"\program files"),
+        ("%programdata%", @"\programdata"),
+        ("%allusersprofile%", @"\programdata"),
+        ("%systemdrive%", ""),
+        (@"\systemroot\", @"\windows\"),
+    ];
 
     // The key forensic registry artifacts from the methodology, each matched by a distinctive (case-insensitive)
     // fragment of its registry key path — directly mirroring the reference's Key Registry Artifacts table.

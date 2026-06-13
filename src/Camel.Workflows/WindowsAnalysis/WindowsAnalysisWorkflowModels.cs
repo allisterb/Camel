@@ -1,10 +1,13 @@
 namespace Camel.Workflows.Models;
 
+
 using System;
 using System.Linq;
 
-using Camel.Toolkits.Models;
+using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
 
+using Camel.Toolkits.Models;
 /// <summary>
 /// One of the forensic registry artifacts from the Windows-artifacts methodology: a human-readable
 /// <see cref="Name"/> and the <see cref="RegistryEntry"/> rows the RECmd batch produced whose key path
@@ -463,4 +466,206 @@ public record ExternalShareConnection
 public record ExternalShareConnectionsReport
 {
     public ExternalShareConnection[] RemoteShares { get; init; } = [];
+}
+
+/// <summary>
+/// The expected behaviour of a single Windows process, parsed from <c>process_expectations.yaml</c> (sourced from
+/// MemProcFS's <c>m_evil_proc2.c</c> and the SANS Hunt Evil poster). Used to validate a host's process tree via
+/// three complementary approaches: a <em>whitelist</em> (<see cref="ValidParents"/>) for system processes — flag
+/// when the parent is not expected; a <em>blacklist</em> (<see cref="SuspiciousParents"/>) for shells (cmd/
+/// powershell/pwsh) — flag when the parent is a known-bad spawner (Office, browsers, LOLBins, …); and a
+/// <em>never-spawns-children</em> rule (<see cref="NeverSpawnsChildren"/>) for injection targets (lsass, dwm,
+/// csrss, …) — any child of one of these is critical (process injection). <see cref="ValidPaths"/>,
+/// <see cref="UserType"/>/<see cref="ValidUsers"/>, and the instance counts add path/identity/cardinality checks.
+/// </summary>
+public record ProcessExpectation
+{
+    /// <summary>The process executable name (lowercase, e.g. <c>svchost.exe</c>); the dictionary key.</summary>
+    public string ProcessName { get; init; } = "";
+    /// <summary>Whitelist of expected parent processes. <c>null</c>/empty means any parent is acceptable.</summary>
+    public string[]? ValidParents { get; init; }
+    /// <summary>Blacklist of parents that indicate an attack when seen spawning this process. <c>null</c>/empty means none.</summary>
+    public string[]? SuspiciousParents { get; init; }
+    /// <summary>When true, this process should NEVER spawn a child — any child indicates process injection (critical).</summary>
+    public bool NeverSpawnsChildren { get; init; }
+    /// <summary>True if the parent normally exits after spawning this process.</summary>
+    public bool ParentExits { get; init; }
+    /// <summary>Expected executable paths (lowercased, backslash form). <c>null</c>/empty means any location.</summary>
+    public string[]? ValidPaths { get; init; }
+    /// <summary>Expected user context: <c>SYSTEM</c>, <c>USER</c>, or <c>EITHER</c>.</summary>
+    public string? UserType { get; init; }
+    /// <summary>Specific user accounts expected (<c>null</c> means any user of <see cref="UserType"/>).</summary>
+    public string[]? ValidUsers { get; init; }
+    /// <summary>Minimum number of running instances expected on a healthy host.</summary>
+    public int MinInstances { get; init; }
+    /// <summary>Maximum number of instances expected (<c>null</c> means unlimited).</summary>
+    public int? MaxInstances { get; init; }
+    /// <summary>True if exactly one instance is expected per interactive user session.</summary>
+    public bool PerSession { get; init; }
+    /// <summary>Command-line arguments that should always be present (e.g. svchost's <c>-k</c>).</summary>
+    public string? RequiredArgs { get; init; }
+    /// <summary>Provenance of the rule (e.g. <c>MemProcFS/SANS</c>).</summary>
+    public string? Source { get; init; }
+    /// <summary>Free-form analyst notes from the dataset.</summary>
+    public string? Notes { get; init; }
+}
+
+/// <summary>
+/// One Windows process under investigation, validated against the <see cref="ProcessExpectation"/> dataset.
+/// <see cref="Name"/> and <see cref="ParentName"/> drive the parent/child checks; the optional <see cref="Path"/>
+/// (full executable path) and <see cref="User"/> (user context) enable the path and identity checks when known.
+/// <see cref="Pid"/>/<see cref="Ppid"/> are carried for correlation back to the source process listing.
+/// </summary>
+public record ProcessNode
+{
+    public string Name { get; init; } = "";
+    public string? ParentName { get; init; }
+    public string? Path { get; init; }
+    public string? User { get; init; }
+    public int? Pid { get; init; }
+    public int? Ppid { get; init; }
+}
+
+/// <summary>
+/// A single anomaly found while validating a process against its expectation. <see cref="Type"/> is the machine-
+/// readable kind (<c>injection_detected</c>, <c>suspicious_parent</c>, <c>unexpected_parent</c>,
+/// <c>unexpected_path</c>, <c>unexpected_user</c>, <c>too_many_instances</c>, <c>too_few_instances</c>);
+/// <see cref="Severity"/> is <c>critical</c>/<c>high</c>/<c>medium</c>. <see cref="Expected"/>/<see cref="Actual"/>
+/// carry the rule and the observed value where applicable. Findings are leads to triage, not verdicts.
+/// </summary>
+public record ProcessExpectationFinding
+{
+    public string Type { get; init; } = "";
+    public string Severity { get; init; } = "";
+    public string Description { get; init; } = "";
+    public string[]? Expected { get; init; }
+    public string? Actual { get; init; }
+}
+
+/// <summary>
+/// The result of validating one <see cref="ProcessNode"/> against the expectation dataset.
+/// <see cref="InExpectationsDb"/> is true when the process name had a known expectation (an unknown process is
+/// not validated, only reported). <see cref="Findings"/> holds every anomaly; <see cref="Suspicious"/> is true
+/// when at least one was raised.
+/// </summary>
+public record ProcessExpectationCheck
+{
+    public string Name { get; init; } = "";
+    public string? ParentName { get; init; }
+    public int? Pid { get; init; }
+    public bool InExpectationsDb { get; init; }
+    public ProcessExpectationFinding[] Findings { get; init; } = [];
+    public bool Suspicious => Findings.Length > 0;
+}
+
+
+
+/// <summary>
+/// Loads and parses the bundled <c>process_expectations.yaml</c> dataset (MemProcFS <c>m_evil_proc2.c</c> + SANS
+/// Hunt Evil poster) into a queryable <see cref="ProcessExpectation"/> index keyed by lowercase process name. The
+/// YAML is embedded in this assembly; parsing handles the dataset's anchors/aliases (the shared
+/// <c>suspicious_parents</c> lists) and its <c>null</c> / <c>[]</c> / list distinctions. The parsed dictionary is
+/// cached after first load.
+/// </summary>
+public static class ProcessExpectations
+{
+    // The embedded YAML resource (see Camel.Workflows.csproj LogicalName).
+    private const string ResourceName = "Camel.Workflows.process_expectations.yaml";
+
+    private static IReadOnlyDictionary<string, ProcessExpectation>? _cached;
+    private static readonly object _gate = new();
+
+    /// <summary>
+    /// The process-expectation dataset, keyed by lowercase process name (e.g. <c>svchost.exe</c>). Loaded from the
+    /// embedded YAML on first access and cached thereafter.
+    /// </summary>
+    public static IReadOnlyDictionary<string, ProcessExpectation> Load()
+    {
+        if (_cached is not null) return _cached;
+        lock (_gate)
+        {
+            if (_cached is not null) return _cached;
+            using var stream = typeof(ProcessExpectations).Assembly.GetManifestResourceStream(ResourceName)
+                ?? throw new InvalidOperationException($"Embedded process-expectations resource '{ResourceName}' was not found.");
+            using var reader = new StreamReader(stream);
+            return _cached = Parse(reader.ReadToEnd());
+        }
+    }
+
+    /// <summary>
+    /// Parses the process-expectations YAML <paramref name="yaml"/> into a dictionary keyed by lowercase process
+    /// name. Later entries with a duplicate name win. Exposed for testing with custom datasets.
+    /// </summary>
+    public static IReadOnlyDictionary<string, ProcessExpectation> Parse(string yaml)
+    {
+        var deserializer = new DeserializerBuilder()
+            .WithNamingConvention(UnderscoredNamingConvention.Instance)
+            .IgnoreUnmatchedProperties()
+            .Build();
+
+        var doc = deserializer.Deserialize<Document>(yaml);
+        return (doc?.Processes ?? [])
+            .Where(p => !string.IsNullOrWhiteSpace(p.ProcessName))
+            .Select(p => p.ToExpectation())
+            .GroupBy(e => e.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    // The YAML root: { processes: [ … ] }.
+    private sealed class Document
+    {
+        public List<ProcessDto> Processes { get; set; } = [];
+    }
+
+    // A mutable DTO YamlDotNet can populate (the public model is an immutable record). Properties map from
+    // snake_case via the underscored naming convention; absent scalars keep their CLR defaults.
+    private sealed class ProcessDto
+    {
+        public string ProcessName { get; set; } = "";
+        public List<string>? ValidParents { get; set; }
+        public List<string>? SuspiciousParents { get; set; }
+        public bool NeverSpawnsChildren { get; set; }
+        public bool ParentExits { get; set; }
+        public List<string>? ValidPaths { get; set; }
+        public string? UserType { get; set; }
+        public List<string>? ValidUsers { get; set; }
+        public int MinInstances { get; set; }
+        public int? MaxInstances { get; set; }
+        public bool PerSession { get; set; }
+        public string? RequiredArgs { get; set; }
+        public string? Source { get; set; }
+        public string? Notes { get; set; }
+
+        public ProcessExpectation ToExpectation() => new()
+        {
+            ProcessName = ProcessName.Trim().ToLowerInvariant(),
+            ValidParents = ValidParents?.ToArray(),
+            SuspiciousParents = SuspiciousParents?.ToArray(),
+            NeverSpawnsChildren = NeverSpawnsChildren,
+            ParentExits = ParentExits,
+            ValidPaths = ValidPaths?.ToArray(),
+            UserType = UserType,
+            ValidUsers = ValidUsers?.ToArray(),
+            MinInstances = MinInstances,
+            MaxInstances = MaxInstances,
+            PerSession = PerSession,
+            RequiredArgs = RequiredArgs,
+            Source = Source,
+            Notes = Notes,
+        };
+    }
+}
+
+/// <summary>
+/// The result of validating a host's process tree against the <see cref="ProcessExpectation"/> dataset.
+/// <see cref="Processes"/> holds one <see cref="ProcessExpectationCheck"/> per input process; <see cref="InstanceFindings"/>
+/// holds the host-wide cardinality anomalies (a process with fewer/more instances than expected — only computed
+/// when the caller passes a complete process listing). <see cref="SuspiciousProcesses"/> is the auto-flagged subset.
+/// </summary>
+public record ProcessTreeValidationReport
+{
+    public ProcessExpectationCheck[] Processes { get; init; } = [];
+    public ProcessExpectationFinding[] InstanceFindings { get; init; } = [];
+
+    public ProcessExpectationCheck[] SuspiciousProcesses => Processes.Where(p => p.Suspicious).ToArray();
 }
