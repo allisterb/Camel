@@ -198,10 +198,12 @@ internal class Program : Runtime
 
     /// <summary>
     /// Claude Code <c>SessionEnd</c> hook (wired into each case's <c>.claude/settings.json</c> by
-    /// <c>create-case</c>). Reads the hook JSON payload from stdin, then copies the client chat transcript
-    /// (<c>transcript_path</c>) into the case at <c>analysis/chatlogs/</c> so the chat log is bundled with
-    /// the audit trail. Anchored to <c>$CLAUDE_PROJECT_DIR</c> (the case root Claude Code exports to hooks),
-    /// falling back to the cwd. Best-effort: never fail the session — return 0 even on a missing transcript.
+    /// <c>create-case</c>). Reads the hook JSON payload from stdin, then (1) copies the client chat
+    /// transcript (<c>transcript_path</c>) into the case at <c>analysis/chatlogs/</c>, and (2) writes a
+    /// client-side token-consumption summary to <c>analysis/token-usage.json</c> (summed from the
+    /// transcript's per-turn <c>usage</c> records) — both bundled with the audit trail for the judges'
+    /// efficiency/cost review. Anchored to <c>$CLAUDE_PROJECT_DIR</c> (the case root Claude Code exports to
+    /// hooks), falling back to the cwd. Best-effort: never fail the session.
     /// </summary>
     static Task HandlePreserveChatlog(PreserveChatlogOptions opts)
     {
@@ -222,20 +224,111 @@ internal class Program : Runtime
 
             var baseDir = Environment.GetEnvironmentVariable("CLAUDE_PROJECT_DIR");
             if (string.IsNullOrWhiteSpace(baseDir)) baseDir = Directory.GetCurrentDirectory();
-            var dstDir = Path.Combine(baseDir, "analysis", "chatlogs");
-            Directory.CreateDirectory(dstDir);
+            var analysisDir = Path.Combine(baseDir, "analysis");
+            var chatlogsDir = Path.Combine(analysisDir, "chatlogs");
+            Directory.CreateDirectory(chatlogsDir);
 
             var sessionId = payload?["session_id"]?.GetValue<string>() ?? "session";
             var ts = DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ");
-            var dst = Path.Combine(dstDir, $"chatlog-{sessionId}-{ts}.jsonl");
+            var dst = Path.Combine(chatlogsDir, $"chatlog-{sessionId}-{ts}.jsonl");
             File.Copy(src, dst, overwrite: true);
             Console.Out.WriteLine($"[preserve-chatlog] Preserved client chat log -> {dst}");
+
+            WriteTokenUsage(src, analysisDir, sessionId);
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[preserve-chatlog] Failed to preserve chat log: {ex.Message}");
         }
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Sums the client-side token consumption from a Claude Code transcript (each <c>assistant</c> line
+    /// carries a <c>message.usage</c> record) and writes <c>analysis/token-usage.json</c>: grand totals
+    /// (input / output / cache-create / cache-read / sum) plus a per-model breakdown and the turn count.
+    /// Best-effort and isolated so a parsing hiccup never breaks chat-log preservation.
+    /// </summary>
+    static void WriteTokenUsage(string transcriptPath, string analysisDir, string sessionId)
+    {
+        try
+        {
+            long input = 0, output = 0, cacheCreate = 0, cacheRead = 0;
+            int turns = 0;
+            // model -> [turns, input, output, cacheCreate, cacheRead]
+            var byModel = new Dictionary<string, long[]>(StringComparer.Ordinal);
+
+            foreach (var line in File.ReadLines(transcriptPath))
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                JsonNode? n;
+                try { n = JsonNode.Parse(line); } catch { continue; }
+                if (n?["type"]?.GetValue<string>() != "assistant") continue;
+                var msg = n["message"];
+                var usage = msg?["usage"];
+                if (usage is null) continue;
+
+                long Get(string k) => usage[k]?.GetValue<long>() ?? 0;
+                long i = Get("input_tokens"), o = Get("output_tokens"),
+                     cc = Get("cache_creation_input_tokens"), cr = Get("cache_read_input_tokens");
+                var model = msg?["model"]?.GetValue<string>() ?? "unknown";
+
+                input += i; output += o; cacheCreate += cc; cacheRead += cr; turns++;
+                if (!byModel.TryGetValue(model, out var m)) { m = new long[5]; byModel[model] = m; }
+                m[0]++; m[1] += i; m[2] += o; m[3] += cc; m[4] += cr;
+            }
+
+            long total = input + output + cacheCreate + cacheRead;
+            long totalInput = input + cacheCreate + cacheRead;
+            // Cached (reused from the prompt cache, billed at the reduced cache-read rate) vs new (fresh
+            // tokens billed at standard/cache-write/output rates). cache_creation is a one-time write of
+            // new input into the cache, so it counts as new, not cached.
+            long cachedTokens = cacheRead;
+            long newTokens = input + cacheCreate + output;
+            var summary = new JsonObject
+            {
+                ["sessionId"] = sessionId,
+                ["generatedUtc"] = DateTime.UtcNow.ToString("o"),
+                ["transcript"] = transcriptPath,
+                ["assistantTurns"] = turns,
+                ["totals"] = new JsonObject
+                {
+                    ["input_tokens"] = input,
+                    ["output_tokens"] = output,
+                    ["cache_creation_input_tokens"] = cacheCreate,
+                    ["cache_read_input_tokens"] = cacheRead,
+                    ["total_tokens"] = total,
+                },
+                ["breakdown"] = new JsonObject
+                {
+                    ["cached_tokens"] = cachedTokens,                       // cache_read — reused, billed ~0.1x
+                    ["new_tokens"] = newTokens,                            // input + cache_creation + output
+                    ["new_input_tokens"] = input + cacheCreate,           // fresh input (full + cache-write premium)
+                    ["output_tokens"] = output,
+                    ["cache_read_fraction_of_input"] = totalInput > 0
+                        ? Math.Round((double)cacheRead / totalInput, 4)
+                        : 0.0,
+                },
+                ["byModel"] = new JsonObject(byModel.Select(kv =>
+                    new KeyValuePair<string, JsonNode?>(kv.Key, new JsonObject
+                    {
+                        ["turns"] = kv.Value[0],
+                        ["input_tokens"] = kv.Value[1],
+                        ["output_tokens"] = kv.Value[2],
+                        ["cache_creation_input_tokens"] = kv.Value[3],
+                        ["cache_read_input_tokens"] = kv.Value[4],
+                    }))),
+            };
+
+            Directory.CreateDirectory(analysisDir);
+            var path = Path.Combine(analysisDir, "token-usage.json");
+            File.WriteAllText(path, summary.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            Console.Out.WriteLine($"[preserve-chatlog] Token usage -> {path} (total {total:N0} tokens over {turns} turns)");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[preserve-chatlog] Token-usage summary failed: {ex.Message}");
+        }
     }
 
     /// <summary>Path to this running CLI assembly (empty for single-file publishes — fall back to the assembly dir).</summary>
