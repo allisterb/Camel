@@ -166,7 +166,7 @@ For each objective: state the finding, the SDK method(s) and key returned fields
 confirmed activity into a single UTC timeline of the intrusion with the associated IOCs (IPs, file paths, hashes,
 account names, persistence mechanisms). Keep conclusions strictly to what the returned data shows.
 
-**Cite the audit handle.** Every `Execute` result ends with a line `[audit] case=<caseId> invocation=<id>`.
-For each finding, cite the `invocation` id (and the toolkit/workflow method) of the call that established it — so
+**Cite the audit handle.** Every `Execute` result ends with a line `[audit] case=<caseId> execution=<id>`.
+For each finding, cite the `execution` id (and the toolkit/workflow method) of the call that established it — so
 the finding is traceable to its exact tool executions in the case's audit log (`audit-<caseId>.clef`). This is the
 chain of custody: a reviewer must be able to go from any claim in your report to the command that produced it.

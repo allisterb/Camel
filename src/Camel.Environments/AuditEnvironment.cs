@@ -204,7 +204,7 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         }
         sw.Stop();
         // Audit the synchronous command path too (cleanup/plumbing and any sync tool call), so the per-case trail
-        // is complete. Ambient case/invocation/toolkit context is supplied from the log context as in the async path.
+        // is complete. Ambient case/execution/toolkit context is supplied from the log context as in the async path.
         AuditCommand(AuditHostName, command, arguments, admin, r.ExitCode, sw.ElapsedMilliseconds, r.IsCompleted);
         process_output = r.StdOut;
         process_error = r.StdErr;
@@ -240,7 +240,7 @@ public abstract class AuditEnvironment : Runtime, IDisposable
             r = await this.ExecuteAsync(command, arguments);
         }
         sw.Stop();
-        // Record this command in the per-case audit trail. CaseId/InvocationId/Toolkit/Operation/Workflow are
+        // Record this command in the per-case audit trail. CaseId/ExecutionId/Toolkit/Operation/Workflow are
         // enriched ambiently from the log context, so this single chokepoint ties every tool execution to the
         // case and agent step that drove it — the row a judge traces a finding back to.
         AuditCommand(AuditHostName, command, arguments, admin, r.ExitCode, sw.ElapsedMilliseconds, r.IsCompleted);

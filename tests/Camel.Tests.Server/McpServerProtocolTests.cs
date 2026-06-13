@@ -80,12 +80,12 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
             new Dictionary<string, object?> { ["caseId"] = "case-test-1" });
         Assert.Contains("case-test-1", Text(setr));
 
-        // Every Execute result carries an audit handle (case + invocation id) the agent can cite so a
+        // Every Execute result carries an audit handle (case + execution id) the agent can cite so a
         // judge can trace the finding to its tool executions. Same session ⇒ the SetCaseId case id is reflected.
         var r = await client.CallToolAsync("Execute", Script("log('hi');"));
         var text = Text(r);
         Assert.Contains("hi", text);
-        Assert.Contains("[audit] case=case-test-1 invocation=", text);
+        Assert.Contains("[audit] case=case-test-1 execution=", text);
     }
 
     [Fact]

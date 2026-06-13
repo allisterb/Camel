@@ -7,7 +7,7 @@ using Camel;
 
 /// <summary>
 /// Tests the audit-trail infrastructure (criterion 5): a command audit event, enriched ambiently with the
-/// case/invocation/toolkit context, is routed to a per-case CLEF (JSON) file that a judge could trace a finding
+/// case/execution/toolkit context, is routed to a per-case CLEF (JSON) file that a judge could trace a finding
 /// through. Drives the Runtime audit API directly — no MCP server or SIFT workstation required.
 /// </summary>
 [Collection("Audit")] // serialize: the audit logger is a process-wide static
@@ -20,9 +20,9 @@ public class AuditTrailTests
         Runtime.WithAuditLog(dir);
         try
         {
-            // Simulate what the server/toolkit layers push: case → invocation → toolkit/operation, then a command.
+            // Simulate what the server/toolkit layers push: case → execution → toolkit/operation, then a command.
             using (Runtime.PushAuditProperty("CaseId", "srl-2018-rd01"))
-            using (Runtime.PushAuditProperty("InvocationId", "inv12345"))
+            using (Runtime.PushAuditProperty("ExecutionId", "exec12345"))
             using (Runtime.PushAuditProperty("Toolkit", "MemoryAnalysisToolkit"))
             using (Runtime.PushAuditProperty("Operation", "WindowsNetScan"))
             {
@@ -37,7 +37,7 @@ public class AuditTrailTests
 
             // The full trace chain is present in one structured record.
             Assert.Contains("srl-2018-rd01", content);   // CaseId (also the file name)
-            Assert.Contains("inv12345", content);         // InvocationId the agent cites
+            Assert.Contains("exec12345", content);        // ExecutionId the agent cites
             Assert.Contains("MemoryAnalysisToolkit", content);
             Assert.Contains("WindowsNetScan", content);
             Assert.Contains("vol.py", content);           // the specific tool execution

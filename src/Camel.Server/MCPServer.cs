@@ -79,12 +79,12 @@ public class CamelMCPTools : Runtime
         var session = registry.GetOrCreate(sessioid);
 
         // Open the audit scope for this code-mode call: every tool execution it drives is recorded in the case's
-        // audit file tagged with this CaseId and a unique InvocationId, which is returned to the agent so its
+        // audit file tagged with this CaseId and a unique ExecutionId, which is returned to the agent so its
         // report can cite it and a judge can trace any finding back to the exact command. The scopes must bracket
         // the whole run so the properties flow across the async boundary into the command-execution events.
-        var invocationId = Guid.NewGuid().ToString("N")[..8];
+        var executionId = Guid.NewGuid().ToString("N")[..8];
         using var _case = PushAuditProperty("CaseId", session.CaseId);
-        using var _inv = PushAuditProperty("InvocationId", invocationId);
+        using var _exec = PushAuditProperty("ExecutionId", executionId);
 
         StringBuilder output = new StringBuilder();
         var jsinterp = new Engine(jsoptions)
@@ -134,7 +134,7 @@ public class CamelMCPTools : Runtime
             try { session.Environment.CancelExecutions(); } catch { /* best-effort */ }
         });
         var auditSw = Stopwatch.StartNew();
-        AuditInvocation("started", script);   // records the exact code this invocation ran, under the case file
+        AuditExecution("started", script);   // records the exact code this execution ran, under the case file
         try
         {
             // Wrap in an async IIFE so scripts can `await` async toolkit methods: top-level await isn't allowed
@@ -153,12 +153,12 @@ public class CamelMCPTools : Runtime
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // The client aborted the call; the response channel is already gone, so there is nothing to return.
-            AuditInvocation("cancelled", success: false, durationMs: auditSw.ElapsedMilliseconds);
+            AuditExecution("cancelled", success: false, durationMs: auditSw.ElapsedMilliseconds);
             throw;
         }
         catch (Exception ex)
         {
-            AuditInvocation("failed", success: false, durationMs: auditSw.ElapsedMilliseconds);
+            AuditExecution("failed", success: false, durationMs: auditSw.ElapsedMilliseconds);
             // Errors surface as JavaScriptException (synchronous throw) or, via the async IIFE, as
             // PromiseRejectedException; both carry the script-level error text in their message.
             var jsex = ex as Jint.Runtime.JavaScriptException
@@ -178,7 +178,7 @@ public class CamelMCPTools : Runtime
             return new CallToolResult
             {
                 IsError = true,
-                Content = [new TextContentBlock { Text = message }, InvocationBlock(invocationId, session.CaseId)],
+                Content = [new TextContentBlock { Text = message }, ExecutionBlock(executionId, session.CaseId)],
             };
         }
         finally
@@ -187,20 +187,20 @@ public class CamelMCPTools : Runtime
             session.LeaveCall();
         }
 
-        AuditInvocation("completed", success: true, durationMs: auditSw.ElapsedMilliseconds);
+        AuditExecution("completed", success: true, durationMs: auditSw.ElapsedMilliseconds);
         return new CallToolResult
         {
-            Content = [new TextContentBlock { Text = output.ToString() }, InvocationBlock(invocationId, session.CaseId)],
+            Content = [new TextContentBlock { Text = output.ToString() }, ExecutionBlock(executionId, session.CaseId)],
         };
     }
 
     /// <summary>
     /// The audit-handle block appended to every <c>Execute</c> result: the case id and this call's
-    /// invocation id. The agent cites these in its report so a judge can grep the per-case audit file
-    /// (<c>audit-&lt;CaseId&gt;.clef</c>) for the invocation and see exactly which tool executions produced a finding.
+    /// execution id. The agent cites these in its report so a judge can grep the per-case audit file
+    /// (<c>audit-&lt;CaseId&gt;.clef</c>) for the execution and see exactly which tool executions produced a finding.
     /// </summary>
-    static TextContentBlock InvocationBlock(string invocationId, string caseId) =>
-        new() { Text = $"\n[audit] case={caseId} invocation={invocationId}" };
+    static TextContentBlock ExecutionBlock(string executionId, string caseId) =>
+        new() { Text = $"\n[audit] case={caseId} execution={executionId}" };
 
     /// <summary>
     /// Awaits <paramref name="work"/> while emitting a progress notification every <see cref="HeartbeatInterval"/>

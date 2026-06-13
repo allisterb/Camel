@@ -10,8 +10,8 @@ namespace Camel.Tests.Workflows;
 
 /// <summary>
 /// Reproducer that generates the committed demo audit sample (demo/audit-sample/audit-srl-2018-rd01.clef) by
-/// running three real rd-01 (SRL-2018) analysis invocations through the actual workflow/toolkit/environment code
-/// paths — the same paths the MCP server drives — under a case id, each in its own InvocationId scope (exactly as
+/// running three real rd-01 (SRL-2018) analysis executions through the actual workflow/toolkit/environment code
+/// paths — the same paths the MCP server drives — under a case id, each in its own ExecutionId scope (exactly as
 /// Execute does). Guarded by the CAMEL_GEN_AUDIT_SAMPLE env var so it is skipped in the normal suite;
 /// run it explicitly to regenerate the sample. Requires the rd-01 C: image mounted at /mnt/rd01-c.
 /// </summary>
@@ -37,8 +37,8 @@ public class AuditSampleGenerator : TestsRuntime
         {
             using (Runtime.PushAuditProperty("CaseId", CaseId))
             {
-                // ── Invocation 1: WMI fileless persistence ────────────────────────────────────────────────
-                await Invocation("7f3a9c21",
+                // ── Execution 1: WMI fileless persistence ────────────────────────────────────────────────
+                await Execution("7f3a9c21",
                     "const r = await WindowsAnalysisWorkflow.FindWmiPersistenceAsync(\n" +
                     "  '/mnt/rd01-c/Windows/System32/wbem/Repository/OBJECTS.DATA');\n" +
                     "log(JSON.stringify(r.Result.SuspiciousConsumers));",
@@ -52,8 +52,8 @@ public class AuditSampleGenerator : TestsRuntime
                         return r.IsSuccess;
                     });
 
-                // ── Invocation 2: execution evidence (Amcache) ────────────────────────────────────────────
-                await Invocation("2e8b14d6",
+                // ── Execution 2: execution evidence (Amcache) ────────────────────────────────────────────
+                await Execution("2e8b14d6",
                     "const bins = await WindowsAnalysisWorkflow.GetExecutedBinariesFromAmcacheAsync(\n" +
                     "  '/mnt/rd01-c/Windows/appcompat/Programs/Amcache.hve');\n" +
                     "log(bins.Result.length + ' executed binaries');",
@@ -66,8 +66,8 @@ public class AuditSampleGenerator : TestsRuntime
                         return r.IsSuccess;
                     });
 
-                // ── Invocation 3: $MFT filesystem records ─────────────────────────────────────────────────
-                await Invocation("9a4f7b03",
+                // ── Execution 3: $MFT filesystem records ─────────────────────────────────────────────────
+                await Execution("9a4f7b03",
                     "const mft = await WindowsAnalysisToolkit.MFTECmdAsync('/tmp/rd01_mft_head');\n" +
                     "log(mft.length + ' MFT records');",
                     async () =>
@@ -83,15 +83,15 @@ public class AuditSampleGenerator : TestsRuntime
         finally { Runtime.CloseAndFlushAuditLog(); }
     }
 
-    // Mirrors the server's Execute framing: push the InvocationId, mark the invocation boundary in the
+    // Mirrors the server's Execute framing: push the ExecutionId, mark the execution boundary in the
     // audit trail (with the script the agent would have run), run the work, mark completion.
-    static async Task Invocation(string invocationId, string script, Func<Task<bool>> work)
+    static async Task Execution(string executionId, string script, Func<Task<bool>> work)
     {
-        using var _inv = Runtime.PushAuditProperty("InvocationId", invocationId);
+        using var _exec = Runtime.PushAuditProperty("ExecutionId", executionId);
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        Runtime.AuditInvocation("started", script);
+        Runtime.AuditExecution("started", script);
         bool ok = await work();
-        Runtime.AuditInvocation("completed", success: ok, durationMs: sw.ElapsedMilliseconds);
+        Runtime.AuditExecution("completed", success: ok, durationMs: sw.ElapsedMilliseconds);
     }
 
     static void Print(string finding, bool ok, string detail)

@@ -154,7 +154,7 @@ public abstract class Runtime
     /// events, one file per <c>CaseId</c> (<c>audit-&lt;CaseId&gt;.clef</c> under <paramref name="auditDir"/>),
     /// routed by the <c>CaseId</c> property the MCP server pushes onto the <see cref="Serilog.Context.LogContext"/>.
     /// Because it also enriches <c>FromLogContext</c>, every audit event automatically carries the ambient
-    /// <c>CaseId</c>, <c>InvocationId</c>, <c>Workflow</c>, and <c>Toolkit</c>/<c>Operation</c> in scope — so a
+    /// <c>CaseId</c>, <c>ExecutionId</c>, <c>Workflow</c>, and <c>Toolkit</c>/<c>Operation</c> in scope — so a
     /// judge can trace any finding to the exact tool execution, on a per-case basis, from these files alone.
     /// Kept separate from the main (verbose) log so the audit trail is clean and reconstructable.
     /// </summary>
@@ -184,7 +184,7 @@ public abstract class Runtime
 
     /// <summary>
     /// Records one command execution in the audit trail: the host it ran on, the command and arguments, whether
-    /// it ran under sudo, its exit code, duration, and whether it completed. <c>CaseId</c>/<c>InvocationId</c>/
+    /// it ran under sudo, its exit code, duration, and whether it completed. <c>CaseId</c>/<c>ExecutionId</c>/
     /// <c>Workflow</c>/<c>Toolkit</c>/<c>Operation</c> are supplied ambiently from the log context. This is the
     /// row a judge lands on when tracing a finding back to "the specific tool execution that produced it".
     /// </summary>
@@ -195,15 +195,15 @@ public abstract class Runtime
                 host, command, arguments, sudo, exitCode, completed, durationMs);
 
     /// <summary>
-    /// Records an invocation boundary (the <c>Execute</c> code-mode call that frames a set of tool
+    /// Records an execution boundary (the <c>Execute</c> code-mode call that frames a set of tool
     /// executions) in the audit trail: the phase (<c>started</c>/<c>completed</c>/<c>failed</c>/<c>cancelled</c>),
     /// the script that ran, and — on completion — success and duration. Lets the trail group a case's tool
     /// executions under the agent step that drove them.
     /// </summary>
     [DebuggerStepThrough]
-    public static void AuditInvocation(string phase, string? script = null, bool? success = null, long? durationMs = null) =>
-        _auditLogger?.ForContext("EventType", "invocation")
-            .Information("INVOCATION {Phase} (success={Success} {DurationMs}ms)\n{Script}", phase, success, durationMs, script);
+    public static void AuditExecution(string phase, string? script = null, bool? success = null, long? durationMs = null) =>
+        _auditLogger?.ForContext("EventType", "execution")
+            .Information("EXECUTION {Phase} (success={Success} {DurationMs}ms)\n{Script}", phase, success, durationMs, script);
 
     /// <summary>Records an arbitrary audit event (e.g. a case-id change) with a free-form message.</summary>
     [DebuggerStepThrough]

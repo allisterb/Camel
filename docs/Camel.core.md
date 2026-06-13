@@ -46,8 +46,8 @@ that produced it. Two things are expected of you:
    (e.g. `srl-2018-rd01`). This is a separate MCP tool, not a JS SDK call. Every tool execution afterward is
    written to `audit-<caseId>.clef` and tagged with the case, the toolkit/tool, the command, host, exit code, and
    duration.
-2. **Every `Execute` result ends with an audit handle line** — `[audit] case=<caseId> invocation=<id>`.
-   **Cite that `invocation` id (and the toolkit/method) next to the findings it supports in your report**, so a
+2. **Every `Execute` result ends with an audit handle line** — `[audit] case=<caseId> execution=<id>`.
+   **Cite that `execution` id (and the toolkit/method) next to the findings it supports in your report**, so a
    reviewer can trace each finding to its tool executions in the case's audit file. Treat it as the evidence
    citation for everything that script established.
 
