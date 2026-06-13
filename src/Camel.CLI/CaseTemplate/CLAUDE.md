@@ -2,8 +2,10 @@
 
 Per-case project instructions for a Camel DFIR investigation. All forensics in this case run through
 the **Camel** code-mode MCP server registered in `.mcp.json` (this directory). Use the case
-evidence details entered by the user in the Evidence section below. Update findings in the Findings section below as you confirm them through Camel, and cite each finding's `[audit] execution=<id>`
-handle so any conclusion can be traced to the workflow and tool executions that produced it.
+evidence details entered by the user in the Evidence section below. This file is the analyst's brief to
+you — your **findings go in `reports/`** (see Deliverables), not here. Cite each finding's
+`[audit] execution=<id>` handle so any conclusion can be traced to the workflow and tool executions that
+produced it.
 
 | Setting | Value |
 |---------|-------|
@@ -194,35 +196,32 @@ if (r.IsSuccess)
 
 ## Deliverables
 
-For each objective: state the finding, the SDK method(s) and key returned fields that support it, and fold
-confirmed activity into a single UTC timeline of the intrusion with the associated IOCs (IPs, file paths, hashes,
-account names, persistence mechanisms). Keep conclusions strictly to what the returned data shows.
+Write your outputs to this case's **`reports/`** directory. CLAUDE.md is the analyst's brief — do **not** record
+findings in it. Produce two artifacts, building them as you go and finalising at the end:
 
-**Cite the audit handle.** Every `Execute` result ends with a line `[audit] case=<caseId> execution=<id>`.
-For each finding, cite the `execution` id (and the toolkit/workflow method) of the call that established it — so
-the finding is traceable to its exact tool executions in the case's audit log (`audit-<caseId>.clef`). This is the
-chain of custody: a reviewer must be able to go from any claim in your report to the command that produced it.
+1. **`reports/report.md`** — the human-readable incident report:
+   - **Executive summary** — what happened, on which hosts, by whom, when, and how, with overall confidence.
+   - **Incident timeline (UTC)** — one chronological table of confirmed activity:
+     `| Timestamp (UTC) | Event | Audit execution |`.
+   - **Findings** — one entry per conclusion: **Observation** (what you saw) → **Interpretation** (what it means)
+     → **Confidence** (`SPECULATIVE`/`LOW`/`MEDIUM`/`HIGH`), citing the `[audit] execution=<id>` id(s) that prove
+     it and the SDK method(s) used.
+   - **Gaps / not examined** — missing logs, unavailable artifacts, scope not yet checked.
+2. **`reports/iocs.csv`** — machine-readable IOCs for downstream tooling, one row per indicator, with header:
+   `indicator_type,value,context,first_seen_utc,audit_execution`
+   (`indicator_type` ∈ `ip` | `domain` | `url` | `file_path` | `hash` | `account` | `persistence` | `other`).
 
-**Persist findings to the trail.** `log`/`error` only return text to you. To make the investigation
-reconstructable from the audit log alone, use:
-- **`auditFinding(observation, interpretation, confidence, evidenceExecutionIds)`** — for each conclusion (a structured
-  `finding` event citing the executions that prove it). This is the primary recording call.
+Keep conclusions strictly to what the returned data shows; populate IOCs only with artifacts confirmed through Camel.
+
+**Cite the audit handle.** Every `Execute` result ends with a line `[audit] case=<caseId> execution=<id>`. Every
+claim in the report must cite the `execution` id (and the toolkit/workflow method) of the call that established it —
+the chain of custody from any conclusion back to the command that produced it, traceable in
+`logs/audit-<caseId>.clef`.
+
+**Mirror conclusions into the trail as you go.** `log`/`error` only return text to you. So the case is
+reconstructable from the logs alone, record into the audit trail alongside the report:
+- **`auditFinding(observation, interpretation, confidence, evidenceExecutionIds)`** — for each finding (a
+  structured `finding` event). The primary recording call; pairs one-to-one with the report's Findings entries.
 - **`auditReviewRec(reason)`** — for the high-consequence decisions listed under *Forensic discipline* (a
   `human-judgement-recommended` event).
 - **`auditInfo(message)` / `auditError(message)`** — for notable intermediate steps and problems worth keeping.
-
-## Findings
-
-## Known IOCs
-
-> Populate only with artifacts confirmed through Camel; cite each finding's audit execution id.
-
-| Indicator | Type | Detail | Audit execution |
-|-----------|------|--------|------------------|
-
----
-
-## Incident Timeline (UTC)
-
-| Timestamp (UTC) | Event | Audit execution |
-|-----------------|-------|------------------|
