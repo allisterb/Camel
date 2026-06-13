@@ -1,3 +1,6 @@
 [submodule "ext/Expect.NET"]
 	path = ext/Expect.NET
 	url = https://github.com/allisterb/Expect.NET.git
+[submodule "ext/protocol-sift-camel"]
+	path = ext/protocol-sift-camel
+	url = https://github.com/allisterb/protocol-sift-camel.git
