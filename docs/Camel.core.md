@@ -33,7 +33,10 @@ nullish coalescing `??`, `Array`/`Map`/`Set`/`JSON`, etc.). Tailor generated cod
 - **Toolkit methods return their payload or `null` on tool failure; workflow methods return `WorkflowResult<T>`.**
   Always check before using the value.
 - Output via the globals `log` / `error` / `table`; `auditInfo` / `auditError` additionally persist a line to the
-  per-case audit log. There is no interactive prompting. `eval`/`new Function` are disabled.
+  per-case audit log, and `auditFinding` / `auditReviewRec` persist a structured finding / a review flag. There is
+  no interactive prompting. `eval`/`new Function` are disabled.
+- **How to reason** over what these methods return — the investigative discipline, grounding rules, and the
+  decisions to flag for human judgement — is the companion resource **`camel-sdk-discipline`** (`Camel.discipline.md`).
 
 Path arguments are paths **on the SIFT workstation** (local or over SSH). Each MCP session has its own isolated
 environment; toolkits are constructed lazily on first access and cached for the session.
@@ -60,9 +63,19 @@ agent when the script finishes).
 `error(message: string)` — write an error line to the output buffer (same mechanism as `log`; use it to mark a problem).
 
 `auditInfo(message: string)` — like `log`, but **also** records the line in the per-case audit log (`audit-<caseId>.clef`)
-as an `information` event. Use it for findings and conclusions you want preserved in the trail, not just returned to you.
+as an `information` event. Use it for notable steps and conclusions you want preserved in the trail, not just returned to you.
 
 `auditError(message: string)` — like `error`, but **also** records the line in the per-case audit log as an `error` event.
+
+`auditFinding(observation: string, interpretation: string, confidence: string, executionIds: string)` — records a
+structured forensic finding to the audit log as a `finding` event: `observation` (what you saw, as fact),
+`interpretation` (what it means), `confidence` (`SPECULATIVE`/`LOW`/`MEDIUM`/`HIGH`), and `executionIds` (the
+`[audit] execution=` ids that prove it). This is the primary way to record a conclusion — see the
+`camel-sdk-discipline` resource for the method that governs when and how.
+
+`auditReviewRec(reason: string)` — records a `human-judgement-recommended` event for a high-consequence conclusion
+(root cause, attribution, scope, exfiltration, insider) so a reviewer can find it in the trail. Present the
+candidates and call this — the run continues autonomously; it does not stop.
 
 `table(headers: string[], dataRows: object[][])` — write a tabular block to the output buffer (`headers` are the
 column headers; `dataRows` is one inner array of cell values per row).

@@ -159,6 +159,7 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
         var uris = list.Resources.Select(r => r.Uri).ToList();
         Assert.Contains("camel://sdk/core", uris);
         Assert.Contains("camel://sdk/schema", uris);
+        Assert.Contains("camel://sdk/discipline", uris);
 
         // ...and read back with their embedded markdown content.
         var core = await client.ReadResourceAsync("camel://sdk/core");
@@ -170,6 +171,11 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
         var schemaText = string.Concat(schema.Contents.OfType<TextResourceContents>().Select(c => c.Text));
         Assert.Contains("WorkflowResult Schema", schemaText);
         Assert.Contains("TimelineEvent Schema", schemaText);
+
+        var discipline = await client.ReadResourceAsync("camel://sdk/discipline");
+        var disciplineText = string.Concat(discipline.Contents.OfType<TextResourceContents>().Select(c => c.Text));
+        Assert.Contains("Forensic Discipline", disciplineText);
+        Assert.Contains("auditReviewRec", disciplineText);
     }
 
     [Fact]

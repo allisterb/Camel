@@ -1,5 +1,7 @@
 # About
 
+
+
 Camel is designed to 'lower' DFIR analysis by AI from thinking using natural language skills over low-level tools, to thinking using code generation over specialized operations and workflows and machine learning routines
 that codify existing DFIR analyst knowledge
 . This lowering
@@ -18,3 +20,9 @@ DFIR analHigh-level workflows
 * Deterministic execution: Forensic analysis operations implemented as Camel are repeatable at a high level allowing the same sequence of forensic tool commands to be replayed everytime an operation is called.
 * Parallel execution: Workflow steps without dependencies can execute in parallel, significantly reducing the run times for analysis. In JavaScript all workflow steps can be awaited
 * Dedicated ML routines for data-intensive tasks: Tasks like timeline analysus
+
+
+# Execution mode
+Camel is a cross-platform .NET application that can execute either directly on the Linux-based SIFT workstation, or on a Windows or Linux machine that can connect to a SIFT workstation
+over SSH. Camel runs and stores its evidence on the analyst machine only.
+

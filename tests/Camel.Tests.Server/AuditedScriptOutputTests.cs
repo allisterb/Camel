@@ -115,4 +115,45 @@ public class AuditedScriptOutputTests : TestsRuntime, IAsyncLifetime
         Assert.DoesNotContain(logOnly, infoLine);
         Assert.DoesNotContain(logOnly, errLine);
     }
+
+    [Fact]
+    public async Task AuditFindingAndAuditReviewRecPersistStructuredEvents()
+    {
+        await using var client = await NewClientAsync();
+
+        await client.CallToolAsync("SetCaseId",
+            new Dictionary<string, object?> { ["caseId"] = "audit-finding" });
+
+        const string obs = "OBSERVATION_marker_logcleared";
+        const string interp = "INTERPRETATION_marker_antiforensics";
+        const string ids = "exec_aaaa1111, exec_bbbb2222";
+        const string review = "REVIEW_marker_attribution_uncertain";
+
+        var r = await client.CallToolAsync("Execute", Script(
+            $"auditFinding('{obs}', '{interp}', 'HIGH', '{ids}'); auditReviewRec('{review}');"));
+
+        Assert.NotEqual(true, r.IsError);
+        var text = Text(r);
+        Assert.Contains(obs, text);
+        Assert.Contains(interp, text);
+        Assert.Contains("[human-judgement-recommended]", text); // auditReviewRec echoes a labelled line
+
+        Runtime.CloseAndFlushAuditLog();
+
+        var file = Path.Combine(auditDir, "audit-audit-finding.clef");
+        Assert.True(File.Exists(file), $"expected per-case audit file at {file}");
+        var lines = File.ReadAllLines(file);
+
+        // auditFinding -> a single `finding` event with observation/interpretation/confidence/evidence as
+        // distinct structured fields (not just concatenated text).
+        var findingLine = Assert.Single(lines, l => l.Contains("\"EventType\":\"finding\""));
+        Assert.Contains("\"Confidence\":\"HIGH\"", findingLine);
+        Assert.Contains("\"Observation\":\"" + obs + "\"", findingLine);
+        Assert.Contains("\"Interpretation\":\"" + interp + "\"", findingLine);
+        Assert.Contains(ids, findingLine);
+
+        // auditReviewRec -> a single `human-judgement-recommended` event carrying its reason.
+        var reviewLine = Assert.Single(lines, l => l.Contains("\"EventType\":\"human-judgement-recommended\""));
+        Assert.Contains(review, reviewLine);
+    }
 }

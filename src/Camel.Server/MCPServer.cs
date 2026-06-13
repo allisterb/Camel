@@ -91,9 +91,16 @@ public class CamelMCPTools : Runtime
           .SetValue("log", new Action<string>((s) => output.AppendLine(s)))
           .SetValue("error", new Action<string>((s) => output.AppendLine(s)))
           // auditInfo/auditError additionally record the line in the per-case audit log (CLEF) as an
-          // information/error event, so agent-surfaced findings survive in the trail, not just the response.
+          // information/error event, so agent-surfaced output survives in the trail, not just the response.
           .SetValue("auditInfo", new Action<string>((s) => AuditInfo(s, output)))
           .SetValue("auditError", new Action<string>((s) => AuditError(s, output)))
+          // auditFinding stages a structured forensic finding (observation/interpretation/confidence + the
+          // execution ids that prove it) as a `finding` event; auditReviewRec marks a high-consequence decision
+          // a human should review as a `human-judgement-recommended` event. Both also echo to the response.
+          .SetValue("auditFinding", new Action<string, string, string, string>(
+              (observation, interpretation, confidence, executionIds) =>
+                  AuditFinding(observation, interpretation, confidence, executionIds, output)))
+          .SetValue("auditReviewRec", new Action<string>((s) => AuditReviewRec(s, output)))
           .SetValue("table", new Action<string[], object[][]>((headers, dataRows) =>
               output.AppendLine(RenderAsciiTable(headers, dataRows))))
 
@@ -199,16 +206,42 @@ public class CamelMCPTools : Runtime
         };
     }
 
+    // Pass the agent's text as a {Message} parameter, never as the template itself: script output can contain
+    // '{' (e.g. JSON.stringify), which Serilog would otherwise try to parse as a property token.
     protected void AuditInfo(string text, StringBuilder output)
     {
-        AuditEvent("information", text);
+        AuditEvent("information", "{Message}", text);
         output.AppendLine(text);
     }
 
     protected void AuditError(string text, StringBuilder output)
     {
-        AuditEvent("error", text);
+        AuditEvent("error", "{Message}", text);
         output.AppendLine(text);
+    }
+
+    /// <summary>
+    /// Records a structured forensic finding to the per-case audit trail as a <c>finding</c> event — observation
+    /// and interpretation kept as distinct fields (forcing the agent to separate fact from inference), with the
+    /// confidence level and the <c>execution</c> ids that prove it. Also echoes a one-line summary to the response.
+    /// </summary>
+    protected void AuditFinding(string observation, string interpretation, string confidence, string executionIds, StringBuilder output)
+    {
+        AuditEvent("finding",
+            "FINDING [{Confidence}] {Observation} => {Interpretation} (evidence: {ExecutionIds})",
+            confidence, observation, interpretation, executionIds);
+        output.AppendLine($"[finding {confidence}] {observation} => {interpretation} (evidence: {executionIds})");
+    }
+
+    /// <summary>
+    /// Flags a high-consequence conclusion (root cause, attribution, scope, exfiltration, insider, ruling-out)
+    /// as a <c>human-judgement-recommended</c> event so a reviewer can grep the trail straight to the decision
+    /// points the agent reached autonomously. The run does not stop; it presents candidates and continues.
+    /// </summary>
+    protected void AuditReviewRec(string reason, StringBuilder output)
+    {
+        AuditEvent("human-judgement-recommended", "{Message}", reason);
+        output.AppendLine($"[human-judgement-recommended] {reason}");
     }
 
     /// <summary>
@@ -348,6 +381,15 @@ public class CamelResources
         "workflow method returns (e.g. TimelineEvent, FindMalwareReport, TriageReport). Schemas are grouped by " +
         "the object that returns them.")]
     public static string SdkSchema() => ReadEmbedded("Camel.schema.md");
+
+    [McpServerResource(UriTemplate = "camel://sdk/discipline", Name = "camel-sdk-discipline",
+        Title = "Camel JS SDK reference — forensic discipline", MimeType = "text/markdown")]
+    [Description("The forensic investigative discipline for the Execute tool: how to reason over what the SDK " +
+        "returns — core principles (evidence is sovereign, absence ≠ absence, correlation ≠ causation, benign " +
+        "until proven malicious), the analyze/collect/corroborate/record loop, the self-checks and golden rules " +
+        "for grounding a finding in cited execution ids, and the high-consequence decisions to flag for human " +
+        "judgement (via auditReviewRec) while still running autonomously. Read this alongside 'camel-sdk-core'.")]
+    public static string SdkDiscipline() => ReadEmbedded("Camel.discipline.md");
 
     static string ReadEmbedded(string name)
     {

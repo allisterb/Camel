@@ -18,6 +18,7 @@
   <ItemGroup>
     <EmbeddedResource Include="..\..\docs\Camel.core.md" LogicalName="Camel.core.md" />
     <EmbeddedResource Include="..\..\docs\Camel.schema.md" LogicalName="Camel.schema.md" />
+    <EmbeddedResource Include="..\..\docs\Camel.discipline.md" LogicalName="Camel.discipline.md" />
   </ItemGroup>
 
   <!-- Expose internal helpers (e.g. RunWithHeartbeatAsync) to the server test project. -->
