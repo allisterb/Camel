@@ -109,6 +109,10 @@ public class CamelMCPTools : Runtime
           .SetValue("auditHallucination", new Action<string>((s) => AuditHallucination(s, output)))
           .SetValue("table", new Action<string[], object[][]>((headers, dataRows) =>
               output.AppendLine(RenderAsciiTable(headers, dataRows))))
+          // Per-session storage: a string-keyed bag that persists between Execute calls, so a script can cache an
+          // expensive result (e.g. Session["mft"] = await Timeline.PsortAsync(...)) and reuse it later instead of
+          // recomputing it. The same dictionary instance is bound on every call for this session.
+          .SetValue("Session", session.Storage)
 
           // Pure-compute anomaly triage over a canonical timeline (no AuditEnvironment); see Camel.Inference.
           // Typical flow: const ev = await timeline.PsortAsync(plaso); log(anomaly.Summarize(anomaly.TriageTimeline(ev, 200)));

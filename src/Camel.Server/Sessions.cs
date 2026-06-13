@@ -2,6 +2,7 @@ namespace Camel;
 
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -31,6 +32,15 @@ public sealed class SessionContext : IDisposable
     /// label, so the per-case audit file is named for the investigation rather than an opaque session id.
     /// </summary>
     public string CaseId = "";
+
+    /// <summary>
+    /// Per-session scratch storage, exposed to the JS engine as the global <c>Session</c>. A script can stash an
+    /// expensive result (a workflow output, a parsed super-timeline) under a string key and reuse it in a later
+    /// <c>Execute</c> call instead of recomputing it — keeping successive analysis steps consistent with the same
+    /// underlying objects. Persists for the life of the session (cleared when the session is swept/disposed).
+    /// Per-session calls are serialized, so a plain dictionary is sufficient.
+    /// </summary>
+    public readonly Dictionary<string, object?> Storage = new();
 
     private int _activeCalls;
 

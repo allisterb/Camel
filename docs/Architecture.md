@@ -53,8 +53,9 @@ capabilities). It exposes a deliberately tiny surface:
 | **`Execute`** (tool) | Runs a JavaScript program against the Camel DFIR SDK and returns the distilled result. |
 | **`camel://sdk/core`** (resource) | The SDK reference: every object and method, with parameter and return types. |
 | **`camel://sdk/schema`** (resource) | The exact shape (fields) of every value the methods return. |
+| **`camel://sdk/discipline`** (resource) | The forensic investigative discipline: how to reason over the results, ground findings, and flag high-consequence calls. |
 
-The agent reads the two reference resources first, then drives the whole case through `Execute`.
+The agent reads the three reference resources first, then drives the whole case through `Execute`.
 
 ---
 
@@ -84,6 +85,27 @@ out of the model's context.
 
 ---
 
+## Carrying results between steps (session storage)
+
+A code-mode investigation is many `Execute` calls. Each call runs in a fresh script scope, but a per-session
+store — the **`Session`** object — persists across calls, so a program can cache an expensive result (a built
+super-timeline, a parsed memory dump) under a key and reuse the **same object** in later steps instead of
+rebuilding it. Its impact on the axes that matter:
+
+- **Speed** — the costliest steps (a timeline build over a disk image, multi-GB memory triage) run *once* and
+  are reused, rather than recomputed every time the agent needs them. Fewer expensive tool runs, less latency.
+- **Reproducibility** — every step that reads the cached object works from the *identical* data. An agent that
+  re-derives "the timeline" independently in two places can get subtly different results (non-deterministic
+  ordering, a re-filtered subset); caching the one object removes that drift.
+- **Accuracy** — consistency is a precondition for correct cross-step reasoning. A finding that correlates two
+  facts is only sound if both rest on the same evidence; reusing one cached object guarantees that, instead of
+  relying on the agent to reconstruct the data identically from memory or prose (see [IRAccuracy.md](IRAccuracy.md)).
+
+Large cached objects can be evicted with `delete Session["key"]` once no longer needed; the .NET runtime then
+reclaims the memory, so the cache is an accuracy/speed aid without an unbounded memory cost.
+
+---
+
 ## Where it runs
 
 Camel runs on .NET and works two ways without code changes:
@@ -99,7 +121,7 @@ The agent's program always refers to paths *on the workstation*; Camel handles t
 ## A session, end to end
 
 1. Claude Code launches the Camel MCP server for the case.
-2. The agent reads `camel://sdk/core` and `camel://sdk/schema`.
+2. The agent reads `camel://sdk/core`, `camel://sdk/schema`, and `camel://sdk/discipline`.
 3. It calls `SetCaseId("srl-2018-rd01")`.
 4. It calls `Execute` with a program — for example: mount the disk image read-only, build a triage
    timeline, run the anomaly engine, and report the high-signal pivots. Camel runs it on SIFT and
@@ -124,7 +146,8 @@ Every tool the program runs is recorded in the case's audit trail (see
 - **Breadth & depth** — workflows provide depth (multi-step, cross-source procedures), and the anomaly
   engine adds a triage capability the agent couldn't cheaply do by hand.
 - **Efficiency** — distilling on the workstation keeps raw output out of context, cutting tokens and
-  latency (see the per-case `token-usage.json`).
+  latency (see the per-case `token-usage.json`); session storage avoids recomputing expensive results across
+  steps.
 
 ---
 

@@ -38,6 +38,8 @@ nullish coalescing `??`, `Array`/`Map`/`Set`/`JSON`, etc.). Tailor generated cod
   interactive prompting. `eval`/`new Function` are disabled.
 - **How to reason** over what these methods return — the investigative discipline, grounding rules, and the
   decisions to flag for human judgement — is the companion resource **`camel-sdk-discipline`** (`Camel.discipline.md`).
+- **`Session`** is a string-keyed store that **persists between `Execute` calls** in the same session: cache an
+  expensive result once and reuse it later (see *Session storage* below) instead of recomputing it.
 
 Path arguments are paths **on the SIFT workstation** (local or over SSH). Each MCP session has its own isolated
 environment; toolkits are constructed lazily on first access and cached for the session.
@@ -94,6 +96,31 @@ column headers; `dataRows` is one inner array of cell values per row).
 > Output is accumulated and returned as the tool result. If the script throws, output produced before the
 > failure is still returned, followed by the error message. The `audit*` functions persist beyond the response:
 > they land in the case audit file so a reviewer can reconstruct the investigation from the logs alone.
+
+## Session storage (`Session`)
+
+`Session` is a string-keyed object that **survives across `Execute` calls within the same session**. Each call
+gets a fresh script scope (local `const`/`let` vanish when the script ends), but `Session` is the one place that
+persists — use it to carry an expensive or canonical result forward instead of rebuilding it:
+
+```js
+// First call: build the super-timeline once and keep it.
+const tl = await TimelineAnalysisWorkflow.CreateTriageTimelineAsync("/mnt/c", "/cases/host.plaso");
+if (tl.IsSuccess) Session["timeline"] = tl.Result;     // cache the result object
+
+// A later call: reuse it — no rebuild, and every step reasons over the *same* objects.
+const t = Session["timeline"];
+log(`reusing cached timeline with ${t.Events.length} events`);
+```
+
+- Read a key that was never set and you get `undefined` (no error) — guard with `Session["k"] === undefined` or `??`.
+- Store SDK result objects, arrays, and primitives. Storage is **per session** (not shared between investigations)
+  and lasts until the session is closed or swept for inactivity.
+- **Evict** a cached object when you're done with it: `delete Session["k"]`. That drops the reference, and once
+  nothing else holds it, .NET's garbage collector reclaims the memory. Do this for large objects (a full
+  super-timeline, a big parsed dump) you won't reuse, rather than letting them live for the whole session.
+- Beyond speed, reusing the cached object keeps successive analysis steps **consistent** — they operate on the
+  identical data rather than a possibly-different recomputation, which matters for accurate, reproducible findings.
 
 ## WorkflowResult&lt;T&gt; (returned by every workflow method)
 

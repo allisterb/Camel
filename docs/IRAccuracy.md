@@ -73,6 +73,31 @@ megabytes of raw tool output never enter the model's context window. Less noise 
 to confuse, conflate, or misattribute (threat 5). This is the same context-efficiency property that makes
 code-mode fast; here it doubles as an accuracy measure.
 
+### Cached results keep multi-step reasoning consistent (session storage)
+
+A multi-step finding often correlates facts established across *different* `Execute` calls. The per-session
+`Session` store lets a program cache a result object once and reuse the **same** object later, rather than
+rebuilding it. Three accuracy benefits:
+
+- **Reproducibility** — steps that read the cached object work from identical data. Re-deriving "the timeline"
+  independently in two places can yield subtly different results (ordering, a re-filtered subset); caching the
+  one object removes that drift, so a finding assembled across steps rests on a single consistent evidentiary
+  base.
+- **Less re-summarisation** — without a place to hold the real object, an agent is tempted to carry a large
+  result forward as prose in its own context, where detail degrades and numbers drift. Caching the structured
+  object keeps it reasoning over the actual data, not a remembered paraphrase (threat 5).
+- **A second, durable memory that doesn't degrade with context length** — a real investigation runs long, and
+  as the context window fills, the model's recall of *early* details (the exact timestamp, the IP, the account
+  it saw thousands of tokens ago) weakens, which is precisely when fabricated-from-memory support creeps in
+  (threats 1 and 5). `Session` is external storage that does not degrade as the conversation grows. Used as a
+  **corroboration ledger** — stash the evidence a hypothesis would expect, then verify actual results against the
+  stored entries rather than against recollection — it makes the cross-check robust to context pressure: a
+  finding is corroborated only when stored expectations are met by stored evidence, not when the model *believes*
+  it saw support. (See the discipline's Corroborate step in `camel-sdk-discipline`.)
+
+Mechanics are in [Architecture.md](Architecture.md) (speed and reproducibility) and the `camel-sdk-core`
+resource.
+
 ### The anomaly engine surfaces leads, not verdicts
 
 Camel's label-free `(event_id, Δt)` anomaly detectors triage a large timeline down to a ranked, *explained*

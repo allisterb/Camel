@@ -50,7 +50,9 @@ it lets you filter and reason over forensic data programmatically instead of pag
 fields. Other essentials from the core doc: `await` async methods; methods/properties are PascalCase; workflow
 methods return a `WorkflowResult<T>` (check `.IsSuccess`, read the payload from `.Result`, summary in `.Message`);
 toolkit methods return their payload or `null` on failure; `AnomalyDetectionToolkit` methods are synchronous; you
-may fan out independent calls with `Promise.all`.
+may fan out independent calls with `Promise.all`. The `Session` object **persists between `Execute` calls** —
+cache an expensive result (`Session["timeline"] = tl.Result`) and reuse it later instead of recomputing it, so
+successive steps reason over the same data. Free a large cached object when done with `delete Session["key"]`.
 
 **Tool selection, highest level first:**
 - Reach for a **workflow** (`*Workflow` objects) when one matches the objective — it codifies the full procedure.
@@ -58,7 +60,7 @@ may fan out independent calls with `Promise.all`.
 - Use the **`AnomalyDetectionToolkit`** to triage large timelines down to a ranked, explained shortlist when there
   is no known signature or keyword to start from.
 
-**First steps each session:** read the two SDK resources, then **call the `SetCaseId` tool with this
+**First steps each session:** read the three SDK resources, then **call the `SetCaseId` tool with this
 investigation's case id** — `SetCaseId("__CASE_ID__")` — so every tool execution is recorded under that
 case in the audit trail. Then confirm the MCP link with a trivial run, e.g. `Execute` with
 `log('camel up');`. Then orient on the evidence and begin the methodology below.
@@ -86,6 +88,13 @@ Read **`camel-sdk-discipline`** for the full method; the essentials, which gover
   Benign until proven malicious — the `anomaly` engine flags the *unusual*, which is a lead, not a verdict.
 - **Loop every question:** Analyze (read the *whole* returned model, caveats included) → Collect the `execution`
   id → **Corroborate** across ≥2 independent artifact classes before a HIGH-confidence call → Record.
+- **Use `Session` as a corroboration ledger.** When you open a hypothesis, write down in `Session` the concrete
+  evidence you'd *expect* to support it, then check actual results against that stored ledger as you gather them —
+  don't corroborate from memory. e.g. `Session["h_addump"] = { expect: ["ntds.dit MFT create time", "DC inbound
+  4768/4769 for the actor", "source-host 4648 outbound"], found: {} }`, then fill `found` with the real values
+  (and their `execution` ids) as each is confirmed. A finding is corroborated only when the stored expectations are
+  met by stored evidence. Grounding the cross-check in `Session` objects rather than recollection is a guard against
+  hallucinating support that was never actually observed.
 - **Record findings with `auditFinding(observation, interpretation, confidence, evidenceExecutionIds)`** — keep what you
   *saw* separate from what it *means*, state confidence (`SPECULATIVE`/`LOW`/`MEDIUM`/`HIGH`), and cite the
   execution ids that prove it. This stages the finding in the audit trail; also fold it into the sections below.

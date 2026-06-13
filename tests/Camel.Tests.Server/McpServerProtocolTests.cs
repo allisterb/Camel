@@ -179,6 +179,51 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
     }
 
     [Fact]
+    public async Task SessionStoragePersistsValuesAcrossExecuteCalls()
+    {
+        await using var client = await NewClientAsync();
+
+        // Stash a value via the Session global in one Execute call...
+        var w = await client.CallToolAsync("Execute", Script("Session['hits'] = 3 + 4; log('stored');"));
+        Assert.NotEqual(true, w.IsError);
+
+        // ...and read it back in a later call on the SAME session (same SessionContext.Storage instance).
+        var r = await client.CallToolAsync("Execute", Script("log('hits=' + Session['hits']);"));
+        Assert.NotEqual(true, r.IsError);
+        Assert.Contains("hits=7", Text(r));
+    }
+
+    [Fact]
+    public async Task SessionStorageIsIsolatedPerSessionAndMissingKeysAreUndefined()
+    {
+        await using var c1 = await NewClientAsync();
+        await using var c2 = await NewClientAsync();
+
+        await c1.CallToolAsync("Execute", Script("Session['x'] = 'from-c1';"));
+        // A different session must not see c1's value, and an absent key reads back as undefined (not a throw).
+        var r = await c2.CallToolAsync("Execute",
+            Script("log('x=' + (Session['x'] === undefined ? 'unset' : Session['x']));"));
+
+        Assert.NotEqual(true, r.IsError);
+        Assert.Contains("x=unset", Text(r));
+    }
+
+    [Fact]
+    public async Task SessionStorageEntriesCanBeEvictedWithDelete()
+    {
+        await using var client = await NewClientAsync();
+
+        await client.CallToolAsync("Execute", Script("Session['big'] = [1, 2, 3];"));
+        // `delete` on the CLR-backed Session must remove the entry (dropping the reference so the GC can reclaim
+        // the cached object), and the key must then read back as undefined.
+        var r = await client.CallToolAsync("Execute", Script(
+            "delete Session['big']; log('after=' + (Session['big'] === undefined ? 'gone' : 'present'));"));
+
+        Assert.NotEqual(true, r.IsError);
+        Assert.Contains("after=gone", Text(r));
+    }
+
+    [Fact]
     public async Task EachSessionGetsItsOwnEnvironment()
     {
         var registry = app.Services.GetRequiredService<SessionRegistry>();

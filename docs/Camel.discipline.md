@@ -39,7 +39,10 @@ For each investigative question, work this loop in code via `Execute`:
 2. **Collect** — capture the `execution` id from every `Execute` result. You cite these against findings.
 3. **Corroborate** — before recording a finding, and especially before a HIGH-confidence one, confirm it from at
    least **two independent sources**. Different artifact classes (memory vs. disk vs. event log vs. timeline)
-   count as independent; the same tool run twice does not.
+   count as independent; the same tool run twice does not. Use the `Session` store as a **corroboration ledger**:
+   stash the evidence a hypothesis would *expect*, then check actual results against the stored ledger as you
+   gather them, filling in each confirmed item with its value and `execution` id. Cross-checking against stored
+   objects rather than recollection guards against believing you saw support that was never actually observed.
 4. **Record** — call `auditFinding(observation, interpretation, confidence, evidenceExecutionIds)`. This writes a
    structured `finding` event to the case audit log and echoes a summary to your output. Keep observation
    (what you saw) and interpretation (what it means) distinct, and cite the execution ids that prove it.
