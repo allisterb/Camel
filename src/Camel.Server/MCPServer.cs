@@ -98,8 +98,8 @@ public class CamelMCPTools : Runtime
           // execution ids that prove it) as a `finding` event; auditReviewRec marks a high-consequence decision
           // a human should review as a `human-judgement-recommended` event. Both also echo to the response.
           .SetValue("auditFinding", new Action<string, string, string, string>(
-              (observation, interpretation, confidence, executionIds) =>
-                  AuditFinding(observation, interpretation, confidence, executionIds, output)))
+              (observation, interpretation, confidence, evidenceExecutionIds) =>
+                  AuditFinding(observation, interpretation, confidence, evidenceExecutionIds, output)))
           .SetValue("auditReviewRec", new Action<string>((s) => AuditReviewRec(s, output)))
           .SetValue("table", new Action<string[], object[][]>((headers, dataRows) =>
               output.AppendLine(RenderAsciiTable(headers, dataRows))))
@@ -225,12 +225,12 @@ public class CamelMCPTools : Runtime
     /// and interpretation kept as distinct fields (forcing the agent to separate fact from inference), with the
     /// confidence level and the <c>execution</c> ids that prove it. Also echoes a one-line summary to the response.
     /// </summary>
-    protected void AuditFinding(string observation, string interpretation, string confidence, string executionIds, StringBuilder output)
+    protected void AuditFinding(string observation, string interpretation, string confidence, string evidenceExecutionIds, StringBuilder output)
     {
         AuditEvent("finding",
-            "FINDING [{Confidence}] {Observation} => {Interpretation} (evidence: {ExecutionIds})",
-            confidence, observation, interpretation, executionIds);
-        output.AppendLine($"[finding {confidence}] {observation} => {interpretation} (evidence: {executionIds})");
+            "FINDING [{Confidence}] {Observation} => {Interpretation} (evidence: {EvidenceExecutionIds})",
+            confidence, observation, interpretation, evidenceExecutionIds);
+        output.AppendLine($"[finding {confidence}] {observation} => {interpretation} (evidence: {evidenceExecutionIds})");
     }
 
     /// <summary>

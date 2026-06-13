@@ -84,7 +84,7 @@ Read **`camel-sdk-discipline`** for the full method; the essentials, which gover
   Benign until proven malicious — the `anomaly` engine flags the *unusual*, which is a lead, not a verdict.
 - **Loop every question:** Analyze (read the *whole* returned model, caveats included) → Collect the `execution`
   id → **Corroborate** across ≥2 independent artifact classes before a HIGH-confidence call → Record.
-- **Record findings with `auditFinding(observation, interpretation, confidence, executionIds)`** — keep what you
+- **Record findings with `auditFinding(observation, interpretation, confidence, evidenceExecutionIds)`** — keep what you
   *saw* separate from what it *means*, state confidence (`SPECULATIVE`/`LOW`/`MEDIUM`/`HIGH`), and cite the
   execution ids that prove it. This stages the finding in the audit trail; also fold it into the sections below.
 - **Flag, don't stop.** For high-consequence, under-determined conclusions — **root cause, threat-actor
@@ -205,7 +205,7 @@ chain of custody: a reviewer must be able to go from any claim in your report to
 
 **Persist findings to the trail.** `log`/`error` only return text to you. To make the investigation
 reconstructable from the audit log alone, use:
-- **`auditFinding(observation, interpretation, confidence, executionIds)`** — for each conclusion (a structured
+- **`auditFinding(observation, interpretation, confidence, evidenceExecutionIds)`** — for each conclusion (a structured
   `finding` event citing the executions that prove it). This is the primary recording call.
 - **`auditReviewRec(reason)`** — for the high-consequence decisions listed under *Forensic discipline* (a
   `human-judgement-recommended` event).

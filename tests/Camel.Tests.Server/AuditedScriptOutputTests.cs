@@ -150,7 +150,8 @@ public class AuditedScriptOutputTests : TestsRuntime, IAsyncLifetime
         Assert.Contains("\"Confidence\":\"HIGH\"", findingLine);
         Assert.Contains("\"Observation\":\"" + obs + "\"", findingLine);
         Assert.Contains("\"Interpretation\":\"" + interp + "\"", findingLine);
-        Assert.Contains(ids, findingLine);
+        // Cited evidence is its own field, distinct from the ambient ExecutionId that stamps the recording call.
+        Assert.Contains("\"EvidenceExecutionIds\":\"" + ids + "\"", findingLine);
 
         // auditReviewRec -> a single `human-judgement-recommended` event carrying its reason.
         var reviewLine = Assert.Single(lines, l => l.Contains("\"EventType\":\"human-judgement-recommended\""));

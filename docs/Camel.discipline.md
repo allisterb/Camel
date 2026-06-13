@@ -39,7 +39,7 @@ For each investigative question, work this loop in code via `Execute`:
 3. **Corroborate** — before recording a finding, and especially before a HIGH-confidence one, confirm it from at
    least **two independent sources**. Different artifact classes (memory vs. disk vs. event log vs. timeline)
    count as independent; the same tool run twice does not.
-4. **Record** — call `auditFinding(observation, interpretation, confidence, executionIds)`. This writes a
+4. **Record** — call `auditFinding(observation, interpretation, confidence, evidenceExecutionIds)`. This writes a
    structured `finding` event to the case audit log and echoes a summary to your output. Keep observation
    (what you saw) and interpretation (what it means) distinct, and cite the execution ids that prove it.
 

@@ -67,9 +67,9 @@ as an `information` event. Use it for notable steps and conclusions you want pre
 
 `auditError(message: string)` — like `error`, but **also** records the line in the per-case audit log as an `error` event.
 
-`auditFinding(observation: string, interpretation: string, confidence: string, executionIds: string)` — records a
+`auditFinding(observation: string, interpretation: string, confidence: string, evidenceExecutionIds: string)` — records a
 structured forensic finding to the audit log as a `finding` event: `observation` (what you saw, as fact),
-`interpretation` (what it means), `confidence` (`SPECULATIVE`/`LOW`/`MEDIUM`/`HIGH`), and `executionIds` (the
+`interpretation` (what it means), `confidence` (`SPECULATIVE`/`LOW`/`MEDIUM`/`HIGH`), and `evidenceExecutionIds` (the
 `[audit] execution=` ids that prove it). This is the primary way to record a conclusion — see the
 `camel-sdk-discipline` resource for the method that governs when and how.
 
