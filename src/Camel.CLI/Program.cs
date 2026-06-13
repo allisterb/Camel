@@ -170,7 +170,7 @@ internal class Program : Runtime
         WriteIfAbsent(Path.Combine(dotClaude, "preserve_chatlog.py"), "Camel.CLI.CaseTemplate.preserve_chatlog.py");
 
         Info($"Case '{opts.CaseId}' ready at {caseDir}.");
-        AnsiConsole.MarkupLine($"[green][bold]\nFill in the case details in {Path.Combine(caseDir, "CLAUDE.md")}. When you are ready launch Claude in that directory.[/][/]");
+        AnsiConsole.MarkupLine($"[cyan]\nFill in the case details in {Path.Combine(caseDir, "CLAUDE.md")}. When you are ready launch Claude in that directory.[/]");
         return Task.CompletedTask;
 
         // Write an embedded resource verbatim, unless the destination already exists (idempotent re-runs).
@@ -239,7 +239,5 @@ internal class Program : Runtime
     static EnvironmentType environmentType = EnvironmentType.Local;
     static LocalEnvironment le = new LocalEnvironment();
     static AuditEnvironment auditEnvironment;
-    static string user = "", host = "", password = "";
-    static int port;
-
+    static string host = "";
 }

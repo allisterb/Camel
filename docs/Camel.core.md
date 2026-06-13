@@ -1,7 +1,7 @@
 # Camel JavaScript SDK — Core Reference
 
 This is the **core** reference for the Camel JavaScript (JS) SDK — the typed API exposed to code that the agent
-generates and executes inside the Camel MCP server's constrained JavaScript engine (via the `ExecuteJavaScript`
+generates and executes inside the Camel MCP server's constrained JavaScript engine (via the `Execute`
 MCP tool). It covers the **execution model** (the rules every generated script must follow) and the **method
 signature index** for every top-level object: each method's name, purpose, parameter types, and return type.
 
@@ -46,7 +46,7 @@ that produced it. Two things are expected of you:
    (e.g. `srl-2018-rd01`). This is a separate MCP tool, not a JS SDK call. Every tool execution afterward is
    written to `audit-<caseId>.clef` and tagged with the case, the toolkit/tool, the command, host, exit code, and
    duration.
-2. **Every `ExecuteJavaScript` result ends with an audit handle line** — `[audit] case=<caseId> invocation=<id>`.
+2. **Every `Execute` result ends with an audit handle line** — `[audit] case=<caseId> invocation=<id>`.
    **Cite that `invocation` id (and the toolkit/method) next to the findings it supports in your report**, so a
    reviewer can trace each finding to its tool executions in the case's audit file. Treat it as the evidence
    citation for everything that script established.

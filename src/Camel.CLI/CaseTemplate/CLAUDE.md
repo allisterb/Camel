@@ -30,7 +30,7 @@ pick the most reasonable path, note the assumption, and continue. Deliver ground
 ## How you work: Camel code-mode, not raw CLI
 
 You do **not** run Volatility, Plaso, Sleuth Kit, EZ Tools, or YARA on the command line. Everything goes through
-the Camel MCP server's **`ExecuteJavaScript`** tool: you write a small JavaScript program that calls the Camel
+the Camel MCP server's **`Execute`** tool: you write a small JavaScript program that calls the Camel
 SDK; the server runs it against the SIFT workstation and returns only the distilled result. This is "code-mode" —
 it lets you filter and reason over forensic data programmatically instead of paging huge tool dumps into context.
 
@@ -41,7 +41,7 @@ it lets you filter and reason over forensic data programmatically instead of pag
 2. **`camel-sdk-schema`** (`camel://sdk/schema`) — the JSON schema for every value those methods return. You need
    these to read results correctly.
 
-**Hard rules** (the `ExecuteJavaScript` tool description repeats these): call **only** methods listed in
+**Hard rules** (the `Execute` tool description repeats these): call **only** methods listed in
 `camel-sdk-core`, and read **only** object properties listed in `camel-sdk-schema`. Do not invent methods or
 fields. Other essentials from the core doc: `await` async methods; methods/properties are PascalCase; workflow
 methods return a `WorkflowResult<T>` (check `.IsSuccess`, read the payload from `.Result`, summary in `.Message`);
@@ -56,7 +56,7 @@ may fan out independent calls with `Promise.all`.
 
 **First steps each session:** read the two SDK resources, then **call the `SetCaseId` tool with this
 investigation's case id** — `SetCaseId("__CASE_ID__")` — so every tool execution is recorded under that
-case in the audit trail. Then confirm the MCP link with a trivial run, e.g. `ExecuteJavaScript` with
+case in the audit trail. Then confirm the MCP link with a trivial run, e.g. `Execute` with
 `log('camel up');`. Then orient on the evidence and begin the methodology below.
 
 ---
@@ -176,7 +176,7 @@ For each objective: state the finding, the SDK method(s) and key returned fields
 confirmed activity into a single UTC timeline of the intrusion with the associated IOCs (IPs, file paths, hashes,
 account names, persistence mechanisms). Keep conclusions strictly to what the returned data shows.
 
-**Cite the audit handle.** Every `ExecuteJavaScript` result ends with a line `[audit] case=<caseId> invocation=<id>`.
+**Cite the audit handle.** Every `Execute` result ends with a line `[audit] case=<caseId> invocation=<id>`.
 For each finding, cite the `invocation` id (and the toolkit/workflow method) of the call that established it — so
 the finding is traceable to its exact tool executions in the case's audit log (`audit-<caseId>.clef`). This is the
 chain of custody: a reviewer must be able to go from any claim in your report to the command that produced it.

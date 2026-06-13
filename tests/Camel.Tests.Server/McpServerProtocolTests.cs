@@ -58,11 +58,11 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
         new Dictionary<string, object?> { ["script"] = js };
 
     [Fact]
-    public async Task ExecuteJavaScriptReturnsLoggedOutput()
+    public async Task ExecuteReturnsLoggedOutput()
     {
         await using var client = await NewClientAsync();
 
-        var r = await client.CallToolAsync("ExecuteJavaScript", Script("log('hello'); log(1 + 2);"));
+        var r = await client.CallToolAsync("Execute", Script("log('hello'); log(1 + 2);"));
 
         Assert.NotEqual(true, r.IsError);
         var text = Text(r);
@@ -80,9 +80,9 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
             new Dictionary<string, object?> { ["caseId"] = "case-test-1" });
         Assert.Contains("case-test-1", Text(setr));
 
-        // Every ExecuteJavaScript result carries an audit handle (case + invocation id) the agent can cite so a
+        // Every Execute result carries an audit handle (case + invocation id) the agent can cite so a
         // judge can trace the finding to its tool executions. Same session ⇒ the SetCaseId case id is reflected.
-        var r = await client.CallToolAsync("ExecuteJavaScript", Script("log('hi');"));
+        var r = await client.CallToolAsync("Execute", Script("log('hi');"));
         var text = Text(r);
         Assert.Contains("hi", text);
         Assert.Contains("[audit] case=case-test-1 invocation=", text);
@@ -94,7 +94,7 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
         await using var client = await NewClientAsync();
 
         // Mixed cell types (string/number/bool/null) and a ragged short row — exercises sizing + padding.
-        var r = await client.CallToolAsync("ExecuteJavaScript", Script(
+        var r = await client.CallToolAsync("Execute", Script(
             "table(['Process','PID','Hidden'], [['svchost.exe', 880, false], ['evil', 1337, true], ['x']]);"));
 
         Assert.NotEqual(true, r.IsError);
@@ -115,7 +115,7 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
     {
         await using var client = await NewClientAsync();
 
-        var r = await client.CallToolAsync("ExecuteJavaScript", Script("throw new Error('boom');"));
+        var r = await client.CallToolAsync("Execute", Script("throw new Error('boom');"));
 
         Assert.Equal(true, r.IsError);
         Assert.Contains("boom", Text(r));
@@ -129,7 +129,7 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
         // WindowsInfoAsync returns a CLR Task<WindowsInfo[]?>. With ExperimentalFeature.TaskInterop the JS
         // `await` must resolve it to the value (null here, since vol can't run on the Local test host) rather
         // than hand back an un-awaitable Task object. isNull=true proves the Task->promise interop works.
-        var r = await client.CallToolAsync("ExecuteJavaScript",
+        var r = await client.CallToolAsync("Execute",
             Script("var info = await MemoryAnalysisToolkit.WindowsInfoAsync('/no/such/image'); log('isNull=' + (info === null));"));
 
         Assert.NotEqual(true, r.IsError);
@@ -142,7 +142,7 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
         await using var client = await NewClientAsync();
 
         // A rejected promise awaited in the script must surface as a catchable error through ExecuteAsync.
-        var r = await client.CallToolAsync("ExecuteJavaScript",
+        var r = await client.CallToolAsync("Execute",
             Script("await Promise.reject(new Error('async boom'));"));
 
         Assert.Equal(true, r.IsError);
@@ -164,7 +164,7 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
         var core = await client.ReadResourceAsync("camel://sdk/core");
         var coreText = string.Concat(core.Contents.OfType<TextResourceContents>().Select(c => c.Text));
         Assert.Contains("Camel JavaScript SDK", coreText);
-        Assert.Contains("ExecuteJavaScript", coreText);
+        Assert.Contains("Execute", coreText);
 
         var schema = await client.ReadResourceAsync("camel://sdk/schema");
         var schemaText = string.Concat(schema.Contents.OfType<TextResourceContents>().Select(c => c.Text));
@@ -181,8 +181,8 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
         await using var c1 = await NewClientAsync();
         await using var c2 = await NewClientAsync();
         // Environments are created lazily on first tool call, so invoke a (pure-JS) tool on each session.
-        await c1.CallToolAsync("ExecuteJavaScript", Script("log(1);"));
-        await c2.CallToolAsync("ExecuteJavaScript", Script("log(2);"));
+        await c1.CallToolAsync("Execute", Script("log(1);"));
+        await c2.CallToolAsync("Execute", Script("log(2);"));
 
         Assert.Equal(2, registry.Count); // two distinct MCP sessions -> two distinct environments
     }

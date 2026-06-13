@@ -10,7 +10,7 @@ using ModelContextProtocol;
 
 /// <summary>
 /// Unit tests for <see cref="CamelMCPTools.RunWithHeartbeatAsync"/> — the keep-alive that emits progress
-/// notifications while a long ExecuteJavaScript call runs so the MCP client doesn't time out and abort the
+/// notifications while a long Execute call runs so the MCP client doesn't time out and abort the
 /// request mid-call. No server/SSH required; drives the helper directly with short intervals.
 /// </summary>
 public class HeartbeatTests

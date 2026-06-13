@@ -12,7 +12,7 @@ namespace Camel.Tests.Workflows;
 /// Reproducer that generates the committed demo audit sample (demo/audit-sample/audit-srl-2018-rd01.clef) by
 /// running three real rd-01 (SRL-2018) analysis invocations through the actual workflow/toolkit/environment code
 /// paths — the same paths the MCP server drives — under a case id, each in its own InvocationId scope (exactly as
-/// ExecuteJavaScript does). Guarded by the CAMEL_GEN_AUDIT_SAMPLE env var so it is skipped in the normal suite;
+/// Execute does). Guarded by the CAMEL_GEN_AUDIT_SAMPLE env var so it is skipped in the normal suite;
 /// run it explicitly to regenerate the sample. Requires the rd-01 C: image mounted at /mnt/rd01-c.
 /// </summary>
 public class AuditSampleGenerator : TestsRuntime
@@ -83,7 +83,7 @@ public class AuditSampleGenerator : TestsRuntime
         finally { Runtime.CloseAndFlushAuditLog(); }
     }
 
-    // Mirrors the server's ExecuteJavaScript framing: push the InvocationId, mark the invocation boundary in the
+    // Mirrors the server's Execute framing: push the InvocationId, mark the invocation boundary in the
     // audit trail (with the script the agent would have run), run the work, mark completion.
     static async Task Invocation(string invocationId, string script, Func<Task<bool>> work)
     {

@@ -22,7 +22,7 @@ using Camel.Tests;
 
 /// <summary>
 /// Layer 3: drives a real forensic tool (Volatility 3) end-to-end through the MCP server over SSH, exercising
-/// the full ExecuteJavaScript -> CamelApi -> MemoryAnalysisToolkit -> SshAuditEnvironment path. Requires the
+/// the full Execute -> CamelApi -> MemoryAnalysisToolkit -> SshAuditEnvironment path. Requires the
 /// live SIFT workstation (sshtestappsettings.json); skips cleanly when it is unreachable.
 ///
 /// The session environment is built from the SSH config, while the toolkit reads its tool definitions
@@ -83,7 +83,7 @@ public class McpServerSshIntegrationTests : TestsRuntime, IAsyncLifetime
 
         // Proof the async tool surface works end-to-end: JS awaits a CLR Task that runs vol over SSH.
         var script = $"var info = await MemoryAnalysisToolkit.WindowsInfoAsync('{MemoryImage}'); log('rows=' + info.length);";
-        var r = await client.CallToolAsync("ExecuteJavaScript",
+        var r = await client.CallToolAsync("Execute",
             new Dictionary<string, object?> { ["script"] = script });
 
         Assert.NotEqual(true, r.IsError);
@@ -107,7 +107,7 @@ public class McpServerSshIntegrationTests : TestsRuntime, IAsyncLifetime
             log('mounted=' + r.IsSuccess + ' raw=' + (r.IsSuccess ? r.Result.RawDevice : r.Message));
         ";
         var sw = Stopwatch.StartNew();
-        var r = await client.CallToolAsync("ExecuteJavaScript",
+        var r = await client.CallToolAsync("Execute",
             new Dictionary<string, object?> { ["script"] = script });
         sw.Stop();
 

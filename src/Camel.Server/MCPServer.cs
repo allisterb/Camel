@@ -42,7 +42,7 @@ public class CamelMCPTools : Runtime
 
     [McpServerTool(Name = "SetCaseId"), Description(
         "Set the case identifier for this session's audit trail. Call this ONCE at the start of an investigation " +
-        "with a short, human-readable case id (e.g. 'srl-2018-rd01'). Every subsequent ExecuteJavaScript tool " +
+        "with a short, human-readable case id (e.g. 'srl-2018-rd01'). Every subsequent Execute tool " +
         "execution in this session is recorded in a per-case audit log file named for this id (audit-<caseId>.clef), " +
         "so findings can be traced to the exact tool executions that produced them. One case per session; call " +
         "again to switch cases. Returns the case id that was set.")]
@@ -58,14 +58,14 @@ public class CamelMCPTools : Runtime
         return $"Case id set to '{session.CaseId}' for this session. Audit trail file: audit-{session.CaseId}.clef";
     }
 
-    [McpServerTool(Name = "ExecuteJavaScript"), Description(
+    [McpServerTool(Name = "Execute"), Description(
         "Execute JavaScript code against the Camel DFIR API (toolkits + workflows + anomaly engine). " +
         "Before writing any script you MUST read the 'camel-sdk-core' resource (camel://sdk/core) for the " +
         "execution model and the full list of objects and methods, and the 'camel-sdk-schema' resource " +
         "(camel://sdk/schema) for the JSON schema of every value those methods return — without the schemas you " +
         "cannot read results correctly. Call ONLY methods listed in camel-sdk-core, and access ONLY object " +
         "properties listed in camel-sdk-schema; do not invent methods or properties that are not documented there.")]
-    public async Task<CallToolResult> ExecuteJavaScript(
+    public async Task<CallToolResult> Execute(
         string script,
         RequestContext<CallToolRequestParams> context,
         IProgress<ProgressNotificationValue> progress,
@@ -195,7 +195,7 @@ public class CamelMCPTools : Runtime
     }
 
     /// <summary>
-    /// The audit-handle block appended to every <c>ExecuteJavaScript</c> result: the case id and this call's
+    /// The audit-handle block appended to every <c>Execute</c> result: the case id and this call's
     /// invocation id. The agent cites these in its report so a judge can grep the per-case audit file
     /// (<c>audit-&lt;CaseId&gt;.clef</c>) for the invocation and see exactly which tool executions produced a finding.
     /// </summary>
@@ -311,13 +311,13 @@ public class CamelMCPTools : Runtime
 /// <summary>
 /// MCP resources exposing the Camel JavaScript SDK reference to the agent. The two markdown docs are embedded in
 /// this assembly (see Camel.Server.csproj) and served verbatim, so an agent can read the SDK surface before
-/// generating code for the <c>ExecuteJavaScript</c> tool without the docs having to exist on disk at runtime.
+/// generating code for the <c>Execute</c> tool without the docs having to exist on disk at runtime.
 /// </summary>
 public class CamelResources
 {
     [McpServerResource(UriTemplate = "camel://sdk/core", Name = "camel-sdk-core",
         Title = "Camel JS SDK reference — core", MimeType = "text/markdown")]
-    [Description("Core reference for the Camel JavaScript SDK used by the ExecuteJavaScript tool: the execution " +
+    [Description("Core reference for the Camel JavaScript SDK used by the Execute tool: the execution " +
         "model (await semantics, return-value shapes, PascalCase naming, positional optional params) and the full " +
         "method signature index — every toolkit and workflow object, each method's parameters and return type. " +
         "Read this FIRST and keep it in context when generating JS. The method return types reference model types " +

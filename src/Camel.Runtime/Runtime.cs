@@ -195,7 +195,7 @@ public abstract class Runtime
                 host, command, arguments, sudo, exitCode, completed, durationMs);
 
     /// <summary>
-    /// Records an invocation boundary (the <c>ExecuteJavaScript</c> code-mode call that frames a set of tool
+    /// Records an invocation boundary (the <c>Execute</c> code-mode call that frames a set of tool
     /// executions) in the audit trail: the phase (<c>started</c>/<c>completed</c>/<c>failed</c>/<c>cancelled</c>),
     /// the script that ran, and — on completion — success and duration. Lets the trail group a case's tool
     /// executions under the agent step that drove them.

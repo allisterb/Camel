@@ -2,7 +2,7 @@
   "permissions": {
     "allow": [
       "mcp__camel__SetCaseId",
-      "mcp__camel__ExecuteJavaScript",
+      "mcp__camel__Execute",
 
       "Read",
       "Write(./analysis/*)",
