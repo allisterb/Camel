@@ -47,8 +47,20 @@ public class ServerOptions : Options
     [Option("local", Required = false, HelpText = "Use the local environment, overriding the configuration file environment setting.")]
     public bool Local { get; set; }
 
-    [Option("ssh", Required = false, HelpText = "Use the SSH environment, overriding the configuration file environment setting. SSH login data will still be pulled from the configuration file.")]
+    [Option("ssh", Required = false, HelpText = "Use the SSH environment, overriding the configuration file environment setting. SSH login data will still be pulled from the configuration file unless overridden by --host/--user/--pass/--port.")]
     public bool Ssh { get; set; }
+
+    [Option("host", Required = false, HelpText = "SSH host of the SIFT workstation, overriding the configuration file. Supplying it implies SSH mode unless --local is set.")]
+    public string Host { get; set; } = String.Empty;
+
+    [Option("user", Required = false, HelpText = "SSH user, overriding the configuration file. Supplying it implies SSH mode unless --local is set.")]
+    public string User { get; set; } = String.Empty;
+
+    [Option("pass", Required = false, HelpText = "SSH password, overriding the configuration file. Supplying it implies SSH mode unless --local is set.")]
+    public string Password { get; set; } = String.Empty;
+
+    [Option("port", Required = false, HelpText = "SSH port, overriding the configuration file (defaults to 22 when SSH connection details are supplied on the command line).")]
+    public int? Port { get; set; }
 
     [Option("http", Required = false, HelpText = "Enable the MCP server HTTP transport.")]
     public bool Http { get; set; }

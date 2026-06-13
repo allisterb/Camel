@@ -22,8 +22,12 @@ the same code works locally or remotely over SSH.
 
 ## Project milestones
 
+- Implement local and SSH audit environments to be used by toolkits and workflows
 - Define all toolkits and tools to be implemented in Camel.Toolkits, and the models that represent their outputs.
-- Define higher-level workflows to be implemented in Camel.Workflows (currently in progress).
+- Define higher-level workflows to be implemented in Camel.Workflows.
+- Implement anomaly detection techniques in Camel.Inference.
+- Implement the code-mode MCP server and robust audit logs.
+- Fork protocol-sift and modify it to use Camel (in progress)
 
 ## Project implementation
 

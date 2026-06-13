@@ -64,6 +64,26 @@ internal class Program : Runtime
             config["SIFT:Environment"] = "Local";
         }
 
+        // SSH connection overrides from the command line, so the user can point Camel at a remote SIFT
+        // workstation without editing appsettings.json (e.g. running protocol-sift-camel on Windows against a
+        // remote Linux SIFT box). Any supplied detail implies SSH mode unless the user explicitly forced --local.
+        if (!string.IsNullOrWhiteSpace(opts.Host)) config["SIFT:Host"] = opts.Host;
+        if (!string.IsNullOrWhiteSpace(opts.User)) config["SIFT:User"] = opts.User;
+        if (!string.IsNullOrWhiteSpace(opts.Password)) config["SIFT:Password"] = opts.Password;
+        if (opts.Port.HasValue) config["SIFT:Port"] = opts.Port.Value.ToString();
+        if (!opts.Local && (!string.IsNullOrWhiteSpace(opts.Host) || !string.IsNullOrWhiteSpace(opts.User)
+                            || !string.IsNullOrWhiteSpace(opts.Password) || opts.Port.HasValue))
+        {
+            config["SIFT:Environment"] = "Ssh";
+        }
+        // Default the SSH port when connection details were supplied on the command line but no port was set
+        // anywhere, so SSH mode doesn't fail on a missing SIFT:Port.
+        if (Enum.Parse<EnvironmentType>(GetRequiredValue(config, "SIFT:Environment")) == EnvironmentType.Ssh
+            && string.IsNullOrWhiteSpace(config["SIFT:Port"]))
+        {
+            config["SIFT:Port"] = "22";
+        }
+
         if (Enum.Parse<EnvironmentType>(GetRequiredValue(config, "SIFT:Environment")) == EnvironmentType.Ssh)
         {
             // Fail fast: verify SSH connectivity once at startup (sessions then connect lazily on first use).
