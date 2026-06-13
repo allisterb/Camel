@@ -60,13 +60,14 @@ internal class Program : Runtime
     {
         if (config is null) throw new Exception("Configuration not loaded.");
 
-        // Write the per-case audit log into the case directory (as <case-dir>/audit/) when create-case
-        // baked a --case-dir into the .mcp.json, so the audit trail is bundled with the self-contained
-        // case. Falls back to <assembly-dir>/audit for a manually-launched server with no case dir.
-        var auditDir = string.IsNullOrWhiteSpace(opts.CaseDir)
-            ? Path.Combine(AssemblyLocation, "audit")
-            : Path.Combine(opts.CaseDir, "audit");
-        Runtime.WithAuditLog(auditDir);
+        // Write the per-case audit log into the case's logs/ directory (alongside the chat transcript and
+        // token-usage summary the SessionEnd hook writes there) when create-case baked a --case-dir into
+        // the .mcp.json, so the whole audit trail is bundled in one place. Falls back to <assembly-dir>/logs
+        // for a manually-launched server with no case dir. The file is named audit-<caseId>.clef.
+        var logDir = string.IsNullOrWhiteSpace(opts.CaseDir)
+            ? Path.Combine(AssemblyLocation, "logs")
+            : Path.Combine(opts.CaseDir, "logs");
+        Runtime.WithAuditLog(logDir);
 
         if (opts.Ssh)
         {
@@ -134,7 +135,7 @@ internal class Program : Runtime
         }
 
         var caseDir = Path.Combine(opts.CaseDir, opts.CaseId);
-        foreach (var sub in new[] { "analysis", "exports", "reports" })
+        foreach (var sub in new[] { "logs", "exports", "reports" })
             Directory.CreateDirectory(Path.Combine(caseDir, sub));
 
         // CLAUDE.md — write the embedded template with the case id substituted into the SetCaseId() call
@@ -199,9 +200,9 @@ internal class Program : Runtime
     /// <summary>
     /// Claude Code <c>SessionEnd</c> hook (wired into each case's <c>.claude/settings.json</c> by
     /// <c>create-case</c>). Reads the hook JSON payload from stdin, then (1) copies the client chat
-    /// transcript (<c>transcript_path</c>) into the case at <c>analysis/chatlogs/</c>, and (2) writes a
-    /// client-side token-consumption summary to <c>analysis/token-usage.json</c> (summed from the
-    /// transcript's per-turn <c>usage</c> records) — both bundled with the audit trail for the judges'
+    /// transcript (<c>transcript_path</c>) into the case at <c>logs/chatlog-*.jsonl</c>, and (2) writes a
+    /// client-side token-consumption summary to <c>logs/token-usage.json</c> (summed from the transcript's
+    /// per-turn <c>usage</c> records) — both bundled in <c>logs/</c> next to the audit log for the judges'
     /// efficiency/cost review. Anchored to <c>$CLAUDE_PROJECT_DIR</c> (the case root Claude Code exports to
     /// hooks), falling back to the cwd. Best-effort: never fail the session.
     /// </summary>
@@ -224,17 +225,16 @@ internal class Program : Runtime
 
             var baseDir = Environment.GetEnvironmentVariable("CLAUDE_PROJECT_DIR");
             if (string.IsNullOrWhiteSpace(baseDir)) baseDir = Directory.GetCurrentDirectory();
-            var analysisDir = Path.Combine(baseDir, "analysis");
-            var chatlogsDir = Path.Combine(analysisDir, "chatlogs");
-            Directory.CreateDirectory(chatlogsDir);
+            var logsDir = Path.Combine(baseDir, "logs");
+            Directory.CreateDirectory(logsDir);
 
             var sessionId = payload?["session_id"]?.GetValue<string>() ?? "session";
             var ts = DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ");
-            var dst = Path.Combine(chatlogsDir, $"chatlog-{sessionId}-{ts}.jsonl");
+            var dst = Path.Combine(logsDir, $"chatlog-{sessionId}-{ts}.jsonl");
             File.Copy(src, dst, overwrite: true);
             Console.Out.WriteLine($"[preserve-chatlog] Preserved client chat log -> {dst}");
 
-            WriteTokenUsage(src, analysisDir, sessionId);
+            WriteTokenUsage(src, logsDir, sessionId);
         }
         catch (Exception ex)
         {
@@ -249,7 +249,7 @@ internal class Program : Runtime
     /// (input / output / cache-create / cache-read / sum) plus a per-model breakdown and the turn count.
     /// Best-effort and isolated so a parsing hiccup never breaks chat-log preservation.
     /// </summary>
-    static void WriteTokenUsage(string transcriptPath, string analysisDir, string sessionId)
+    static void WriteTokenUsage(string transcriptPath, string logsDir, string sessionId)
     {
         try
         {
@@ -320,8 +320,8 @@ internal class Program : Runtime
                     }))),
             };
 
-            Directory.CreateDirectory(analysisDir);
-            var path = Path.Combine(analysisDir, "token-usage.json");
+            Directory.CreateDirectory(logsDir);
+            var path = Path.Combine(logsDir, "token-usage.json");
             File.WriteAllText(path, summary.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             Console.Out.WriteLine($"[preserve-chatlog] Token usage -> {path} (total {total:N0} tokens over {turns} turns)");
         }

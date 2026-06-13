@@ -5,10 +5,8 @@
       "mcp__camel__Execute",
 
       "Read",
-      "Write(./analysis/*)",
       "Write(./reports/*)",
       "Write(./exports/*)",
-      "Edit(./analysis/*)",
       "Edit(./reports/*)",
       "Edit(./exports/*)"
     ],
