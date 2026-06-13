@@ -29,20 +29,24 @@ internal class Program : Runtime
 
     static async Task Main(string[] args)
     {
-        PrintLogo();
-        Runtime.WithFileAndConsoleLogging("Camel", "CLI", args.Contains("--debug"));        
+        // The preserve-chatlog verb runs as a Claude Code SessionEnd hook: keep stdout clean (no logo) so
+        // the hook's output isn't polluted, and don't tee logging to the console.
+        bool isHook = args.Contains("preserve-chatlog");
+        if (!isHook) PrintLogo();
+        Runtime.WithFileAndConsoleLogging("Camel", "CLI", args.Contains("--debug"));
         var parser = new Parser(with =>
         {
             with.CaseInsensitiveEnumValues = true;
             with.HelpWriter = null;
         });
-        var result = parser.ParseArguments<ServerOptions, CreateCaseOptions>(args);
+        var result = parser.ParseArguments<ServerOptions, CreateCaseOptions, PreserveChatlogOptions>(args);
         try
         {
             await result.MapResult(
 
                 async (ServerOptions opts) => await HandleServerArgs(opts),
-                async (CreateCaseOptions opts) => await HandleCreateCaseArgs(opts),               
+                async (CreateCaseOptions opts) => await HandleCreateCaseArgs(opts),
+                async (PreserveChatlogOptions opts) => await HandlePreserveChatlog(opts),
                 errs => HandleParseError(result, errs)
             );
         }
@@ -56,7 +60,13 @@ internal class Program : Runtime
     {
         if (config is null) throw new Exception("Configuration not loaded.");
 
-        Runtime.WithAuditLog(Path.Combine(AssemblyLocation, "audit"));
+        // Write the per-case audit log into the case directory (as <case-dir>/audit/) when create-case
+        // baked a --case-dir into the .mcp.json, so the audit trail is bundled with the self-contained
+        // case. Falls back to <assembly-dir>/audit for a manually-launched server with no case dir.
+        var auditDir = string.IsNullOrWhiteSpace(opts.CaseDir)
+            ? Path.Combine(AssemblyLocation, "audit")
+            : Path.Combine(opts.CaseDir, "audit");
+        Runtime.WithAuditLog(auditDir);
 
         if (opts.Ssh)
         {
@@ -159,27 +169,80 @@ internal class Program : Runtime
             Info($"Wrote {mcpPath}");
         }
 
-        // .claude/ — project-scoped settings (code-mode policy: deny Bash, allow only the Camel MCP tools
-        // + scoped file writes) plus the SessionEnd hook that preserves the client chat log into the case.
-        // Emitting these per case makes the case self-contained — nothing depends on a global ~/.claude
-        // install (which matters on Windows, where there is no installer). Existing files are left untouched.
+        // .claude/settings.json — project-scoped code-mode policy (deny Bash, allow only the Camel MCP
+        // tools + scoped file writes) plus the SessionEnd hook that preserves the client chat log into the
+        // case. The hook runs THIS CLI's `preserve-chatlog` verb (`dotnet "<dll>" preserve-chatlog`) so it
+        // needs only the .NET runtime the case already requires — no python/node. Emitting per case keeps
+        // the case self-contained (nothing in ~/.claude). Existing file left untouched.
         var dotClaude = Path.Combine(caseDir, ".claude");
         Directory.CreateDirectory(dotClaude);
 
-        WriteIfAbsent(Path.Combine(dotClaude, "settings.json"), "Camel.CLI.CaseTemplate.settings.json");
-        WriteIfAbsent(Path.Combine(dotClaude, "preserve_chatlog.py"), "Camel.CLI.CaseTemplate.preserve_chatlog.py");
+        var settingsPath = Path.Combine(dotClaude, "settings.json");
+        if (File.Exists(settingsPath))
+        {
+            Info($"{settingsPath} already exists — leaving it untouched.");
+        }
+        else
+        {
+            var node = JsonNode.Parse(ReadEmbedded("Camel.CLI.CaseTemplate.settings.json"))!;
+            node["hooks"]!["SessionEnd"]![0]!["hooks"]![0]!["command"] =
+                $"dotnet \"{CliDllPath()}\" preserve-chatlog";
+            File.WriteAllText(settingsPath, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            Info($"Wrote {settingsPath}");
+        }
 
         Info($"Case '{opts.CaseId}' ready at {caseDir}.");
         AnsiConsole.MarkupLine($"[cyan]\nFill in the case details in {Path.Combine(caseDir, "CLAUDE.md")}. When you are ready launch Claude in that directory.[/]");
         return Task.CompletedTask;
+    }
 
-        // Write an embedded resource verbatim, unless the destination already exists (idempotent re-runs).
-        void WriteIfAbsent(string path, string resource)
+    /// <summary>
+    /// Claude Code <c>SessionEnd</c> hook (wired into each case's <c>.claude/settings.json</c> by
+    /// <c>create-case</c>). Reads the hook JSON payload from stdin, then copies the client chat transcript
+    /// (<c>transcript_path</c>) into the case at <c>analysis/chatlogs/</c> so the chat log is bundled with
+    /// the audit trail. Anchored to <c>$CLAUDE_PROJECT_DIR</c> (the case root Claude Code exports to hooks),
+    /// falling back to the cwd. Best-effort: never fail the session — return 0 even on a missing transcript.
+    /// </summary>
+    static Task HandlePreserveChatlog(PreserveChatlogOptions opts)
+    {
+        try
         {
-            if (File.Exists(path)) { Info($"{path} already exists — leaving it untouched."); return; }
-            File.WriteAllText(path, ReadEmbedded(resource));
-            Info($"Wrote {path}");
+            var stdin = Console.In.ReadToEnd();
+            // Tolerate a leading UTF-8 BOM / surrounding whitespace on the piped payload (varies by host).
+            stdin = stdin.Trim().TrimStart('﻿');
+            if (string.IsNullOrWhiteSpace(stdin)) return Task.CompletedTask;
+
+            var payload = JsonNode.Parse(stdin);
+            var src = payload?["transcript_path"]?.GetValue<string>();
+            if (string.IsNullOrEmpty(src) || !File.Exists(src))
+            {
+                Console.Error.WriteLine($"[preserve-chatlog] transcript_path missing or not found: {src}");
+                return Task.CompletedTask;
+            }
+
+            var baseDir = Environment.GetEnvironmentVariable("CLAUDE_PROJECT_DIR");
+            if (string.IsNullOrWhiteSpace(baseDir)) baseDir = Directory.GetCurrentDirectory();
+            var dstDir = Path.Combine(baseDir, "analysis", "chatlogs");
+            Directory.CreateDirectory(dstDir);
+
+            var sessionId = payload?["session_id"]?.GetValue<string>() ?? "session";
+            var ts = DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ");
+            var dst = Path.Combine(dstDir, $"chatlog-{sessionId}-{ts}.jsonl");
+            File.Copy(src, dst, overwrite: true);
+            Console.Out.WriteLine($"[preserve-chatlog] Preserved client chat log -> {dst}");
         }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[preserve-chatlog] Failed to preserve chat log: {ex.Message}");
+        }
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Path to this running CLI assembly (empty for single-file publishes — fall back to the assembly dir).</summary>
+    static string CliDllPath()
+    {
+        var dll = Assembly.GetEntryAssembly()?.Location;
+        return string.IsNullOrEmpty(dll) ? Path.Combine(AssemblyLocation, "Camel.CLI.dll") : dll;
     }
 
     /// <summary>
@@ -189,11 +252,7 @@ internal class Program : Runtime
     /// </summary>
     static List<string> BuildServerArgs(CreateCaseOptions opts)
     {
-        // Path to this running CLI assembly (empty for single-file publishes — fall back to the assembly dir).
-        var dll = Assembly.GetEntryAssembly()?.Location;
-        if (string.IsNullOrEmpty(dll)) dll = Path.Combine(AssemblyLocation, "Camel.CLI.dll");
-
-        var args = new List<string> { dll, "server" };
+        var args = new List<string> { CliDllPath(), "server" };
         bool conn = !string.IsNullOrWhiteSpace(opts.Host) || !string.IsNullOrWhiteSpace(opts.User)
                     || !string.IsNullOrWhiteSpace(opts.Password) || opts.Port.HasValue;
         if (opts.Local) args.Add("--local");
@@ -202,6 +261,9 @@ internal class Program : Runtime
         if (!string.IsNullOrWhiteSpace(opts.User)) { args.Add("--user"); args.Add(opts.User); }
         if (!string.IsNullOrWhiteSpace(opts.Password)) { args.Add("--pass"); args.Add(opts.Password); }
         if (opts.Port.HasValue) { args.Add("--port"); args.Add(opts.Port.Value.ToString()); }
+        // Bake the absolute case dir so the server writes its audit log into the case (not next to the dll).
+        args.Add("--case-dir");
+        args.Add(Path.GetFullPath(Path.Combine(opts.CaseDir, opts.CaseId)));
         return args;
     }
 

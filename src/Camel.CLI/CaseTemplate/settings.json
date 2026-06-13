@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/preserve_chatlog.py\""
+            "command": "dotnet preserve-chatlog"
           }
         ]
       }

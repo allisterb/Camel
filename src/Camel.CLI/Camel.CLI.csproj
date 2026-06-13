@@ -28,7 +28,6 @@
     <EmbeddedResource Include="CaseTemplate\CLAUDE.md" LogicalName="Camel.CLI.CaseTemplate.CLAUDE.md" />
     <EmbeddedResource Include="CaseTemplate\mcp.json" LogicalName="Camel.CLI.CaseTemplate.mcp.json" />
     <EmbeddedResource Include="CaseTemplate\settings.json" LogicalName="Camel.CLI.CaseTemplate.settings.json" />
-    <EmbeddedResource Include="CaseTemplate\preserve_chatlog.py" LogicalName="Camel.CLI.CaseTemplate.preserve_chatlog.py" />
   </ItemGroup>
 
 

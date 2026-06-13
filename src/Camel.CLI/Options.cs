@@ -72,6 +72,15 @@ public class ServerOptions : ConnectionOptions
 {
     [Option("http", Required = false, HelpText = "Enable the MCP server HTTP transport.")]
     public bool Http { get; set; }
+
+    [Option("case-dir", Required = false, HelpText = "The case directory to write the per-case audit log into (as <case-dir>/audit/). `create-case` bakes this into the generated .mcp.json so the audit trail lands in the case. Defaults to <assembly-dir>/audit when omitted.")]
+    public string CaseDir { get; set; } = String.Empty;
+}
+
+
+[Verb("preserve-chatlog", Hidden = true, HelpText = "Internal Claude Code SessionEnd hook: read the hook payload from stdin and copy the client chat transcript into the case (analysis/chatlogs/). Wired into each case's .claude/settings.json by create-case.")]
+public class PreserveChatlogOptions : Options
+{
 }
 
 
