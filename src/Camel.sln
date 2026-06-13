@@ -57,6 +57,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "protocol-sift-camel", "prot
 	ProjectSection(SolutionItems) = preProject
 		..\ext\protocol-sift-camel\global\CLAUDE.md = ..\ext\protocol-sift-camel\global\CLAUDE.md
 		..\ext\protocol-sift-camel\case-templates\CLAUDE.md = ..\ext\protocol-sift-camel\case-templates\CLAUDE.md
+		..\ext\protocol-sift-camel\create-case.cmd = ..\ext\protocol-sift-camel\create-case.cmd
+		..\ext\protocol-sift-camel\create-case.sh = ..\ext\protocol-sift-camel\create-case.sh
 		..\ext\protocol-sift-camel\README.md = ..\ext\protocol-sift-camel\README.md
 	EndProjectSection
 EndProject
