@@ -75,6 +75,28 @@ public class SshEnvironmentTests : TestsRuntime
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2.5), $"expected concurrent execution but took {sw.Elapsed}.");
     }
 
+    [Fact]
+    public async Task DisconnectIdleReleasesConnectionAndNextCommandReconnects()
+    {
+        var env = NewEnv();
+        Assert.True(env.IsConnected);
+
+        // The idle sweeper releases the connection without disposing the environment.
+        Assert.True(env.DisconnectIdle());
+        Assert.False(env.IsConnected);
+        Assert.False(env.DisconnectIdle());   // idempotent: nothing to release the second time
+
+        // The next command transparently reconnects (sync and async paths) and succeeds.
+        Assert.True(env.ExecuteCommand("echo", "back", out var output));
+        Assert.Equal("back", output.Trim());
+        Assert.True(env.IsConnected);
+
+        env.DisconnectIdle();
+        var r = await env.ExecuteCommandAsync("echo", "again");
+        Assert.True(r.IsCompleted);
+        Assert.Equal("again", r.Output.Trim());
+    }
+
     SshAuditEnvironment NewEnv() =>
         new SshAuditEnvironment(EnvironmentMessageHandler, "camel", host, port, user, password,
             new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), le);

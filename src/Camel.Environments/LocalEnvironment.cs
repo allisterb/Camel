@@ -49,15 +49,36 @@ public class LocalEnvironment : AuditEnvironment
         return Directory.Exists(dir_path);
     }
 
+    /// <summary>
+    /// Builds the <see cref="ProcessStartInfo"/> for a command. On Unix the toolkits compose <em>bash command
+    /// lines</em> — globs, pipes (<c>| head</c>), redirects (<c>&gt; file</c>), command substitution (<c>$(...)</c>),
+    /// single/double quoting, and escaped grouping (<c>\( \)</c>, e.g. in <c>find</c>). The SSH environment runs
+    /// these by handing <c>"&lt;command&gt; &lt;arguments&gt;"</c> to the remote shell, so the local environment must
+    /// do the same or those shell constructs are passed to the tool literally and fail (e.g. <c>FindFilesAsync</c>).
+    /// We therefore run the line through <c>/bin/bash -c</c>, passing it as a single argv entry (ArgumentList) so no
+    /// second round of quoting is applied. On Windows the tools are native executables (e.g. vol.exe) and this Unix
+    /// shell syntax would not apply, so the command is executed directly as before.
+    /// </summary>
+    private ProcessStartInfo NewProcessStartInfo(string command, string arguments)
+    {
+        if (this.IsUnix)
+        {
+            var psi = new ProcessStartInfo("/bin/bash");
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add(string.IsNullOrEmpty(arguments) ? command : command + " " + arguments);
+            return psi;
+        }
+        return new ProcessStartInfo(command) { Arguments = arguments };
+    }
+
     public override CommandResult Execute(string command, string arguments, Dictionary<string, string>? env = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
-    {  
+    {
         FileInfo cf = new FileInfo(command);
         ProcessExecuteStatus process_status = ProcessExecuteStatus.Unknown; 
         int? process_exit_code = null;
         StringBuilder process_out_sb = new StringBuilder();
-        StringBuilder process_err_sb = new StringBuilder();        
-        ProcessStartInfo psi = new ProcessStartInfo(command);
-        psi.Arguments = arguments;
+        StringBuilder process_err_sb = new StringBuilder();
+        ProcessStartInfo psi = NewProcessStartInfo(command, arguments);
         psi.CreateNoWindow = true;
         psi.RedirectStandardError = true;
         psi.RedirectStandardOutput = true;
@@ -139,8 +160,7 @@ public class LocalEnvironment : AuditEnvironment
         ProcessExecuteStatus process_status = ProcessExecuteStatus.Unknown;
         StringBuilder process_out_sb = new StringBuilder();
         StringBuilder process_err_sb = new StringBuilder();
-        ProcessStartInfo psi = new ProcessStartInfo(command);
-        psi.Arguments = arguments;
+        ProcessStartInfo psi = NewProcessStartInfo(command, arguments);
         psi.CreateNoWindow = true;
         psi.RedirectStandardError = true;
         psi.RedirectStandardOutput = true;

@@ -182,6 +182,15 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         var old = Interlocked.Exchange(ref executeCts, new CancellationTokenSource());
         old.Cancel();
     }
+
+    /// <summary>
+    /// Releases this environment's idle transport (e.g. an SSH connection) while keeping the environment object
+    /// usable — the next command transparently reconnects. Lets the idle sweeper reclaim the expensive connection
+    /// without discarding the session's in-memory state (its <c>Session</c> storage). The base implementation is a
+    /// no-op (e.g. the local environment holds no connection to release). Returns true if a live connection was
+    /// actually released.
+    /// </summary>
+    public virtual bool DisconnectIdle() => false;
     #endregion
 
     #region Methods

@@ -69,33 +69,44 @@ public class SessionRegistryTests : TestsRuntime
     }
 
     [Fact]
-    public void SweepIdleEvictsStaleSessions()
+    public void SweepIdleRetainsDisconnectedSessionsButEvictsAbandonedOnes()
     {
         var reg = NewRegistry();
+        var disconnectTtl = TimeSpan.FromMinutes(15);
+        var evictTtl = TimeSpan.FromHours(4);
+
         var fresh = reg.GetOrCreate("fresh");
-        var stale = reg.GetOrCreate("stale");
-        stale.LastAccess = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(30);
+        var idle = reg.GetOrCreate("idle");
+        var abandoned = reg.GetOrCreate("abandoned");
+        idle.LastAccess = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(30);   // past disconnect, before evict
+        abandoned.LastAccess = DateTimeOffset.UtcNow - TimeSpan.FromHours(5); // past evict
 
-        reg.SweepIdle(TimeSpan.FromMinutes(15));
+        reg.SweepIdle(disconnectTtl, evictTtl);
 
+        // The idle session keeps its slot (and its in-memory Storage) — only its connection is released; the
+        // abandoned session is fully evicted; the fresh one is untouched.
         Assert.True(reg.Contains("fresh"));
-        Assert.False(reg.Contains("stale"));
-        Assert.Equal(1, reg.Count);
+        Assert.True(reg.Contains("idle"));
+        Assert.False(reg.Contains("abandoned"));
+        Assert.Equal(2, reg.Count);
     }
 
     [Fact]
-    public void SweepIdleSkipsBusySessions()
+    public void SweepIdleNeverEvictsBusySessions()
     {
         var reg = NewRegistry();
-        var busy = reg.GetOrCreate("busy");
-        busy.LastAccess = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(30); // stale by last-access...
-        busy.EnterCall();                                                   // ...but a call is in flight
+        var disconnectTtl = TimeSpan.FromMinutes(15);
+        var evictTtl = TimeSpan.FromHours(4);
 
-        reg.SweepIdle(TimeSpan.FromMinutes(15));
-        Assert.True(reg.Contains("busy"));   // not swept: a long-running call must keep its SSH environment
+        var busy = reg.GetOrCreate("busy");
+        busy.LastAccess = DateTimeOffset.UtcNow - TimeSpan.FromHours(5);  // stale enough to evict...
+        busy.EnterCall();                                                 // ...but a call is in flight
+
+        reg.SweepIdle(disconnectTtl, evictTtl);
+        Assert.True(reg.Contains("busy"));   // a long-running call keeps its session and connection
 
         busy.LeaveCall();                    // call ends; LeaveCall re-stamps LastAccess to now
-        reg.SweepIdle(TimeSpan.FromMinutes(15));
+        reg.SweepIdle(disconnectTtl, evictTtl);
         Assert.True(reg.Contains("busy"));   // still fresh immediately after the call returned
     }
 

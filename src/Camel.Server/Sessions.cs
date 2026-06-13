@@ -37,7 +37,8 @@ public sealed class SessionContext : IDisposable
     /// Per-session scratch storage, exposed to the JS engine as the global <c>Session</c>. A script can stash an
     /// expensive result (a workflow output, a parsed super-timeline) under a string key and reuse it in a later
     /// <c>Execute</c> call instead of recomputing it — keeping successive analysis steps consistent with the same
-    /// underlying objects. Persists for the life of the session (cleared when the session is swept/disposed).
+    /// underlying objects. Survives an idle connection-sweep (the SSH link is released but this state is kept, and
+    /// the next call reconnects); cleared only when the session is fully evicted after a long idle or disposed.
     /// Per-session calls are serialized, so a plain dictionary is sufficient.
     /// </summary>
     public readonly Dictionary<string, object?> Storage = new();
@@ -57,6 +58,15 @@ public sealed class SessionContext : IDisposable
         Interlocked.Decrement(ref _activeCalls);
         LastAccess = DateTimeOffset.UtcNow;
     }
+
+    /// <summary>
+    /// Releases the session's idle SSH connection (the expensive, leak-prone resource) while keeping the context —
+    /// and its in-memory <see cref="Storage"/> and <see cref="CaseId"/> — alive. The next call transparently
+    /// reconnects (see <see cref="AuditEnvironment.DisconnectIdle"/>). This lets a session sit idle between Execute
+    /// calls without losing cached results, which a full dispose/recreate would discard. Returns true if a live
+    /// connection was released.
+    /// </summary>
+    public bool DisconnectIdle() => Environment.DisconnectIdle();
 
     public SessionContext(IConfigurationRoot config)
     {
@@ -126,18 +136,36 @@ public sealed class SessionRegistry : IDisposable
         }
     }
 
-    /// <summary>Disposes any session whose environment has been idle longer than <paramref name="ttl"/>.</summary>
-    public void SweepIdle(TimeSpan ttl)
+    /// <summary>
+    /// Two-tier idle maintenance, skipping any session with a call in flight:
+    /// <list type="bullet">
+    /// <item>idle longer than <paramref name="disconnectTtl"/> → release the SSH connection
+    /// (<see cref="SessionContext.DisconnectIdle"/>) but keep the context, so the session's in-memory
+    /// <see cref="SessionContext.Storage"/> survives and the next call reconnects transparently; and</item>
+    /// <item>idle longer than <paramref name="evictTtl"/> → fully end the session (remove + dispose), bounding
+    /// session-slot and memory growth for sessions a client has truly abandoned.</item>
+    /// </list>
+    /// A long-running analysis is never disconnected mid-call (the busy guard), and a freshly-disconnected idle
+    /// session is not re-logged each tick (<see cref="SessionContext.DisconnectIdle"/> no-ops once disconnected).
+    /// </summary>
+    public void SweepIdle(TimeSpan disconnectTtl, TimeSpan evictTtl)
     {
-        var cutoff = DateTimeOffset.UtcNow - ttl;
+        var now = DateTimeOffset.UtcNow;
         foreach (var kv in sessions)
         {
-            // Never sweep a session with a call in flight, even if its last-access predates the cutoff — a
-            // long-running analysis would otherwise have its SSH connection cancelled and disposed mid-call.
-            if (kv.Value.IsValueCreated && !kv.Value.Value.IsBusy && kv.Value.Value.LastAccess < cutoff)
+            if (!kv.Value.IsValueCreated) continue;
+            var ctx = kv.Value.Value;
+            if (ctx.IsBusy) continue;                       // a call in flight must keep its connection
+            var idle = now - ctx.LastAccess;
+            if (idle > evictTtl)
             {
-                Runtime.Info("Sweeping idle MCP session {0} (inactive longer than {1}).", kv.Key, ttl);
+                Runtime.Info("Evicting idle MCP session {0} (inactive longer than {1}).", kv.Key, evictTtl);
                 End(kv.Key);
+            }
+            else if (idle > disconnectTtl && ctx.DisconnectIdle())
+            {
+                Runtime.Info("Released idle SSH connection for MCP session {0} (inactive longer than {1}); session state retained.",
+                    kv.Key, disconnectTtl);
             }
         }
     }
@@ -151,14 +179,21 @@ public sealed class SessionRegistry : IDisposable
 }
 
 /// <summary>
-/// Background service that periodically disposes idle session environments, so heavyweight SSH connections
-/// don't leak when a client never sends a clean session close. (Eager close on disconnect is a follow-up.)
+/// Background service that periodically performs two-tier idle maintenance (see <see cref="SessionRegistry.SweepIdle"/>):
+/// it releases a session's idle SSH connection after a short window — keeping the session's in-memory
+/// <see cref="SessionContext.Storage"/> so a returning client doesn't lose cached results — and fully evicts a
+/// session only after it has been abandoned for hours, so heavyweight connections and memory don't leak when a
+/// client never sends a clean session close. (Eager close on disconnect is a follow-up.)
 /// </summary>
 public sealed class IdleSessionSweeper : BackgroundService
 {
     private readonly SessionRegistry registry;
     private readonly TimeSpan interval = TimeSpan.FromMinutes(1);
-    private readonly TimeSpan ttl = TimeSpan.FromMinutes(15);
+    // Release an idle session's SSH connection after 15 min (its in-memory Session storage is retained so a
+    // returning client keeps its cached results) ...
+    private readonly TimeSpan disconnectTtl = TimeSpan.FromMinutes(15);
+    // ... and fully evict a session only after it has been abandoned for hours, to bound slot/memory growth.
+    private readonly TimeSpan evictTtl = TimeSpan.FromHours(4);
 
     public IdleSessionSweeper(SessionRegistry registry) => this.registry = registry;
 
@@ -168,7 +203,7 @@ public sealed class IdleSessionSweeper : BackgroundService
         try
         {
             while (await timer.WaitForNextTickAsync(stoppingToken))
-                registry.SweepIdle(ttl);
+                registry.SweepIdle(disconnectTtl, evictTtl);
         }
         catch (OperationCanceledException) { /* shutting down */ }
     }

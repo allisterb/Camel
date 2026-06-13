@@ -89,6 +89,53 @@ public class SshAuditEnvironment : AuditEnvironment
     }
     #endregion
 
+    #region Connection lifecycle (idle disconnect / on-demand reconnect)
+    // Serializes reconnects so concurrent commands (workflows fan out with Task.WhenAll) trigger at most one.
+    private readonly object _connectLock = new();
+
+    /// <summary>
+    /// Ensures the SSH client is connected, reconnecting on demand if an idle sweep (<see cref="DisconnectIdle"/>)
+    /// or a dropped link closed it. Called at the top of every command path, so a returning session reconnects
+    /// transparently. Safe under concurrent commands — only one reconnect runs at a time; the rest observe the
+    /// freshly-opened connection. The connection parameters (host/user/password) are retained from construction,
+    /// so no per-session state is needed to rebuild the link.
+    /// </summary>
+    private void EnsureConnected()
+    {
+        if (this.IsDisposed) throw new ObjectDisposedException(nameof(SshAuditEnvironment));
+        if (sshClient.IsConnected) { this.IsConnected = true; return; }
+        lock (_connectLock)
+        {
+            if (sshClient.IsConnected) { this.IsConnected = true; return; }
+            using var op = Begin("Reconnecting SSH session to {0}", HostName);
+            sshClient.Connect();
+            this.IsConnected = sshClient.IsConnected;
+            op.Complete();
+        }
+    }
+
+    /// <summary>
+    /// Releases the idle SSH connection (closing the TCP/sshd session and its file descriptors) while keeping this
+    /// environment object usable — the next command calls <see cref="EnsureConnected"/> and reconnects. Used by the
+    /// session sweeper to reclaim an idle connection without discarding the session's in-memory <c>Session</c>
+    /// storage. No-op (returns false) if already disconnected or disposed. Per-call SCP clients are transient and
+    /// hold no persistent connection, so only the command channel is cycled.
+    /// </summary>
+    public override bool DisconnectIdle()
+    {
+        if (this.IsDisposed || !sshClient.IsConnected) return false;
+        lock (_connectLock)
+        {
+            if (!sshClient.IsConnected) return false;
+            using var op = Begin("Releasing idle SSH connection to {0}", HostName);
+            try { sshClient.Disconnect(); } catch { /* best-effort */ }
+            this.IsConnected = false;
+            op.Complete();
+            return true;
+        }
+    }
+    #endregion
+
     #region Overriden properties
     protected override TraceSource TraceSource { get; set; } = new TraceSource("SshAuditEnvironment");
     #endregion
@@ -121,7 +168,7 @@ public class SshAuditEnvironment : AuditEnvironment
     {
         System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
         sw.Start();
-        if (!this.IsConnected) throw new InvalidOperationException("The SSH session is not connected.");
+        EnsureConnected();
         SshCommand ls_cmd = sshClient.RunCommand("stat " + file_path);
         sw.Stop();
         if (!string.IsNullOrEmpty(ls_cmd.Result))
@@ -140,7 +187,7 @@ public class SshAuditEnvironment : AuditEnvironment
 
     public override bool DirectoryExists(string dir_path)
     {
-        if (!this.IsConnected) throw new InvalidOperationException("The SSH session is not connected.");
+        EnsureConnected();
         SshCommand stat_cmd = sshClient.RunCommand("stat " + dir_path);
         if (!string.IsNullOrEmpty(stat_cmd.Result))
         {
@@ -156,7 +203,7 @@ public class SshAuditEnvironment : AuditEnvironment
 
     public override CommandResult Execute(string command, string arguments, Dictionary<string, string>? env = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)
     {
-        if (!this.IsConnected) throw new InvalidOperationException("The SSH session is not connected.");
+        EnsureConnected();   // reconnect transparently if an idle sweep (or a dropped link) closed the connection
         var process_status = ProcessExecuteStatus.Unknown;
         var process_output = "";
         var process_error = ""; 
@@ -223,7 +270,7 @@ public class SshAuditEnvironment : AuditEnvironment
     public override Task<CommandResult> ExecuteAsync(string command, string arguments, Dictionary<string, string>? env = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null) =>
         RunWithLimitAsync(async () =>
     {
-        if (!this.IsConnected) throw new InvalidOperationException("The SSH session is not connected.");
+        EnsureConnected();   // reconnect transparently if an idle sweep (or a dropped link) closed the connection
         var process_status = ProcessExecuteStatus.Unknown;
         var process_output = "";
         var process_error = "";

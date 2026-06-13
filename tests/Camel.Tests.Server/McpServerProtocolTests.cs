@@ -224,6 +224,30 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
     }
 
     [Fact]
+    public async Task SessionStorageSurvivesIdleConnectionSweepButNotFullEviction()
+    {
+        await using var client = await NewClientAsync();
+        var registry = app.Services.GetRequiredService<SessionRegistry>();
+
+        // Stash an array (round-tripped through map() to prove it's a real JS array, not an opaque handle).
+        await client.CallToolAsync("Execute", Script("Session['arr'] = [1,2,3].map(x => x * 2);"));
+
+        // Disconnect-tier sweep (idle past the first threshold, before the eviction threshold): the session's
+        // connection is released but its Storage is retained — the value must still be there next call.
+        registry.SweepIdle(TimeSpan.Zero, TimeSpan.FromHours(4));
+        var r1 = await client.CallToolAsync("Execute", Script("log('sum=' + Session['arr'].reduce((a, b) => a + b, 0));"));
+        Assert.NotEqual(true, r1.IsError);
+        Assert.Contains("sum=12", Text(r1));          // [2,4,6] survived as a usable array across the sweep
+
+        // Full-eviction-tier sweep: the session (and its Storage) is dropped; the key reads back undefined.
+        registry.SweepIdle(TimeSpan.Zero, TimeSpan.Zero);
+        var r2 = await client.CallToolAsync("Execute",
+            Script("log('after=' + (Session['arr'] === undefined ? 'gone' : 'present'));"));
+        Assert.NotEqual(true, r2.IsError);
+        Assert.Contains("after=gone", Text(r2));
+    }
+
+    [Fact]
     public async Task EachSessionGetsItsOwnEnvironment()
     {
         var registry = app.Services.GetRequiredService<SessionRegistry>();
