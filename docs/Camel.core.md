@@ -32,9 +32,10 @@ nullish coalescing `??`, `Array`/`Map`/`Set`/`JSON`, etc.). Tailor generated cod
   explicitly (use `null` for nullable types) to reach a later one.
 - **Toolkit methods return their payload or `null` on tool failure; workflow methods return `WorkflowResult<T>`.**
   Always check before using the value.
-- Output via the globals `log` / `error` / `table`; `auditInfo` / `auditError` additionally persist a line to the
-  per-case audit log, and `auditFinding` / `auditReviewRec` persist a structured finding / a review flag. There is
-  no interactive prompting. `eval`/`new Function` are disabled.
+- Output via the globals `log` / `error` / `table`. The `audit*` family additionally persists to the per-case
+  audit log: `auditInfo`/`auditError` (notes), `auditFinding`/`auditReviewRec` (a structured finding / a review
+  flag), and `auditFalsePositive`/`auditMissingEvidence`/`auditHallucination` (IR-accuracy events). There is no
+  interactive prompting. `eval`/`new Function` are disabled.
 - **How to reason** over what these methods return — the investigative discipline, grounding rules, and the
   decisions to flag for human judgement — is the companion resource **`camel-sdk-discipline`** (`Camel.discipline.md`).
 
@@ -77,11 +78,21 @@ structured forensic finding to the audit log as a `finding` event: `observation`
 (root cause, attribution, scope, exfiltration, insider) so a reviewer can find it in the trail. Present the
 candidates and call this — the run continues autonomously; it does not stop.
 
+`auditFalsePositive(message: string)` — records a `false-positive` event: a lead you checked and rejected as benign
+(the *benign-until-proven-malicious* principle). Surfacing rejected leads is positive evidence of rigour.
+
+`auditMissingEvidence(message: string)` — records a `missing-evidence` event: an evidentiary gap (absent, cleared,
+rotated, or disabled logs; an unavailable artifact). State "no evidence found", not "did not happen".
+
+`auditHallucination(message: string)` — records a `hallucination` event when you catch yourself having invented an
+artifact, method, or field. (The server also emits this automatically when a script references a non-existent
+toolkit/workflow — the resulting error names the invented API and is returned to you so you can self-correct.)
+
 `table(headers: string[], dataRows: object[][])` — write a tabular block to the output buffer (`headers` are the
 column headers; `dataRows` is one inner array of cell values per row).
 
 > Output is accumulated and returned as the tool result. If the script throws, output produced before the
-> failure is still returned, followed by the error message. `auditInfo`/`auditError` persist beyond the response:
+> failure is still returned, followed by the error message. The `audit*` functions persist beyond the response:
 > they land in the case audit file so a reviewer can reconstruct the investigation from the logs alone.
 
 ## WorkflowResult&lt;T&gt; (returned by every workflow method)

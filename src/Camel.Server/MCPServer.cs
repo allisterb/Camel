@@ -101,6 +101,12 @@ public class CamelMCPTools : Runtime
               (observation, interpretation, confidence, evidenceExecutionIds) =>
                   AuditFinding(observation, interpretation, confidence, evidenceExecutionIds, output)))
           .SetValue("auditReviewRec", new Action<string>((s) => AuditReviewRec(s, output)))
+          // IR-accuracy events: auditFalsePositive (a lead checked and rejected as benign), auditMissingEvidence
+          // (a gap — absent/cleared/disabled logs), auditHallucination (the agent caught itself inventing an
+          // artifact/method/field). Surfacing these in the trail is positive evidence of investigative rigour.
+          .SetValue("auditFalsePositive", new Action<string>((s) => AuditFalsePositive(s, output)))
+          .SetValue("auditMissingEvidence", new Action<string>((s) => AuditMissingEvidence(s, output)))
+          .SetValue("auditHallucination", new Action<string>((s) => AuditHallucination(s, output)))
           .SetValue("table", new Action<string[], object[][]>((headers, dataRows) =>
               output.AppendLine(RenderAsciiTable(headers, dataRows))))
 
@@ -175,11 +181,21 @@ public class CamelMCPTools : Runtime
             // PromiseRejectedException; both carry the script-level error text in their message.
             var jsex = ex as Jint.Runtime.JavaScriptException
                        ?? ex.InnerException as Jint.Runtime.JavaScriptException;
-            var message = jsex is not null
-                ? $"JavaScript error: {jsex.Message}"
-                : ex is Jint.Runtime.PromiseRejectedException
-                    ? $"JavaScript error: {ex.Message}"
-                    : $"Error executing script: {ex.Message}";
+            var jsErrorText = jsex?.Message
+                ?? (ex is Jint.Runtime.PromiseRejectedException ? ex.Message : null);
+            var message = jsErrorText is not null
+                ? $"JavaScript error: {jsErrorText}"
+                : $"Error executing script: {ex.Message}";
+
+            // A script that names a non-existent toolkit/workflow object or method is evidence the model invented
+            // part of the Camel API — a hallucination, not a logic bug. Record it as a `hallucination` event and
+            // nudge the agent back to the documented SDK so the failure becomes self-correcting (criteria 1 & 2).
+            if (ClassifyHallucination(jsErrorText) is string halluReason)
+            {
+                AuditEvent("hallucination", "{Message}", halluReason);
+                message += $"{Environment.NewLine}[possible hallucination] {halluReason}. Only objects and methods " +
+                           "documented in the camel-sdk-core resource exist — re-read it and do not invent APIs.";
+            }
 
             // Include anything written via log()/error() before the failure for context.
             if (output.Length > 0)
@@ -242,6 +258,49 @@ public class CamelMCPTools : Runtime
     {
         AuditEvent("human-judgement-recommended", "{Message}", reason);
         output.AppendLine($"[human-judgement-recommended] {reason}");
+    }
+
+    /// <summary>Records a lead that was checked and rejected as benign as a <c>false-positive</c> event.</summary>
+    protected void AuditFalsePositive(string text, StringBuilder output)
+    {
+        AuditEvent("false-positive", "{Message}", text);
+        output.AppendLine(text);
+    }
+
+    /// <summary>Records an evidentiary gap (absent/cleared/disabled logs, unavailable artifact) as a
+    /// <c>missing-evidence</c> event — "no evidence found", not "did not happen".</summary>
+    protected void AuditMissingEvidence(string text, StringBuilder output)
+    {
+        AuditEvent("missing-evidence", "{Message}", text);
+        output.AppendLine(text);
+    }
+
+    /// <summary>Records that the agent caught itself inventing an artifact, method, or field as a
+    /// <c>hallucination</c> event. The server also emits this automatically on a script error that names a
+    /// non-existent toolkit/workflow (see <see cref="ClassifyHallucination"/>).</summary>
+    protected void AuditHallucination(string text, StringBuilder output)
+    {
+        AuditEvent("hallucination", "{Message}", text);
+        output.AppendLine(text);
+    }
+
+    /// <summary>
+    /// Heuristically classifies a Jint error message as a probable API hallucination: a reference to an undefined
+    /// name, or a call to a non-existent method, where the message names a Camel <c>*Toolkit</c>/<c>*Workflow</c>.
+    /// Scoped to those tokens so ordinary undeclared-variable typos and language-feature gaps are not misfiled.
+    /// Returns a human-readable reason, or <c>null</c> when the error is not hallucination-shaped.
+    /// </summary>
+    static string? ClassifyHallucination(string? jsErrorMessage)
+    {
+        if (string.IsNullOrEmpty(jsErrorMessage)) return null;
+        var namesApi = jsErrorMessage.Contains("Toolkit", StringComparison.Ordinal)
+                       || jsErrorMessage.Contains("Workflow", StringComparison.Ordinal);
+        if (!namesApi) return null;
+        if (jsErrorMessage.Contains("is not defined", StringComparison.OrdinalIgnoreCase))
+            return $"referenced a toolkit/workflow that does not exist ({jsErrorMessage})";
+        if (jsErrorMessage.Contains("is not a function", StringComparison.OrdinalIgnoreCase))
+            return $"called a method that does not exist on a Camel toolkit/workflow ({jsErrorMessage})";
+        return null;
     }
 
     /// <summary>

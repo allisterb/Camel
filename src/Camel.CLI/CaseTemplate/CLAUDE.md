@@ -224,4 +224,7 @@ reconstructable from the logs alone, record into the audit trail alongside the r
   structured `finding` event). The primary recording call; pairs one-to-one with the report's Findings entries.
 - **`auditReviewRec(reason)`** — for the high-consequence decisions listed under *Forensic discipline* (a
   `human-judgement-recommended` event).
+- **`auditFalsePositive(message)` / `auditMissingEvidence(message)` / `auditHallucination(message)`** — for a lead
+  cleared as benign, an evidentiary gap, and a mistake you caught yourself making. Recording these is positive
+  evidence of investigative rigour, not an admission of failure.
 - **`auditInfo(message)` / `auditError(message)`** — for notable intermediate steps and problems worth keeping.

@@ -157,4 +157,60 @@ public class AuditedScriptOutputTests : TestsRuntime, IAsyncLifetime
         var reviewLine = Assert.Single(lines, l => l.Contains("\"EventType\":\"human-judgement-recommended\""));
         Assert.Contains(review, reviewLine);
     }
+
+    [Fact]
+    public async Task IrAccuracyFunctionsPersistAsTheirOwnEventTypes()
+    {
+        await using var client = await NewClientAsync();
+
+        await client.CallToolAsync("SetCaseId",
+            new Dictionary<string, object?> { ["caseId"] = "audit-ir" });
+
+        const string fp = "FP_marker_benign_scheduledtask";
+        const string me = "ME_marker_security_evtx_cleared";
+        const string hl = "HL_marker_invented_field";
+
+        var r = await client.CallToolAsync("Execute", Script(
+            $"auditFalsePositive('{fp}'); auditMissingEvidence('{me}'); auditHallucination('{hl}');"));
+
+        Assert.NotEqual(true, r.IsError);
+        var text = Text(r);
+        Assert.Contains(fp, text);
+        Assert.Contains(me, text);
+        Assert.Contains(hl, text);
+
+        Runtime.CloseAndFlushAuditLog();
+
+        var file = Path.Combine(auditDir, "audit-audit-ir.clef");
+        Assert.True(File.Exists(file), $"expected per-case audit file at {file}");
+        var lines = File.ReadAllLines(file);
+
+        Assert.Contains(fp, Assert.Single(lines, l => l.Contains("\"EventType\":\"false-positive\"")));
+        Assert.Contains(me, Assert.Single(lines, l => l.Contains("\"EventType\":\"missing-evidence\"")));
+        Assert.Contains(hl, Assert.Single(lines, l => l.Contains("\"EventType\":\"hallucination\"")));
+    }
+
+    [Fact]
+    public async Task ReferencingNonexistentToolkitIsAutoClassifiedAsHallucination()
+    {
+        await using var client = await NewClientAsync();
+
+        await client.CallToolAsync("SetCaseId",
+            new Dictionary<string, object?> { ["caseId"] = "audit-hallucinate" });
+
+        // FooToolkit is not a bound API name -> ReferenceError "FooToolkit is not defined". The server's
+        // classifier sees the *Toolkit token + "is not defined" and records a hallucination event, and the
+        // returned error nudges the agent back to the documented SDK so the failure is self-correcting.
+        var r = await client.CallToolAsync("Execute", Script("FooToolkit.scan('/evidence');"));
+
+        Assert.Equal(true, r.IsError);
+        Assert.Contains("[possible hallucination]", Text(r));
+
+        Runtime.CloseAndFlushAuditLog();
+
+        var file = Path.Combine(auditDir, "audit-audit-hallucinate.clef");
+        Assert.True(File.Exists(file), $"expected per-case audit file at {file}");
+        var lines = File.ReadAllLines(file);
+        Assert.Contains(lines, l => l.Contains("\"EventType\":\"hallucination\""));
+    }
 }

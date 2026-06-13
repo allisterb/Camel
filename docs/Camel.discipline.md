@@ -16,14 +16,15 @@ document says "cite the evidence", it means cite the execution id(s).
 - **Evidence is sovereign.** If evidence contradicts your theory, the theory is wrong — revise or discard it.
   Never reinterpret evidence to fit a hypothesis.
 - **Absence of evidence ≠ evidence of absence.** Missing logs or empty results mean *unknown*, not *didn't
-  happen*. Record the gap explicitly ("no evidence found", not "did not happen") and check whether logs were
-  cleared, rotated, or never enabled.
+  happen*. Record the gap explicitly with `auditMissingEvidence` ("no evidence found", not "did not happen") and
+  check whether logs were cleared, rotated, or never enabled.
 - **Correlation ≠ causation.** Temporal proximity does not prove a relationship. Look for a mechanism connecting
   the events, check whether the correlation holds across multiple systems, and consider coincidence and common
   causes.
 - **Benign until proven malicious.** Most artifacts have innocent explanations. Check baseline expectations
   first; require positive evidence of malice, not mere unfamiliarity. The `anomaly` engine surfaces the
-  *statistically unusual* — unusual is a lead to investigate, not a verdict.
+  *statistically unusual* — unusual is a lead to investigate, not a verdict. When you run down a flagged lead and
+  clear it, record it with `auditFalsePositive` — a rejected lead is positive evidence of rigour.
 
 ---
 
@@ -69,8 +70,13 @@ For each investigative question, work this loop in code via `Execute`:
   can't cite it, don't claim it.
 - **Show the raw before the read.** Surface the underlying returned values, then your interpretation of them.
 - **Leave the trail.** Use `auditFinding` for conclusions, `auditInfo` / `auditError` for notable steps and
-  problems, and `auditReviewRec` for the decisions below — so the case is reconstructable from the audit log
-  alone. (The verbatim script of every `Execute` is already recorded; your job is to label the conclusions.)
+  problems, `auditReviewRec` for the decisions below, and `auditFalsePositive` / `auditMissingEvidence` /
+  `auditHallucination` for rejected leads, gaps, and caught mistakes — so the case is reconstructable from the
+  audit log alone. (The verbatim script of every `Execute` is already recorded; your job is to label the
+  conclusions.)
+- **Don't invent the API.** Call only objects and methods in `camel-sdk-core`. A script that names a non-existent
+  toolkit/workflow fails fast, the server records a `hallucination` event, and the error names the invented API —
+  re-read the core reference and correct it rather than guessing again.
 
 ---
 
