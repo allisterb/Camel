@@ -22,5 +22,14 @@
     <PackageReference Include="Spectre.Console" Version="0.54.0" />
   </ItemGroup>
 
+  <!-- Case-scaffolding templates emitted by the `create-case` verb. Embedded so they travel inside the
+       assembly regardless of the working directory. LogicalName is the manifest resource name. -->
+  <ItemGroup>
+    <EmbeddedResource Include="CaseTemplate\CLAUDE.md" LogicalName="Camel.CLI.CaseTemplate.CLAUDE.md" />
+    <EmbeddedResource Include="CaseTemplate\mcp.json" LogicalName="Camel.CLI.CaseTemplate.mcp.json" />
+    <EmbeddedResource Include="CaseTemplate\settings.json" LogicalName="Camel.CLI.CaseTemplate.settings.json" />
+    <EmbeddedResource Include="CaseTemplate\preserve_chatlog.py" LogicalName="Camel.CLI.CaseTemplate.preserve_chatlog.py" />
+  </ItemGroup>
+
 
 </Project>

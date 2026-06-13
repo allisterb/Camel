@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "camel": {
+      "type": "stdio",
+      "command": "dotnet",
+      "args": [],
+      "env": {}
+    }
+  }
+}

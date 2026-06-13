@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__camel__SetCaseId",
+      "mcp__camel__ExecuteJavaScript",
+
+      "Read",
+      "Write(./analysis/*)",
+      "Write(./reports/*)",
+      "Write(./exports/*)",
+      "Edit(./analysis/*)",
+      "Edit(./reports/*)",
+      "Edit(./exports/*)"
+    ],
+    "defaultMode": "acceptEdits",
+    "ask": [],
+    "deny": [
+      "Bash",
+      "WebFetch",
+      "WebSearch",
+      "Read(./secrets/**)",
+      "Read(./**/*.key)",
+      "Read(./**/*.pem)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/preserve_chatlog.py\""
+          }
+        ]
+      }
+    ]
+  }
+}

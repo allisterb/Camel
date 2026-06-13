@@ -41,8 +41,11 @@ public class Options
 }
 
 
-[Verb("server", HelpText = "Start the Camel MCP server.")]
-public class ServerOptions : Options
+/// <summary>
+/// Environment/connection options shared by the <c>server</c> and <c>create-case</c> verbs. Holds no
+/// <see cref="VerbAttribute"/> itself so it is never treated as a verb; the verb classes inherit it.
+/// </summary>
+public class ConnectionOptions : Options
 {
     [Option("local", Required = false, HelpText = "Use the local environment, overriding the configuration file environment setting.")]
     public bool Local { get; set; }
@@ -61,15 +64,23 @@ public class ServerOptions : Options
 
     [Option("port", Required = false, HelpText = "SSH port, overriding the configuration file (defaults to 22 when SSH connection details are supplied on the command line).")]
     public int? Port { get; set; }
+}
 
+
+[Verb("server", HelpText = "Start the Camel MCP server.")]
+public class ServerOptions : ConnectionOptions
+{
     [Option("http", Required = false, HelpText = "Enable the MCP server HTTP transport.")]
     public bool Http { get; set; }
 }
 
 
-[Verb("test", HelpText = "Test different CLI commands and options.")]
-public class TestOptions : Options
+[Verb("create-case", HelpText = "Create a Camel case directory (CLAUDE.md + .mcp.json + analysis/exports/reports) and register the MCP server. Accepts the same connection options as the server verb; they are baked into the generated .mcp.json so Claude Code launches Camel in that mode.")]
+public class CreateCaseOptions : ConnectionOptions
 {
-    [Option("exec", Required = false, HelpText = "Execute JavaScript using the embedded interpreter.")]
-    public string? Exec  { get; set; }
+    [Value(0, MetaName = "case-dir", Required = true, HelpText = "Parent directory under which the case subdirectory is created.")]
+    public string CaseDir { get; set; } = String.Empty;
+
+    [Value(1, MetaName = "case-id", Required = true, HelpText = "Case id — used as the subdirectory name, the SetCaseId value, and the audit log name (letters, digits, dot, underscore, dash).")]
+    public string CaseId { get; set; } = String.Empty;
 }
