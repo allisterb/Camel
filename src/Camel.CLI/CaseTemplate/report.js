@@ -427,6 +427,80 @@ function renderIocs() {
   }
 }
 
+// ---------- Conversation tab (read-only chat reconstruction from chatlog-data.js) ----------
+// window.__CHATLOG__ is an array of sessions: { file, turns:[{ role, ts, meta, side, blocks }] }, where a block is
+// one of { k:"text"|"thinking", text } / { k:"tool_use", name, id, input, trunc } / { k:"tool_result", id, err,
+// text, trunc }. The generator already trimmed/capped it; this just renders. Tool results are paired to their
+// tool_use card by id so each call shows its own output.
+function renderChat() {
+  const root = $("#chatLog");
+  root.innerHTML = "";
+  const sessions = Array.isArray(window.__CHATLOG__) ? window.__CHATLOG__ : [];
+  const total = sessions.reduce((n, s) => n + (s.turns ? s.turns.length : 0), 0);
+  $("#chatCount").textContent = total ? `(${total})` : "";
+  if (!total) {
+    root.append(el("p", { class: "empty" },
+      "No conversation embedded. It is generated from this case's logs/chatlog-*.jsonl."));
+    return;
+  }
+  const toolSlots = new Map();   // tool_use id -> result placeholder element
+  sessions.forEach((s, si) => {
+    const first = (s.turns || []).find((t) => t.ts);
+    if (sessions.length > 1)
+      root.append(el("div", { class: "session-sep" },
+        `session ${si + 1} of ${sessions.length}${first ? " - " + fmtTime(new Date(first.ts)) : ""}`));
+    for (const turn of (s.turns || [])) renderTurn(turn, root, toolSlots);
+  });
+}
+
+const tsSpan = (turn) => turn.ts ? el("span", { class: "ts" }, fmtTime(new Date(turn.ts))) : null;
+
+function renderTurn(turn, root, toolSlots) {
+  const blocks = turn.blocks || [];
+  if (turn.role === "assistant") {
+    const t = el("div", { class: "turn assistant" }, el("div", { class: "who" }, "Assistant", tsSpan(turn)));
+    for (const b of blocks) {
+      if (b.k === "thinking") t.append(el("details", { class: "think" },
+        el("summary", {}, "thinking"), el("div", { class: "body" }, b.text)));
+      else if (b.k === "text") t.append(el("div", { class: "bubble" }, b.text));
+      else if (b.k === "tool_use") t.append(toolBlock(b, toolSlots));
+    }
+    root.append(t);
+    return;
+  }
+  // user turn: tool_result blocks fill their matching call; text is a real prompt or an injected system note.
+  for (const b of blocks) if (b.k === "tool_result") fillToolResult(b, root, toolSlots);
+  const texts = blocks.filter((b) => b.k === "text" || b.k === "thinking");
+  if (texts.length) {
+    const sys = !!turn.meta;
+    const t = el("div", { class: "turn " + (sys ? "system" : "user") },
+      el("div", { class: "who" }, sys ? "System" : "User", tsSpan(turn)));
+    for (const b of texts) t.append(el("div", { class: "bubble" }, b.text));
+    root.append(t);
+  }
+}
+
+function toolBlock(b, toolSlots) {
+  const body = el("div", { class: "body" }, el("div", {}, b.input || "(no input)"));
+  if (b.trunc) body.append(el("div", { class: "trunc" }, `[+${b.trunc} more chars truncated]`));
+  const slot = el("div", {});                       // result fills in here when its tool_result turn arrives
+  body.append(slot);
+  if (b.id) toolSlots.set(b.id, slot);
+  return el("details", { class: "tool" },
+    el("summary", {}, el("span", { class: "tname" }, b.name || "tool"), " call"), body);
+}
+
+function fillToolResult(r, root, toolSlots) {
+  const node = el("div", { style: "margin-top:6px;border-top:1px solid var(--border);padding-top:6px" },
+    el("div", { class: r.err ? "result-err" : "result-ok" }, r.err ? "result (error)" : "result"),
+    el("div", {}, r.text || "(empty)"),
+    r.trunc ? el("div", { class: "trunc" }, `[+${r.trunc} more chars truncated]`) : null);
+  const slot = r.id ? toolSlots.get(r.id) : null;
+  if (slot) slot.append(node);
+  else root.append(el("div", { class: "turn assistant" },           // orphan result (no call in view)
+    el("details", { class: "tool" }, el("summary", {}, "tool result"), el("div", { class: "body" }, node))));
+}
+
 // ---------- loading ----------
 function load(text, sourceName) {
   const { events, bad } = parseClef(text);
@@ -536,6 +610,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   wireUi();
   renderAccuracy();                      // independent of the audit log; render once on load
   renderIocs();
+  renderChat();
   if (loadEmbedded()) return;            // embedded data (works offline, file://)
   if (!await autoLoad()) showView("loadView");  // else fetch over HTTP, else file picker
 });

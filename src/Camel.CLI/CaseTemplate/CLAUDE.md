@@ -305,3 +305,23 @@ reconstructable from the logs alone, record into the audit trail alongside the r
 - **`exit(message)`** — stop the current script immediately and return `message` (output so far is still
   returned; the message is also audited). A deliberate early exit, not a tool failure. Use it to bail out on an
   unrecoverable step instead of deep `else` nesting.
+
+---
+
+## Teardown (run when the investigation is complete)
+
+Once the deliverables are written and the investigation is finished, **unmount every evidence image and filesystem
+you mounted** so nothing is left mounted on the workstation. Leaving evidence mounted ties up loop devices and FUSE
+handles and is poor hygiene at the end of a case. Unmounting is read-only and safe — it does not modify the
+evidence, so it does not trip the spoliation guard (the guard refuses *writes* onto evidence paths, not `umount`).
+
+- Track every mount as you create it (cache the `EwfImageMount` / `FileSystemMount` handles and their mount dirs in
+  `Session`, e.g. `Session["mounts"]`), so you can tear them all down at the end.
+- For each EWF image you mounted with `DiskAnalysisWorkflow.MountEwfImageAsync` / `MountFileSystemAsync`, unmount
+  with **`DiskAnalysisWorkflow.UnmountImageAsync(imageMount, ...filesystemMounts)`** — it unmounts the filesystem
+  mounts first, then the raw device, and returns the dirs it freed.
+- For any lower-level mount (a loopback/`losetup`, `ddmount`, or a bare mount dir), use
+  **`DiskAnalysisToolkit.UnmountAsync(mountDir)`** per mount directory.
+- Verify each unmount's result (`IsSuccess` / `true`) and record the teardown with `auditInfo` (e.g. which mounts
+  were released) so the audit trail shows the case was cleaned up. If an unmount fails (device busy), note it in
+  the report's *Gaps* section rather than forcing it.

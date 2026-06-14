@@ -171,6 +171,38 @@
                    font-family: var(--mono); font-size: 12.5px; }
   .markdown strong { color: var(--fg); font-weight: 700; }
   .markdown a { color: var(--accent); }
+
+  /* Conversation tab: read-only reconstruction of the client chat log */
+  #chatView.active { display: block; overflow-y: auto; }
+  .chat { max-width: 1000px; margin: 0 auto; padding: 16px 20px 60px; }
+  .chat .session-sep { text-align: center; color: var(--muted); font-size: 11px; margin: 22px 0 10px;
+                       border-top: 1px solid var(--border); padding-top: 10px; }
+  .turn { margin: 14px 0; display: flex; flex-direction: column; }
+  .turn .who { font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+               margin-bottom: 4px; }
+  .turn .ts { font-family: var(--mono); opacity: .7; margin-left: 6px; }
+  .bubble { border-radius: 10px; padding: 10px 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+  .turn.user { align-items: flex-end; }
+  .turn.user .bubble { background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+                       border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+                       color: var(--fg); max-width: 80%; }
+  .turn.assistant .bubble { background: var(--panel); border: 1px solid var(--border); max-width: 92%; }
+  .turn.system .bubble { background: transparent; border: 1px dashed var(--border); color: var(--muted);
+                         font-size: 12px; max-width: 92%; }
+  /* collapsible thinking + tool blocks (use <details>) */
+  .turn details { max-width: 92%; margin: 5px 0; border: 1px solid var(--border); border-radius: 8px;
+                  background: var(--code-bg); overflow: hidden; }
+  .turn details > summary { cursor: pointer; padding: 6px 12px; font-size: 11.5px; color: var(--muted);
+                            user-select: none; list-style: none; }
+  .turn details > summary::-webkit-details-marker { display: none; }
+  .turn details > summary::before { content: "\25B8 "; color: var(--muted); }
+  .turn details[open] > summary::before { content: "\25BE "; }
+  .turn details .body { padding: 0 12px 10px; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
+                        word-break: break-word; color: var(--code-fg); max-height: 420px; overflow: auto; }
+  .think > summary { font-style: italic; }
+  .tool > summary .tname { color: var(--t-command); font-family: var(--mono); }
+  .tool .result-ok { color: var(--ok); } .tool .result-err { color: var(--bad); }
+  .trunc { color: var(--muted); font-style: italic; }
 </style>
 </head>
 <body data-case-id="__CASE_ID__">
@@ -188,6 +220,7 @@
     <button id="tabAudit" data-view="auditView">Audit Log <span class="count" id="auditCount"></span></button>
     <button id="tabIocs" data-view="iocsView">IOCs <span class="count" id="iocCount"></span></button>
     <button id="tabAccuracy" data-view="accuracyView">Accuracy</button>
+    <button id="tabChat" data-view="chatView">Conversation <span class="count" id="chatCount"></span></button>
   </nav>
 
   <main>
@@ -229,6 +262,11 @@
       <div class="markdown" id="accuracyDoc"></div>
     </section>
 
+    <!-- Conversation: read-only reconstruction of the client chat log(s) (chatlog-data.js) -->
+    <section class="view" id="chatView">
+      <div class="chat" id="chatLog"></div>
+    </section>
+
     <!-- Empty / load state -->
     <section class="view" id="loadView">
       <div class="drop" id="dropZone">
@@ -247,6 +285,10 @@
        rather than sibling .js). Empty in a fresh case - those tabs then show a placeholder. -->
   <script>window.__ACCURACY_MD_B64__ = "__ACCURACY_B64__";</script>
   <script>window.__IOCS_CSV_B64__ = "__IOCS_B64__";</script>
+  <!-- Generated chatlog-data.js sets window.__CHATLOG__ to the trimmed client conversation(s) for this case.
+       Kept a sibling file (not inline) because it is larger; absent in a fresh case (the Conversation tab is then
+       empty). A 404 here when the file is absent is harmless. -->
+  <script src="chatlog-data.js"></script>
   <script src="report.js"></script>
 </body>
 </html>

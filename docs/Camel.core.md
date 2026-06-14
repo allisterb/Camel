@@ -65,8 +65,9 @@ that produced it. Two things are expected of you:
    (start a new session to change it). Read the evidence as input freely — only writes onto evidence paths are
    blocked. Optionally call
    the **`VerifyEvidence` MCP tool** after `SetEvidence` to re-hash each file on disk and confirm it matches the
-   supplied hash (no-hash files get a SHA-1 baseline); a mismatch is a chain-of-custody alarm. It can be slow on
-   large images, so it is on-demand, not automatic.
+   supplied hash (no-hash files get a SHA-1 baseline and always pass; `.E01`/EWF images are content-verified with
+   ewfverify, so you can supply an E01's acquisition MD5/SHA1); a mismatch is a chain-of-custody alarm. It can be
+   slow on large images, so it is on-demand, not automatic.
 3. **Every `Execute` result ends with an audit handle line** — `[audit] case=<caseId> execution=<id>`.
    **Cite that `execution` id (and the toolkit/method) next to the findings it supports in your report**, so a
    reviewer can trace each finding to its tool executions in the case's audit file. Treat it as the evidence

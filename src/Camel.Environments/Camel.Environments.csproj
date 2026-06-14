@@ -12,6 +12,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Camel.Tests.Environments" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\ext\Expect.NET\Expect.NET\Expect.NETStandard.csproj" />
     <ProjectReference Include="..\Camel.Runtime\Camel.Runtime.csproj" />
   </ItemGroup>

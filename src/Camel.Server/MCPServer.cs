@@ -135,9 +135,11 @@ public class CamelMCPTools : Runtime
     [McpServerTool(Name = "VerifyEvidence"), Description(
         "Verify the integrity of the evidence registered with SetEvidence: each file is re-hashed on disk and, " +
         "when a hash was supplied, compared against it (a mismatch is a chain-of-custody alarm and returns an " +
-        "error); for a file with no supplied hash the current SHA-1 is recorded as a baseline. Returns one line " +
-        "per file with the computed hash and OK/MISMATCH/baseline status. This can take a while for large images " +
-        "(it hashes the whole file). Call it only after SetEvidence; it does not modify the evidence.")]
+        "error); for a file with no supplied hash the current SHA-1 is recorded as a baseline (it always passes). " +
+        ".E01/EWF images with a supplied hash are content-verified with ewfverify (the supplied acquisition hash is " +
+        "the digest of the imaged media, not of the .E01 container), so you CAN supply an E01's acquisition MD5/SHA1. " +
+        "Returns one line per file with the computed hash and OK/MISMATCH/baseline status. This can take a while for " +
+        "large images (it reads the whole image). Call it only after SetEvidence; it does not modify the evidence.")]
     public async Task<CallToolResult> VerifyEvidence(RequestContext<CallToolRequestParams> context)
     {
         var session = registry.GetOrCreate(SessionId(context.Server));

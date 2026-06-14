@@ -303,9 +303,12 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     /// Re-hashes every registered evidence file on disk and compares it against the hash that was supplied when
     /// it was registered, returning a <see cref="CaseEvidenceVerification"/>. For an item that supplied a hash,
     /// the same algorithm is recomputed and compared (case-insensitive); a mismatch — or a file that cannot be
-    /// hashed — sets <see cref="CaseEvidenceVerification.Success"/> false. For an item with no supplied hash, the
-    /// file's current SHA-1 is recorded as a baseline and never fails the result. This is the integrity check a
-    /// chain-of-custody report cites: the evidence on disk is the evidence that was acquired.
+    /// hashed — sets <see cref="CaseEvidenceVerification.Success"/> false. <b>EWF (.E01) images are content-verified
+    /// with <c>ewfverify</c></b>, because the acquisition hash an analyst supplies is the digest of the acquired
+    /// media content, not of the <c>.E01</c> container file — a plain file re-hash would never match it. For an
+    /// item with no supplied hash, the file's current SHA-1 (of the file as it sits on disk) is recorded as a
+    /// baseline and never fails the result. This is the integrity check a chain-of-custody report cites: the
+    /// evidence on disk is the evidence that was acquired.
     /// </summary>
     public async Task<CaseEvidenceVerification> VerifyCaseEvidenceAsync()
     {
@@ -315,7 +318,10 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         {
             var hasHash = e.HashType != HashType.None && !string.IsNullOrEmpty(e.HashValue);
             // With a supplied hash, recompute with that algorithm to compare; otherwise record SHA-1 as the baseline.
-            var current = await ComputeFileHashAsync(e.FilePath, hasHash ? e.HashType : HashType.SHA1);
+            // An E01 with a supplied hash is verified against its media-content digest (ewfverify), not the container.
+            var current = hasHash && IsEwfImage(e.FilePath)
+                ? await ComputeEwfContentHashAsync(e.FilePath, e.HashType)
+                : await ComputeFileHashAsync(e.FilePath, hasHash ? e.HashType : HashType.SHA1);
             var matched = !hasHash || (current.Length > 0 && string.Equals(current, e.HashValue, StringComparison.OrdinalIgnoreCase));
             if (!matched) success = false;
             results.Add(new EvidenceHashCheck(e, current, matched));
@@ -341,6 +347,42 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         // coreutils sum tools print "<hex>␣␣<path>"; take the leading hex token.
         var tok = r.Output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         return tok.Length > 0 ? tok[0].Trim().ToLowerInvariant() : "";
+    }
+
+    // True for an EWF/Expert Witness image whose content hash must be verified with ewfverify rather than by
+    // file-hashing the container (.E01 = EWF1 first/only segment, .Ex01 = EWF2).
+    private static bool IsEwfImage(string path) =>
+        path.EndsWith(".e01", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".ex01", StringComparison.OrdinalIgnoreCase);
+
+    // Recomputes an EWF image's media-content digest with ewfverify and returns it as lower-case hex, or "" on
+    // failure. ewfverify always calculates MD5; SHA-1/SHA-256 are requested with -d. Retries under sudo for
+    // root-owned evidence on a forensic mount. Reads the whole image, so this can take minutes for a large disk.
+    private async Task<string> ComputeEwfContentHashAsync(string path, HashType type)
+    {
+        var algo = type switch { HashType.MD5 => "md5", HashType.SHA256 => "sha256", _ => "sha1" };
+        // -q keeps the progress chatter down but still prints the hash summary; -d adds the non-MD5 digest.
+        var args = (type == HashType.MD5 ? "" : $"-d {algo} ") + $"-q '{path}'";
+        var hash = ParseEwfDigest((await ExecuteCommandAsync("ewfverify", args)).Output, algo);
+        if (hash.Length == 0 && IsUnix)
+            hash = ParseEwfDigest((await ExecuteCommandAsync("ewfverify", args, admin: true)).Output, algo);
+        return hash;
+    }
+
+    // ewfverify prints a line like "<ALGO> hash calculated over data:\t<hex>" per digest; return the hex for the
+    // requested algorithm. Matching on the algorithm name disambiguates the MD5 line from an added SHA line.
+    // (internal for unit testing the parser against captured ewfverify output.)
+    internal static string ParseEwfDigest(string output, string algo)
+    {
+        foreach (var line in output.Split('\n'))
+        {
+            if (line.IndexOf("calculated over data", StringComparison.OrdinalIgnoreCase) < 0) continue;
+            if (line.IndexOf(algo, StringComparison.OrdinalIgnoreCase) < 0) continue;
+            var hex = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                .LastOrDefault(t => t.Length >= 32 && t.All(Uri.IsHexDigit));
+            if (hex is not null) return hex.ToLowerInvariant();
+        }
+        return "";
     }
 
     // certutil -hashfile prints the digest on its own line (often space-grouped) between a header and a footer
