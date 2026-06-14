@@ -193,6 +193,70 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     public virtual bool DisconnectIdle() => false;
     #endregion
 
+    #region Evidence integrity
+    /// <summary>
+    /// The original evidence registered against this environment (disk images, memory captures, mounted
+    /// artifacts, …). Toolkits and workflows consult this — via <see cref="CheckAgainstEvidencePaths"/> —
+    /// before any write/modify operation so that original data is never altered. Enforcing spoliation
+    /// protection here, at the environment that is "closest" to where the physical evidence resides, makes
+    /// it common to every toolkit rather than something each tool has to remember. Empty by default.
+    /// </summary>
+    protected EvidenceInfo[] CaseEvidence { get; set; } = Array.Empty<EvidenceInfo>();
+
+    /// <summary>
+    /// Returns true if <paramref name="path"/> refers to a piece of registered case evidence (see
+    /// <see cref="CaseEvidence"/>) — either the evidence file itself or the directory that contains it, since
+    /// writing into an evidence directory can also disturb the original data. Comparison normalizes path
+    /// separators to this environment's separator and honours its filesystem case-sensitivity
+    /// (case-insensitive on Windows, case-sensitive on Unix), so a caller cannot slip past the check with an
+    /// equivalent spelling of an evidence path.
+    /// </summary>
+    public bool CheckAgainstEvidencePaths(string path) => FindEvidenceForPath(path) is not null;
+
+    /// <summary>
+    /// Refuses an operation that targets registered evidence by throwing
+    /// <see cref="EvidenceSpoliationRiskException"/> if <paramref name="targetPath"/> is an evidence file or its
+    /// containing directory (see <see cref="CheckAgainstEvidencePaths"/>). Call this from any toolkit/workflow
+    /// path that writes, overwrites, or deletes before it touches the filesystem so original evidence cannot be
+    /// disturbed — turning spoliation protection into an architectural guard rather than a convention.
+    /// </summary>
+    public void FailIfEvidenceSpoliationRisk(string targetPath)
+    {
+        var evidence = FindEvidenceForPath(targetPath);
+        if (evidence is not null) throw new EvidenceSpoliationRiskException(evidence, targetPath);
+    }
+
+    // The registered evidence that <paramref name="path"/> would put at risk (the evidence file itself or its
+    // containing directory), or null if the path is not protected. Shared by the check and the guard so both
+    // apply identical normalization and case-sensitivity rules.
+    private EvidenceInfo? FindEvidenceForPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || CaseEvidence.Length == 0) return null;
+        var comparison = IsWindows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var normalized = NormalizeEvidencePath(path);
+        return CaseEvidence.FirstOrDefault(e =>
+        {
+            var file = NormalizeEvidencePath(e.FilePath);
+            return file.Equals(normalized, comparison) || GetEvidenceDirectory(file).Equals(normalized, comparison);
+        });
+    }
+
+    // Collapse mixed/duplicate separators to this environment's separator and strip a trailing one so that
+    // equivalent spellings of the same path compare equal.
+    private string NormalizeEvidencePath(string path)
+    {
+        var p = path.Trim().Replace('\\', '/').Replace('/', PathSeparator[0]);
+        return p.Length > 1 ? p.TrimEnd(PathSeparator[0]) : p;
+    }
+
+    // The parent directory of an already-normalized evidence path (empty if it has no separator).
+    private string GetEvidenceDirectory(string normalizedPath)
+    {
+        var i = normalizedPath.LastIndexOf(PathSeparator[0]);
+        return i <= 0 ? normalizedPath[..(i + 1)] : normalizedPath[..i];
+    }
+    #endregion
+
     #region Methods
     public bool ExecuteCommand(string command, string arguments, out string output, bool admin = false)
     {
