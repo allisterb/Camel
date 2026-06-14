@@ -2,6 +2,8 @@
   "permissions": {
     "allow": [
       "mcp__camel__SetCaseId",
+      "mcp__camel__SetEvidence",
+      "mcp__camel__VerifyEvidence",
       "mcp__camel__Execute",
 
       "Read",

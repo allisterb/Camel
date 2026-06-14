@@ -264,6 +264,23 @@ for curly quotes; `->` for arrows; `...` for an ellipsis; `-` or `*` for bullets
 middle dot — they look identical to `-` but are non-ASCII; always type a normal `-`. (Tables from `table()` are
 already ASCII; keep them that way.)
 
+**Report formatting — defang malicious content.** Never write live, runnable malicious code to any deliverable
+(`report.md`, `iocs.csv`, `accuracy.md`). Webshell source, scripts, shellcode, macros, and encoded payloads
+written verbatim will be matched and quarantined by host anti-virus, destroying the report — and a report is not a
+malware sample. Capture such artifacts in a **defanged** (inert, non-executable, non-signature-matching) form that
+is still forensically useful:
+- **Always** record the artifact's identity instead of relying on its body: file path, SHA-256 hash, byte length,
+  and the `[audit] execution=<id>` that recovered it. The hash is the authoritative reference for the sample.
+- When you must show the code to make the finding, include only a **short defanged excerpt**, not the whole file,
+  and neutralise it: break executable markers (write `<?php` as `<? php` or `<?_php`), split or `[REDACTED]`
+  signature tokens (function names like `eval`/`system`/`passthru`, the C2 host), or base64/hex-encode the payload
+  body and label it `(base64, defanged)`. Note every alteration so the excerpt is not mistaken for the original.
+- **Defang IOCs** the same way in prose and in `iocs.csv`: `hxxp://`/`hxxps://`, `1[.]2[.]3[.]4`, `evil[.]com`.
+  Keep the un-defanged value only where a downstream tool needs it and the field makes that explicit.
+- Prefer **describe + hash + defanged excerpt** over reproducing the artifact. The goal is that any reader (or
+  scanner) can identify and retrieve the real sample from evidence by its hash, without the report carrying a
+  working copy of it.
+
 **Cite the audit handle.** Every `Execute` result ends with a line `[audit] case=<caseId> execution=<id>`. Every
 claim in the report must cite the `execution` id (and the toolkit/workflow method) of the call that established it —
 the chain of custody from any conclusion back to the command that produced it, traceable in
