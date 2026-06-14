@@ -3,27 +3,16 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Camel Audit Trail Viewer - __CASE_ID__</title>
+<title>Camel Report - __CASE_ID__</title>
 <script>
-  // Apply the saved theme before the body paints so there is no dark-to-light flash on load.
-  try { var t = localStorage.getItem("camel-results-theme"); if (t) document.documentElement.setAttribute("data-theme", t); } catch (e) {}
+  // Apply the saved theme before the body paints so there is no flash on load. Default (no saved choice) is light.
+  try { var t = localStorage.getItem("camel-report-theme"); if (t) document.documentElement.setAttribute("data-theme", t); } catch (e) {}
 </script>
 <style>
-  /* Dark theme is the default; [data-theme="light"] overrides the same vars. The colour badges (.b-*) keep their
+  /* Light theme is the default; [data-theme="dark"] overrides the same vars. The colour badges (.b-*) keep their
      vivid fills in both themes (they carry dark text); the per-event-type tag colours (--t-*) are tuned per theme
-     so they stay readable on a light background. */
+     so they stay readable on each background. */
   :root {
-    --bg: #0e1116; --panel: #161b22; --panel2: #1c2230; --border: #2b333f;
-    --fg: #d7dde5; --muted: #8b97a6; --accent: #4ea1ff; --accent2: #6fd3c7;
-    --hi: #ff6b6b; --med: #ffb454; --low: #ffd866; --spec: #8b97a6;
-    --ok: #5ad17e; --bad: #ff6b6b; --chip: #232b38;
-    --code-bg: #0b0e13; --code-fg: #b8cce0;
-    --t-finding: #ffb454; --t-command: #4ea1ff; --t-execution: #6fd3c7; --t-human: #c792ea;
-    --t-false: #5ad17e; --t-missing: #ffd866; --t-hallucination: #ff6b6b; --t-neutral: #8b97a6;
-    --mono: ui-monospace, "Cascadia Code", "Consolas", "SF Mono", monospace;
-    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  }
-  :root[data-theme="light"] {
     --bg: #ffffff; --panel: #f2f4f7; --panel2: #e8ecf1; --border: #d3d9e1;
     --fg: #1b2330; --muted: #5b6573; --accent: #1668d6; --accent2: #0c8275;
     --hi: #e23b3b; --med: #e0860a; --low: #c09b00; --spec: #8a93a1;
@@ -31,6 +20,17 @@
     --code-bg: #f5f6f8; --code-fg: #243044;
     --t-finding: #b9700a; --t-command: #1668d6; --t-execution: #0c7e72; --t-human: #7c3aed;
     --t-false: #2f9e44; --t-missing: #9a7b00; --t-hallucination: #d63030; --t-neutral: #5b6573;
+    --mono: ui-monospace, "Cascadia Code", "Consolas", "SF Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1116; --panel: #161b22; --panel2: #1c2230; --border: #2b333f;
+    --fg: #d7dde5; --muted: #8b97a6; --accent: #4ea1ff; --accent2: #6fd3c7;
+    --hi: #ff6b6b; --med: #ffb454; --low: #ffd866; --spec: #8b97a6;
+    --ok: #5ad17e; --bad: #ff6b6b; --chip: #232b38;
+    --code-bg: #0b0e13; --code-fg: #b8cce0;
+    --t-finding: #ffb454; --t-command: #4ea1ff; --t-execution: #6fd3c7; --t-human: #c792ea;
+    --t-false: #5ad17e; --t-missing: #ffd866; --t-hallucination: #ff6b6b; --t-neutral: #8b97a6;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
@@ -155,11 +155,25 @@
   .drop h2 { color: var(--fg); margin-top: 0; }
   .hidden { display: none !important; }
   .pill { font-size: 11px; color: var(--muted); }
+
+  /* Accuracy tab: rendered markdown of reports/accuracy.md */
+  #accuracyView.active { display: block; overflow-y: auto; }
+  .markdown { padding: 20px 28px; max-width: 920px; line-height: 1.55; }
+  .markdown h1 { font-size: 20px; margin: 0 0 10px; }
+  .markdown h2 { font-size: 16px; margin: 24px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+  .markdown h3 { font-size: 14px; margin: 16px 0 6px; }
+  .markdown p { margin: 8px 0; }
+  .markdown ul, .markdown ol { margin: 8px 0; padding-left: 24px; }
+  .markdown li { margin: 5px 0; }
+  .markdown code { background: var(--chip); padding: 1px 5px; border-radius: 4px;
+                   font-family: var(--mono); font-size: 12.5px; }
+  .markdown strong { color: var(--fg); font-weight: 700; }
+  .markdown a { color: var(--accent); }
 </style>
 </head>
 <body data-case-id="__CASE_ID__">
   <header>
-    <h1>Camel Audit Trail &mdash; <span class="case">__CASE_ID__</span></h1>
+    <h1>Camel Report &mdash; <span class="case">__CASE_ID__</span></h1>
     <div class="meta" id="meta"></div>
     <div class="spacer"></div>
     <button id="themeBtn" title="Toggle light/dark theme">Theme</button>
@@ -170,6 +184,7 @@
   <nav class="tabs">
     <button id="tabFindings" class="active" data-view="findingsView">Findings <span class="count" id="findCount"></span></button>
     <button id="tabAudit" data-view="auditView">Audit Log <span class="count" id="auditCount"></span></button>
+    <button id="tabAccuracy" data-view="accuracyView">Accuracy</button>
   </nav>
 
   <main>
@@ -196,6 +211,11 @@
       </div>
     </section>
 
+    <!-- Accuracy self-assessment (rendered from the embedded reports/accuracy.md) -->
+    <section class="view" id="accuracyView">
+      <div class="markdown" id="accuracyDoc"></div>
+    </section>
+
     <!-- Empty / load state -->
     <section class="view" id="loadView">
       <div class="drop" id="dropZone">
@@ -210,6 +230,9 @@
        with data by double-click, no server. Absent in a fresh case - the viewer then auto-fetches the log over
        HTTP or offers a file picker. A 404 here when the file is absent is harmless. -->
   <script src="audit-data.js"></script>
+  <!-- reports/accuracy.md embedded as base64 at case-build time (small file, kept inline rather than a sibling
+       .js). Empty in a fresh case - the Accuracy tab then shows a placeholder. -->
+  <script>window.__ACCURACY_MD_B64__ = "__ACCURACY_B64__";</script>
   <script src="report.js"></script>
 </body>
 </html>

@@ -290,6 +290,66 @@ function showView(id) {
   $$("nav.tabs button").forEach((b) => b.classList.toggle("active", b.dataset.view === id));
 }
 
+// ---------- accuracy tab (rendered from the base64-embedded reports/accuracy.md) ----------
+// Decode the inline base64 blob set by report.html. UTF-8 safe; empty when no accuracy.md was embedded.
+function accuracyMarkdown() {
+  const b64 = window.__ACCURACY_MD_B64__;
+  if (!b64) return "";
+  try { return decodeURIComponent(escape(atob(b64))); } catch { try { return atob(b64); } catch { return ""; } }
+}
+
+// Minimal, dependency-free Markdown -> HTML for the accuracy report: headings, ordered/unordered lists (with
+// blank-line-separated and multi-line items), **bold**, *em*, `code`, [links], and paragraphs. Deliberately small.
+function renderMarkdown(md) {
+  const escHtml = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const inline = (s) => escHtml(s)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+  const lines = md.replace(/\r\n/g, "\n").split("\n");
+  const out = [];
+  let listType = null, li = null, para = null;
+  const flushLi = () => { if (li !== null) { out.push(`<li>${inline(li.join(" "))}</li>`); li = null; } };
+  const closeList = () => { flushLi(); if (listType) { out.push(`</${listType}>`); listType = null; } };
+  const flushPara = () => { if (para) { out.push(`<p>${inline(para.join(" "))}</p>`); para = null; } };
+  const nextIsItem = (from) => {
+    for (let j = from; j < lines.length; j++) {
+      if (!lines[j].trim()) continue;
+      return /^\s*([-*]|\d+\.)\s+/.test(lines[j]);
+    }
+    return false;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    const ul = line.match(/^\s*[-*]\s+(.*)$/);
+    const ol = line.match(/^\s*\d+\.\s+(.*)$/);
+    if (h) { flushPara(); closeList(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); continue; }
+    if (ul || ol) {
+      flushPara();
+      const want = ul ? "ul" : "ol";
+      if (listType !== want) { closeList(); listType = want; out.push(`<${want}>`); } else flushLi();
+      li = [ul ? ul[1] : ol[1]];
+      continue;
+    }
+    if (!line.trim()) { flushPara(); if (listType && !nextIsItem(i + 1)) closeList(); continue; }
+    if (li !== null) li.push(line.trim()); else (para ||= []).push(line.trim());
+  }
+  flushPara(); closeList();
+  return out.join("\n");
+}
+
+function renderAccuracy() {
+  const md = accuracyMarkdown();
+  const el = $("#accuracyDoc");
+  el.innerHTML = md.trim()
+    ? renderMarkdown(md)
+    : '<p class="empty">No accuracy report embedded. It is generated from this case\'s reports/accuracy.md.</p>';
+}
+
 // ---------- loading ----------
 function load(text, sourceName) {
   const { events, bad } = parseClef(text);
@@ -345,16 +405,16 @@ async function autoLoad() {
 }
 
 // Light/dark theme toggle. The saved choice is applied pre-paint by the inline <head> script; here we just
-// reflect the current state on the button and persist changes. Default (no saved choice) is dark.
+// reflect the current state on the button and persist changes. Default (no saved choice) is light.
 function applyTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
-  try { localStorage.setItem("camel-results-theme", theme); } catch { /* private mode / file:// */ }
+  try { localStorage.setItem("camel-report-theme", theme); } catch { /* private mode / file:// */ }
   const btn = $("#themeBtn");
   if (btn) btn.textContent = theme === "light" ? "☀ Light" : "☾ Dark";
 }
 
 function wireUi() {
-  const startTheme = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+  const startTheme = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
   applyTheme(startTheme);
   $("#themeBtn").addEventListener("click", () =>
     applyTheme(document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light"));
@@ -390,6 +450,7 @@ function wireUi() {
 
 window.addEventListener("DOMContentLoaded", async () => {
   wireUi();
+  renderAccuracy();                      // independent of the audit log; render once on load
   if (loadEmbedded()) return;            // embedded data (works offline, file://)
   if (!await autoLoad()) showView("loadView");  // else fetch over HTTP, else file picker
 });
