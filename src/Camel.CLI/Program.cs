@@ -208,7 +208,8 @@ internal class Program : Runtime
             File.WriteAllText(viewerHtmlPath,
                 ReadEmbedded("Camel.CLI.CaseTemplate.report.html")
                     .Replace("__CASE_ID__", opts.CaseId)
-                    .Replace("__ACCURACY_B64__", ""));   // no accuracy.md yet; Accuracy tab shows a placeholder
+                    .Replace("__ACCURACY_B64__", "")     // no accuracy.md yet; Accuracy tab shows a placeholder
+                    .Replace("__IOCS_B64__", ""));       // no iocs.csv yet; IOCs tab shows a placeholder
             File.WriteAllText(Path.Combine(reportsDir, "report.js"),
                 ReadEmbedded("Camel.CLI.CaseTemplate.report.js"));
             Info($"Wrote {viewerHtmlPath} (+ report.js)");

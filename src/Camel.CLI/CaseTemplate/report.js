@@ -306,7 +306,10 @@ function renderMarkdown(md) {
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*]+)\*/g, "<em>$1</em>")
-    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    // Linkify "exec <id>" references (8-hex execution ids) so they jump to that execution in the Audit Log, like
+    // the Findings tab. Gated on the "exec" cue so SHA/hash fragments (also hex) are never mistaken for exec ids.
+    .replace(/\b(exec(?:ution)?\s+)([0-9a-f]{8})\b/gi, '$1<span class="execid" data-exec="$2">$2</span>');
 
   const lines = md.replace(/\r\n/g, "\n").split("\n");
   const out = [];
@@ -348,6 +351,80 @@ function renderAccuracy() {
   el.innerHTML = md.trim()
     ? renderMarkdown(md)
     : '<p class="empty">No accuracy report embedded. It is generated from this case\'s reports/accuracy.md.</p>';
+}
+
+// ---------- IOCs tab (rendered from the base64-embedded reports/iocs.csv) ----------
+function iocsCsv() {
+  const b64 = window.__IOCS_CSV_B64__;
+  if (!b64) return "";
+  try { return decodeURIComponent(escape(atob(b64))); } catch { try { return atob(b64); } catch { return ""; } }
+}
+
+// RFC4180-ish line splitter: handles quoted fields and "" escapes. The case CSVs are unquoted, but this keeps the
+// parser correct if a field is ever quoted.
+function parseCsvLine(line) {
+  const out = []; let cur = "", q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (q) {
+      if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+      else cur += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ",") { out.push(cur); cur = ""; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+function renderIocs() {
+  const csv = iocsCsv();
+  const head = $("#iocsHead"), body = $("#iocsBody");
+  head.innerHTML = ""; body.innerHTML = "";
+  const rows = csv.replace(/\r\n/g, "\n").split("\n").filter((l) => l.trim()).map(parseCsvLine);
+  if (rows.length < 2) {
+    $("#iocCount").textContent = "";
+    body.append(el("tr", {}, el("td", { class: "empty" }, "No IOC data embedded. It is generated from this case's reports/iocs.csv.")));
+    return;
+  }
+  const header = rows[0];
+  const ctxIdx = header.indexOf("context");
+  const valIdx = header.indexOf("value");
+  const execIdx = header.indexOf("audit_execution");
+  const data = rows.slice(1);
+  $("#iocCount").textContent = `(${data.length})`;
+
+  // Header
+  const widths = { indicator_type: "110px", first_seen_utc: "170px", audit_execution: "90px", value: "200px" };
+  head.append(el("tr", {}, ...header.map((h) => el("th", widths[h] ? { style: `width:${widths[h]}` } : {}, h))));
+
+  for (let row of data) {
+    // Defensive: an unquoted comma in the free-text context column would over-split the row; fold the overflow
+    // back into context so the boundary columns (type/value/time/exec) stay aligned.
+    if (row.length > header.length && ctxIdx >= 0) {
+      const extra = row.length - header.length;
+      row = [...row.slice(0, ctxIdx), row.slice(ctxIdx, ctxIdx + 1 + extra).join(","), ...row.slice(ctxIdx + 1 + extra)];
+    }
+    const tr = el("tr", {});
+    header.forEach((_h, i) => {
+      const v = row[i] ?? "";
+      if (i === execIdx) {
+        const td = el("td", {});
+        // audit_execution may carry one or more 8-hex ids; linkify each to jump to the Audit Log.
+        v.split(/[\s,;]+/).filter(Boolean).forEach((tok, k) => {
+          if (k) td.append(document.createTextNode(" "));
+          td.append(/^[0-9a-f]{8}$/i.test(tok)
+            ? el("span", { class: "execid", onclick: () => jumpToExec(tok) }, tok)
+            : document.createTextNode(tok));
+        });
+        tr.append(td);
+      } else if (i === ctxIdx) tr.append(el("td", { class: "ctx" }, v));
+      else if (i === valIdx) tr.append(el("td", { class: "val" }, v));
+      else if (i === 0) tr.append(el("td", {}, el("span", { class: "etag" }, v)));
+      else tr.append(el("td", {}, v));
+    });
+    body.append(tr);
+  }
 }
 
 // ---------- loading ----------
@@ -419,6 +496,13 @@ function wireUi() {
   $("#themeBtn").addEventListener("click", () =>
     applyTheme(document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light"));
 
+  // Delegated: clicking an "exec <id>" link rendered in the accuracy report jumps to that execution in the Audit
+  // Log (same jumpToExec used by the Findings trace). Bound once; works for content rendered later.
+  $("#accuracyDoc").addEventListener("click", (e) => {
+    const t = e.target.closest(".execid");
+    if (t && t.dataset.exec) jumpToExec(t.dataset.exec);
+  });
+
   $$("nav.tabs button").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
   $("#fileInput").addEventListener("change", (e) => {
     const file = e.target.files[0];
@@ -451,6 +535,7 @@ function wireUi() {
 window.addEventListener("DOMContentLoaded", async () => {
   wireUi();
   renderAccuracy();                      // independent of the audit log; render once on load
+  renderIocs();
   if (loadEmbedded()) return;            // embedded data (works offline, file://)
   if (!await autoLoad()) showView("loadView");  // else fetch over HTTP, else file picker
 });

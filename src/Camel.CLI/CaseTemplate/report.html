@@ -120,8 +120,10 @@
   .exit-ok { color: var(--ok); } .exit-bad { color: var(--bad); }
   .empty { color: var(--muted); font-style: italic; padding: 8px 12px; }
 
-  /* Audit log table */
-  #auditView { flex-direction: column; }
+  /* Audit log + IOC tables share the .log table styling */
+  #auditView, #iocsView { flex-direction: column; }
+  #iocsView td.ctx { line-height: 1.4; }
+  #iocsView td.val { font-family: var(--mono); word-break: break-word; }
   .filterbar { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; gap: 10px;
                align-items: center; flex-wrap: wrap; background: var(--panel); }
   .chips { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -184,6 +186,7 @@
   <nav class="tabs">
     <button id="tabFindings" class="active" data-view="findingsView">Findings <span class="count" id="findCount"></span></button>
     <button id="tabAudit" data-view="auditView">Audit Log <span class="count" id="auditCount"></span></button>
+    <button id="tabIocs" data-view="iocsView">IOCs <span class="count" id="iocCount"></span></button>
     <button id="tabAccuracy" data-view="accuracyView">Accuracy</button>
   </nav>
 
@@ -211,6 +214,16 @@
       </div>
     </section>
 
+    <!-- IOCs (rendered from the embedded reports/iocs.csv) -->
+    <section class="view" id="iocsView">
+      <div class="tablewrap">
+        <table class="log" id="iocsTable">
+          <thead id="iocsHead"></thead>
+          <tbody id="iocsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- Accuracy self-assessment (rendered from the embedded reports/accuracy.md) -->
     <section class="view" id="accuracyView">
       <div class="markdown" id="accuracyDoc"></div>
@@ -230,9 +243,10 @@
        with data by double-click, no server. Absent in a fresh case - the viewer then auto-fetches the log over
        HTTP or offers a file picker. A 404 here when the file is absent is harmless. -->
   <script src="audit-data.js"></script>
-  <!-- reports/accuracy.md embedded as base64 at case-build time (small file, kept inline rather than a sibling
-       .js). Empty in a fresh case - the Accuracy tab then shows a placeholder. -->
+  <!-- reports/accuracy.md and reports/iocs.csv embedded as base64 at case-build time (small files, kept inline
+       rather than sibling .js). Empty in a fresh case - those tabs then show a placeholder. -->
   <script>window.__ACCURACY_MD_B64__ = "__ACCURACY_B64__";</script>
+  <script>window.__IOCS_CSV_B64__ = "__IOCS_B64__";</script>
   <script src="report.js"></script>
 </body>
 </html>
