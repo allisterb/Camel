@@ -286,6 +286,12 @@ claim in the report must cite the `execution` id (and the toolkit/workflow metho
 the chain of custody from any conclusion back to the command that produced it, traceable in
 `logs/audit-<caseId>.clef`.
 
+**Audit-trail reviewer.** This case ships a static `results.html` (with `results.js`) at its root — open it in a
+browser to review the case. It reads `logs/audit-<caseId>.clef` and lets a human (1) browse every `finding` and
+click it to trace it to the exact execution/command log entries cited as its evidence, and (2) filter the whole
+audit trail by event type, execution id, and free text. Do not edit these files; just make sure your findings carry
+correct `evidenceExecutionIds` so the trace resolves.
+
 **Mirror conclusions into the trail as you go.** `log`/`error` only return text to you. So the case is
 reconstructable from the logs alone, record into the audit trail alongside the report:
 - **`auditFinding(observation, interpretation, confidence, evidenceExecutionIds)`** — for each finding (a

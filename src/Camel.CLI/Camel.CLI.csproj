@@ -28,6 +28,8 @@
     <EmbeddedResource Include="CaseTemplate\CLAUDE.md" LogicalName="Camel.CLI.CaseTemplate.CLAUDE.md" />
     <EmbeddedResource Include="CaseTemplate\mcp.json" LogicalName="Camel.CLI.CaseTemplate.mcp.json" />
     <EmbeddedResource Include="CaseTemplate\settings.json" LogicalName="Camel.CLI.CaseTemplate.settings.json" />
+    <EmbeddedResource Include="CaseTemplate\results.html" LogicalName="Camel.CLI.CaseTemplate.results.html" />
+    <EmbeddedResource Include="CaseTemplate\results.js" LogicalName="Camel.CLI.CaseTemplate.results.js" />
   </ItemGroup>
 
 

@@ -192,8 +192,27 @@ internal class Program : Runtime
             Info($"Wrote {settingsPath}");
         }
 
+        // results.html + results.js — a static, dependency-free HTML app for a human reviewer to browse the
+        // findings and trace each one to the exact audit-log entries (executions + commands) that prove it, and to
+        // filter the whole audit trail (criterion 6). The .html carries the case id (so it can auto-load
+        // logs/audit-<caseId>.clef when the folder is served, and falls back to a file picker); the .js is static.
+        var viewerHtmlPath = Path.Combine(caseDir, "results.html");
+        if (File.Exists(viewerHtmlPath))
+        {
+            Info($"{viewerHtmlPath} already exists — leaving it untouched.");
+        }
+        else
+        {
+            File.WriteAllText(viewerHtmlPath,
+                ReadEmbedded("Camel.CLI.CaseTemplate.results.html").Replace("__CASE_ID__", opts.CaseId));
+            File.WriteAllText(Path.Combine(caseDir, "results.js"),
+                ReadEmbedded("Camel.CLI.CaseTemplate.results.js"));
+            Info($"Wrote {viewerHtmlPath} (+ results.js)");
+        }
+
         Info($"Case '{opts.CaseId}' ready at {caseDir}.");
         AnsiConsole.MarkupLine($"[cyan]\nFill in the case details in {Path.Combine(caseDir, "CLAUDE.md")}. When you are ready launch Claude in that directory.[/]");
+        AnsiConsole.MarkupLine($"[grey]Open {Path.Combine(caseDir, "results.html")} in a browser to review findings and the audit trail.[/]");
         return Task.CompletedTask;
     }
 

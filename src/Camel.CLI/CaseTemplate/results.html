@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Camel Audit Trail Viewer - __CASE_ID__</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --panel2: #1c2230; --border: #2b333f;
+    --fg: #d7dde5; --muted: #8b97a6; --accent: #4ea1ff; --accent2: #6fd3c7;
+    --hi: #ff6b6b; --med: #ffb454; --low: #ffd866; --spec: #8b97a6;
+    --ok: #5ad17e; --bad: #ff6b6b; --chip: #232b38;
+    --mono: ui-monospace, "Cascadia Code", "Consolas", "SF Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg); font-family: var(--sans);
+    font-size: 14px; display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+  a { color: var(--accent); cursor: pointer; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, .mono { font-family: var(--mono); }
+
+  header {
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header h1 .case { color: var(--accent2); }
+  .meta { color: var(--muted); font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .meta b { color: var(--fg); font-weight: 600; }
+  .spacer { flex: 1; }
+  button, label.btn {
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer;
+  }
+  button:hover, label.btn:hover { border-color: var(--accent); }
+  input[type=file] { display: none; }
+
+  nav.tabs { display: flex; gap: 4px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  nav.tabs button {
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    border-radius: 0; padding: 10px 14px; color: var(--muted); font-size: 13px;
+  }
+  nav.tabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
+  nav.tabs .count { color: var(--muted); font-size: 11px; }
+
+  main { flex: 1; overflow: hidden; position: relative; }
+  .view { position: absolute; inset: 0; display: none; }
+  .view.active { display: flex; }
+
+  /* Findings master-detail */
+  #findingsList { width: 42%; min-width: 320px; overflow-y: auto; border-right: 1px solid var(--border); }
+  #findingDetail { flex: 1; overflow-y: auto; padding: 16px 20px; }
+  .fcard {
+    padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer;
+  }
+  .fcard:hover { background: var(--panel); }
+  .fcard.sel { background: var(--panel2); border-left: 3px solid var(--accent); padding-left: 13px; }
+  .fcard .obs { font-size: 13px; line-height: 1.4; margin: 4px 0 0; }
+  .frow { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10.5px;
+           font-weight: 700; letter-spacing: .3px; color: #0e1116; }
+  .b-HIGH { background: var(--hi); } .b-MEDIUM { background: var(--med); }
+  .b-LOW { background: var(--low); } .b-SPECULATIVE { background: var(--spec); }
+  .b-default { background: var(--muted); }
+
+  .etag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10.5px;
+          font-family: var(--mono); border: 1px solid var(--border); color: var(--fg); }
+  .et-finding { color: var(--med); border-color: var(--med); }
+  .et-command { color: var(--accent); border-color: #2c4a6e; }
+  .et-execution { color: var(--accent2); border-color: #2c5048; }
+  .et-human-judgement-recommended { color: #c792ea; border-color: #4a3a6e; }
+  .et-false-positive { color: var(--ok); border-color: #2c5436; }
+  .et-missing-evidence { color: var(--low); border-color: #5a5230; }
+  .et-hallucination { color: var(--bad); border-color: #6e2c2c; }
+  .et-information, .et-error, .et-case, .et-evidence { color: var(--muted); }
+
+  .execid { font-family: var(--mono); color: var(--accent); cursor: pointer; }
+  .execid:hover { text-decoration: underline; }
+
+  .detail-h { font-size: 18px; margin: 0 0 4px; }
+  .kv { margin: 14px 0; }
+  .kv .k { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 3px; }
+  .kv .v { line-height: 1.5; white-space: pre-wrap; }
+
+  .trace { margin-top: 8px; }
+  .exec-block { border: 1px solid var(--border); border-radius: 8px; margin: 10px 0; overflow: hidden; }
+  .exec-head { background: var(--panel2); padding: 8px 12px; display: flex; align-items: center; gap: 10px; font-size: 12px; }
+  .exec-head .status { font-family: var(--mono); }
+  .script { background: #0b0e13; padding: 10px 12px; font-family: var(--mono); font-size: 11.5px;
+            white-space: pre; overflow-x: auto; max-height: 220px; overflow-y: auto; color: #bcd; border-top: 1px solid var(--border); }
+  table.cmds { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  table.cmds th, table.cmds td { text-align: left; padding: 5px 10px; border-top: 1px solid var(--border); vertical-align: top; }
+  table.cmds th { color: var(--muted); font-weight: 600; font-size: 10.5px; text-transform: uppercase; }
+  table.cmds td.cmd { font-family: var(--mono); color: var(--fg); word-break: break-word; }
+  .exit-ok { color: var(--ok); } .exit-bad { color: var(--bad); }
+  .empty { color: var(--muted); font-style: italic; padding: 8px 12px; }
+
+  /* Audit log table */
+  #auditView { flex-direction: column; }
+  .filterbar { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; gap: 10px;
+               align-items: center; flex-wrap: wrap; background: var(--panel); }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { padding: 3px 9px; border-radius: 12px; font-size: 11.5px; background: var(--chip);
+          border: 1px solid var(--border); cursor: pointer; user-select: none; color: var(--muted); }
+  .chip.on { color: var(--fg); border-color: var(--accent); background: var(--panel2); }
+  .chip .n { opacity: .7; margin-left: 4px; }
+  .filterbar input[type=text] {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--fg); padding: 6px 10px; font-size: 13px; font-family: var(--mono); min-width: 160px;
+  }
+  .tablewrap { flex: 1; overflow-y: auto; }
+  table.log { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.log thead th { position: sticky; top: 0; background: var(--panel); z-index: 1;
+    text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--muted);
+    font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  table.log td { padding: 7px 12px; border-bottom: 1px solid #1d2430; vertical-align: top; }
+  table.log tbody tr:hover { background: var(--panel); }
+  table.log tr.exp { background: var(--panel2); }
+  table.log td.ts { font-family: var(--mono); color: var(--muted); white-space: nowrap; }
+  table.log td.summary { line-height: 1.4; }
+  .rowdetail td { background: #0b0e13; }
+  .rowdetail pre { margin: 0; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
+                   word-break: break-word; color: #bcd; max-height: 360px; overflow: auto; }
+
+  .drop {
+    margin: auto; max-width: 560px; text-align: center; padding: 48px 32px; align-self: center;
+    border: 2px dashed var(--border); border-radius: 12px; color: var(--muted);
+  }
+  .drop.hot { border-color: var(--accent); color: var(--fg); }
+  .drop h2 { color: var(--fg); margin-top: 0; }
+  .hidden { display: none !important; }
+  .pill { font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body data-case-id="__CASE_ID__">
+  <header>
+    <h1>Camel Audit Trail &mdash; <span class="case">__CASE_ID__</span></h1>
+    <div class="meta" id="meta"></div>
+    <div class="spacer"></div>
+    <label class="btn">Load .clef<input type="file" id="fileInput" accept=".clef,.json,.jsonl,.log,.txt" /></label>
+    <button id="reloadBtn" title="Reload the default audit log">Reload</button>
+  </header>
+
+  <nav class="tabs">
+    <button id="tabFindings" class="active" data-view="findingsView">Findings <span class="count" id="findCount"></span></button>
+    <button id="tabAudit" data-view="auditView">Audit Log <span class="count" id="auditCount"></span></button>
+  </nav>
+
+  <main>
+    <!-- Findings master-detail -->
+    <section class="view active" id="findingsView">
+      <div id="findingsList"></div>
+      <div id="findingDetail"><p class="empty">Select a finding to trace it to its audit-log entries.</p></div>
+    </section>
+
+    <!-- Audit log -->
+    <section class="view" id="auditView">
+      <div class="filterbar">
+        <div class="chips" id="typeChips"></div>
+        <div class="spacer"></div>
+        <input type="text" id="execFilter" placeholder="execution id..." />
+        <input type="text" id="textFilter" placeholder="search text..." />
+        <button id="clearFilters">Clear</button>
+      </div>
+      <div class="tablewrap">
+        <table class="log">
+          <thead><tr><th style="width:180px">Time (UTC)</th><th style="width:150px">Type</th><th style="width:90px">Exec</th><th>Summary</th></tr></thead>
+          <tbody id="logBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Empty / load state -->
+    <section class="view" id="loadView">
+      <div class="drop" id="dropZone">
+        <h2>No audit log loaded</h2>
+        <p>Drop <code>logs/audit-__CASE_ID__.clef</code> here, or use <b>Load .clef</b> above.</p>
+        <p class="pill">Tip: serving the case folder over HTTP (e.g. a static file server) lets this page auto-load the log.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Optional: a generated audit-data.js (present once the case has run) embeds the .clef so the viewer opens
+       with data by double-click, no server. Absent in a fresh case - the viewer then auto-fetches the log over
+       HTTP or offers a file picker. A 404 here when the file is absent is harmless. -->
+  <script src="audit-data.js"></script>
+  <script src="results.js"></script>
+</body>
+</html>
