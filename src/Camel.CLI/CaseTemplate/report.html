@@ -4,14 +4,33 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Camel Audit Trail Viewer - __CASE_ID__</title>
+<script>
+  // Apply the saved theme before the body paints so there is no dark-to-light flash on load.
+  try { var t = localStorage.getItem("camel-results-theme"); if (t) document.documentElement.setAttribute("data-theme", t); } catch (e) {}
+</script>
 <style>
+  /* Dark theme is the default; [data-theme="light"] overrides the same vars. The colour badges (.b-*) keep their
+     vivid fills in both themes (they carry dark text); the per-event-type tag colours (--t-*) are tuned per theme
+     so they stay readable on a light background. */
   :root {
     --bg: #0e1116; --panel: #161b22; --panel2: #1c2230; --border: #2b333f;
     --fg: #d7dde5; --muted: #8b97a6; --accent: #4ea1ff; --accent2: #6fd3c7;
     --hi: #ff6b6b; --med: #ffb454; --low: #ffd866; --spec: #8b97a6;
     --ok: #5ad17e; --bad: #ff6b6b; --chip: #232b38;
+    --code-bg: #0b0e13; --code-fg: #b8cce0;
+    --t-finding: #ffb454; --t-command: #4ea1ff; --t-execution: #6fd3c7; --t-human: #c792ea;
+    --t-false: #5ad17e; --t-missing: #ffd866; --t-hallucination: #ff6b6b; --t-neutral: #8b97a6;
     --mono: ui-monospace, "Cascadia Code", "Consolas", "SF Mono", monospace;
     --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  :root[data-theme="light"] {
+    --bg: #ffffff; --panel: #f2f4f7; --panel2: #e8ecf1; --border: #d3d9e1;
+    --fg: #1b2330; --muted: #5b6573; --accent: #1668d6; --accent2: #0c8275;
+    --hi: #e23b3b; --med: #e0860a; --low: #c09b00; --spec: #8a93a1;
+    --ok: #2f9e44; --bad: #d63030; --chip: #e8ecf1;
+    --code-bg: #f5f6f8; --code-fg: #243044;
+    --t-finding: #b9700a; --t-command: #1668d6; --t-execution: #0c7e72; --t-human: #7c3aed;
+    --t-false: #2f9e44; --t-missing: #9a7b00; --t-hallucination: #d63030; --t-neutral: #5b6573;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
@@ -69,15 +88,16 @@
   .b-default { background: var(--muted); }
 
   .etag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10.5px;
-          font-family: var(--mono); border: 1px solid var(--border); color: var(--fg); }
-  .et-finding { color: var(--med); border-color: var(--med); }
-  .et-command { color: var(--accent); border-color: #2c4a6e; }
-  .et-execution { color: var(--accent2); border-color: #2c5048; }
-  .et-human-judgement-recommended { color: #c792ea; border-color: #4a3a6e; }
-  .et-false-positive { color: var(--ok); border-color: #2c5436; }
-  .et-missing-evidence { color: var(--low); border-color: #5a5230; }
-  .et-hallucination { color: var(--bad); border-color: #6e2c2c; }
-  .et-information, .et-error, .et-case, .et-evidence { color: var(--muted); }
+          font-family: var(--mono); color: var(--fg);
+          border: 1px solid color-mix(in srgb, currentColor 40%, transparent); }
+  .et-finding { color: var(--t-finding); }
+  .et-command { color: var(--t-command); }
+  .et-execution { color: var(--t-execution); }
+  .et-human-judgement-recommended { color: var(--t-human); }
+  .et-false-positive { color: var(--t-false); }
+  .et-missing-evidence { color: var(--t-missing); }
+  .et-hallucination { color: var(--t-hallucination); }
+  .et-information, .et-error, .et-case, .et-evidence { color: var(--t-neutral); }
 
   .execid { font-family: var(--mono); color: var(--accent); cursor: pointer; }
   .execid:hover { text-decoration: underline; }
@@ -91,8 +111,8 @@
   .exec-block { border: 1px solid var(--border); border-radius: 8px; margin: 10px 0; overflow: hidden; }
   .exec-head { background: var(--panel2); padding: 8px 12px; display: flex; align-items: center; gap: 10px; font-size: 12px; }
   .exec-head .status { font-family: var(--mono); }
-  .script { background: #0b0e13; padding: 10px 12px; font-family: var(--mono); font-size: 11.5px;
-            white-space: pre; overflow-x: auto; max-height: 220px; overflow-y: auto; color: #bcd; border-top: 1px solid var(--border); }
+  .script { background: var(--code-bg); padding: 10px 12px; font-family: var(--mono); font-size: 11.5px;
+            white-space: pre; overflow-x: auto; max-height: 220px; overflow-y: auto; color: var(--code-fg); border-top: 1px solid var(--border); }
   table.cmds { width: 100%; border-collapse: collapse; font-size: 11.5px; }
   table.cmds th, table.cmds td { text-align: left; padding: 5px 10px; border-top: 1px solid var(--border); vertical-align: top; }
   table.cmds th { color: var(--muted); font-weight: 600; font-size: 10.5px; text-transform: uppercase; }
@@ -118,14 +138,14 @@
   table.log thead th { position: sticky; top: 0; background: var(--panel); z-index: 1;
     text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--muted);
     font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
-  table.log td { padding: 7px 12px; border-bottom: 1px solid #1d2430; vertical-align: top; }
+  table.log td { padding: 7px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
   table.log tbody tr:hover { background: var(--panel); }
   table.log tr.exp { background: var(--panel2); }
   table.log td.ts { font-family: var(--mono); color: var(--muted); white-space: nowrap; }
   table.log td.summary { line-height: 1.4; }
-  .rowdetail td { background: #0b0e13; }
+  .rowdetail td { background: var(--code-bg); }
   .rowdetail pre { margin: 0; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
-                   word-break: break-word; color: #bcd; max-height: 360px; overflow: auto; }
+                   word-break: break-word; color: var(--code-fg); max-height: 360px; overflow: auto; }
 
   .drop {
     margin: auto; max-width: 560px; text-align: center; padding: 48px 32px; align-self: center;
@@ -142,6 +162,7 @@
     <h1>Camel Audit Trail &mdash; <span class="case">__CASE_ID__</span></h1>
     <div class="meta" id="meta"></div>
     <div class="spacer"></div>
+    <button id="themeBtn" title="Toggle light/dark theme">Theme</button>
     <label class="btn">Load .clef<input type="file" id="fileInput" accept=".clef,.json,.jsonl,.log,.txt" /></label>
     <button id="reloadBtn" title="Reload the default audit log">Reload</button>
   </header>
@@ -179,7 +200,7 @@
     <section class="view" id="loadView">
       <div class="drop" id="dropZone">
         <h2>No audit log loaded</h2>
-        <p>Drop <code>logs/audit-__CASE_ID__.clef</code> here, or use <b>Load .clef</b> above.</p>
+        <p>Drop <code>../logs/audit-__CASE_ID__.clef</code> here, or use <b>Load .clef</b> above.</p>
         <p class="pill">Tip: serving the case folder over HTTP (e.g. a static file server) lets this page auto-load the log.</p>
       </div>
     </section>
@@ -189,6 +210,6 @@
        with data by double-click, no server. Absent in a fresh case - the viewer then auto-fetches the log over
        HTTP or offers a file picker. A 404 here when the file is absent is harmless. -->
   <script src="audit-data.js"></script>
-  <script src="results.js"></script>
+  <script src="report.js"></script>
 </body>
 </html>

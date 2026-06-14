@@ -326,7 +326,7 @@ function load(text, sourceName) {
 // with no server and no file picker. Absent in a fresh template, the viewer falls through to fetch / picker.
 function loadEmbedded() {
   if (typeof window.__AUDIT_CLEF__ === "string") {
-    load(window.__AUDIT_CLEF__, window.__AUDIT_SOURCE__ || `logs/audit-${CASE_ID}.clef (embedded)`);
+    load(window.__AUDIT_CLEF__, window.__AUDIT_SOURCE__ || `../logs/audit-${CASE_ID}.clef (embedded)`);
     return true;
   }
   return false;
@@ -334,7 +334,8 @@ function loadEmbedded() {
 
 async function autoLoad() {
   if (!CASE_ID) return false;
-  const path = `logs/audit-${CASE_ID}.clef`;
+  // report.html lives in the case's reports/ dir, so the log is one level up.
+  const path = `../logs/audit-${CASE_ID}.clef`;
   try {
     const res = await fetch(path, { cache: "no-store" });
     if (!res.ok) return false;
@@ -343,7 +344,21 @@ async function autoLoad() {
   } catch { return false; }  // file:// or not served - fall back to manual load
 }
 
+// Light/dark theme toggle. The saved choice is applied pre-paint by the inline <head> script; here we just
+// reflect the current state on the button and persist changes. Default (no saved choice) is dark.
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  try { localStorage.setItem("camel-results-theme", theme); } catch { /* private mode / file:// */ }
+  const btn = $("#themeBtn");
+  if (btn) btn.textContent = theme === "light" ? "☀ Light" : "☾ Dark";
+}
+
 function wireUi() {
+  const startTheme = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+  applyTheme(startTheme);
+  $("#themeBtn").addEventListener("click", () =>
+    applyTheme(document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light"));
+
   $$("nav.tabs button").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
   $("#fileInput").addEventListener("change", (e) => {
     const file = e.target.files[0];
