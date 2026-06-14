@@ -65,6 +65,13 @@ agent when the script finishes).
 
 `error(message: string)` — write an error line to the output buffer (same mechanism as `log`; use it to mark a problem).
 
+`exit(message: string)` — **stop the script immediately** and return `message` to the agent (appended after any
+output produced before it). This is a deliberate early exit, *not* a tool failure — the result is a normal success
+result whose text carries your message. Use it to bail out of a multi-step script on an unrecoverable condition
+without nesting the rest in `else` branches — e.g.
+`if (!mountResult.IsSuccess) exit('mount failed: ' + mountResult.Message);`. The message is also recorded in the
+per-case audit log. Code after the call does not run.
+
 `auditInfo(message: string)` — like `log`, but **also** records the line in the per-case audit log (`audit-<caseId>.clef`)
 as an `information` event. Use it for notable steps and conclusions you want preserved in the trail, not just returned to you.
 
@@ -231,7 +238,10 @@ single-volume image.
 - `IlsAsync(image: string, offset?: int)` → `IlsEntry[]` — inode listing.
 - `IcatAsync(image: string, inode: long, outputFile: string, offset?: int)` → `bool` — extract an inode's content.
 - `FindFilesAsync(directory: string, namePattern?: string, maxDepth?: int)` → `FsFile[]` — find by one glob (default `"*"`).
-- `FindFilesAsync(directory: string, namePatterns: string[], maxDepth?: int)` → `FsFile[]` — find by any of several globs.
+  The search is **recursive** and the glob matches the file **name** (e.g. `*.evtx`), so you do *not* need a `**/` prefix.
+  Conveniences are normalised: a leading `**/` is stripped, brace alternation (`*.{evtx,log}`) is expanded, and a glob
+  containing `/` (e.g. `Users/*/NTUSER.DAT`) is matched against the whole path. Supports `*`, `?`, `[...]`. `maxDepth` 0 = unlimited.
+- `FindFilesAsync(directory: string, namePatterns: string[], maxDepth?: int)` → `FsFile[]` — find by any of several globs (one traversal).
 - `Sha256Async(path: string)` → `string` — SHA-256 of a mounted file.
 - `GrepLinesAsync(path: string, patterns: string[], ignoreCase?: bool, maxMatches?: int)` → `string[]` —
   server-side `grep -E -f`; returns only matching lines (`[]` on no match, null on unreadable file).

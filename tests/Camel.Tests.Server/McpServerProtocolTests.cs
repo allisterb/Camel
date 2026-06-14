@@ -166,6 +166,8 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
         var coreText = string.Concat(core.Contents.OfType<TextResourceContents>().Select(c => c.Text));
         Assert.Contains("Camel JavaScript SDK", coreText);
         Assert.Contains("Execute", coreText);
+        // The markdown must round-trip as multi-line text (newlines preserved end to end), not one long line.
+        Assert.True(coreText.Split('\n').Length > 100, $"expected multi-line markdown, got {coreText.Split('\n').Length} line(s)");
 
         var schema = await client.ReadResourceAsync("camel://sdk/schema");
         var schemaText = string.Concat(schema.Contents.OfType<TextResourceContents>().Select(c => c.Text));
@@ -221,6 +223,21 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
 
         Assert.NotEqual(true, r.IsError);
         Assert.Contains("after=gone", Text(r));
+    }
+
+    [Fact]
+    public async Task ExitStopsScriptAndReturnsMessageWithoutFlaggingAnError()
+    {
+        await using var client = await NewClientAsync();
+
+        var r = await client.CallToolAsync("Execute",
+            Script("log('before'); exit('halting: no evidence found'); log('after');"));
+
+        Assert.NotEqual(true, r.IsError);              // a deliberate exit, not a tool failure
+        var text = Text(r);
+        Assert.Contains("before", text);               // output produced before the exit is preserved
+        Assert.Contains("halting: no evidence found", text);
+        Assert.DoesNotContain("after", text);          // execution stopped at exit() — later code did not run
     }
 
     [Fact]

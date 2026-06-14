@@ -130,10 +130,14 @@ public class DiskAnalysisToolkit : Toolkit
         await ExecuteToolTextAsync("Icat", Offset(offset) + Q(image) + $" {inode} > {Q(outputFile)}") is not null;
 
     /// <summary>
-    /// Lists files matching <paramref name="namePattern"/> (a case-insensitive glob, e.g. <c>*.dll</c>) under a
-    /// <em>mounted</em> directory <paramref name="directory"/>, optionally limited to <paramref name="maxDepth"/>
-    /// levels (0 = unlimited). Returns each as an <see cref="FsFile"/> (path/name/size). Returns an empty array
-    /// when the directory is absent or holds no matches (a missing path is normal when probing several locations).
+    /// Lists files matching <paramref name="namePattern"/> under a <em>mounted</em> directory
+    /// <paramref name="directory"/>, recursively, optionally limited to <paramref name="maxDepth"/> levels
+    /// (0 = unlimited). Returns each as an <see cref="FsFile"/> (path/name/size). The match is case-insensitive and,
+    /// by default, against the file <em>name</em> only (e.g. <c>*.dll</c>); it supports <c>*</c>, <c>?</c> and
+    /// <c>[...]</c>. The search is already recursive, and the common shell-glob conveniences are normalised for you:
+    /// a leading <c>**/</c> is dropped, brace alternation (<c>*.{dll,exe}</c>) is expanded, and a pattern containing
+    /// a <c>/</c> is matched against the whole path (so <c>Users/*/NTUSER.DAT</c> works). Returns an empty array when
+    /// the directory is absent or nothing matches (a missing path is normal when probing several locations).
     /// </summary>
     public Task<FsFile[]> FindFilesAsync(string directory, string namePattern = "*", int maxDepth = 0) =>
         FindFilesAsync(directory, [namePattern], maxDepth);
@@ -146,13 +150,46 @@ public class DiskAnalysisToolkit : Toolkit
     {
         if (namePatterns.Length == 0) return [];
         var depth = maxDepth > 0 ? $"-maxdepth {maxDepth} " : "";
-        var names = string.Join(" -o ", namePatterns.Select(p => $"-iname {Q(p)}"));
+        var names = BuildNamePredicate(namePatterns);
+        if (names.Length == 0) return [];
         var r = await auditEnvironment.ExecuteCommandAsync("find",
             $"{Q(directory)} {depth}-type f \\( {names} \\) -printf '%s\\t%p\\n'", false);
-        return r.IsCompleted
-            ? r.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .Select(FsFile.FromFindLine).Where(f => f is not null).Select(f => f!).ToArray()
-            : [];
+        // Parse stdout regardless of exit code: find exits non-zero when it cannot read SOME entry in the tree
+        // (e.g. a root-only `lost+found` / `System Volume Information` on a real mount), yet still prints every
+        // match it did find to stdout. Gating on success would discard those valid results. Errors go to stderr
+        // (not r.Output), and a genuinely failed/empty run leaves stdout empty -> an empty array, as documented.
+        return r.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(FsFile.FromFindLine).Where(f => f is not null).Select(f => f!).ToArray();
+    }
+
+    // find's -iname matches the basename only and is already recursive; it does NOT understand the glob idioms
+    // agents habitually reach for — the recursive "**/" prefix, brace alternation "{a,b}", or path-component globs
+    // — so those silently match nothing. Normalise each pattern: expand braces, drop a leading "**/", collapse any
+    // remaining "**" to "*", and route a pattern that still contains a path separator through -ipath (whole-path
+    // match) rather than -iname (basename match). Builds the "\( -iname ... -o -ipath ... \)" predicate body.
+    private static string BuildNamePredicate(IEnumerable<string> patterns)
+    {
+        var terms = patterns
+            .SelectMany(ExpandBraces)
+            .Select(p => p.Replace("**/", "").Replace("**", "*").Trim())
+            .Where(p => p.Length > 0)
+            .Distinct()
+            .Select(p => p.Contains('/') ? $"-ipath {Q("*" + p)}" : $"-iname {Q(p)}");
+        return string.Join(" -o ", terms);
+    }
+
+    // Expands brace alternation, e.g. "*.{dll,exe}" -> ["*.dll","*.exe"], including multiple groups (cartesian).
+    // Returns the pattern unchanged when it contains no braces.
+    private static IEnumerable<string> ExpandBraces(string pattern)
+    {
+        int open = pattern.IndexOf('{');
+        int close = open >= 0 ? pattern.IndexOf('}', open) : -1;
+        if (open < 0 || close <= open) { yield return pattern; yield break; }
+        var prefix = pattern[..open];
+        var suffix = pattern[(close + 1)..];
+        foreach (var alt in pattern[(open + 1)..close].Split(','))
+            foreach (var expanded in ExpandBraces(prefix + alt.Trim() + suffix))
+                yield return expanded;
     }
 
     /// <summary>Returns the SHA-256 hex digest of <paramref name="path"/> on the mounted filesystem, or null on failure.</summary>

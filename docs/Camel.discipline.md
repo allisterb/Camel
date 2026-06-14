@@ -39,13 +39,18 @@ For each investigative question, work this loop in code via `Execute`:
 2. **Collect** — capture the `execution` id from every `Execute` result. You cite these against findings.
 3. **Corroborate** — before recording a finding, and especially before a HIGH-confidence one, confirm it from at
    least **two independent sources**. Different artifact classes (memory vs. disk vs. event log vs. timeline)
-   count as independent; the same tool run twice does not. Use the `Session` store as a **corroboration ledger**:
+   count as independent; the same tool run twice does not. You can use the `Session` store as a **corroboration ledger**:
    stash the evidence a hypothesis would *expect*, then check actual results against the stored ledger as you
    gather them, filling in each confirmed item with its value and `execution` id. Cross-checking against stored
-   objects rather than recollection guards against believing you saw support that was never actually observed.
+   objects rather than recollection guards against believing you saw support that was never actually observed. e.g. `Session["h_addump"] = { expect: ["ntds.dit MFT create time", "DC inbound
+  4768/4769 for the actor", "source-host 4648 outbound"], found: {} }`, then fill `found` with the real values
+  (and their `execution` ids) as each is confirmed.
 4. **Record** — call `auditFinding(observation, interpretation, confidence, evidenceExecutionIds)`. This writes a
    structured `finding` event to the case audit log and echoes a summary to your output. Keep observation
-   (what you saw) and interpretation (what it means) distinct, and cite the execution ids that prove it.
+   (what you saw) and interpretation (what it means) distinct, and cite the execution ids that prove it. Call `auditFalsePositive`, `auditMissingEvidence`, `auditHallucination` to record events thar
+   reduce your accuracy.`
+5. **Self-correct** Autonomous investigation requires strong self-correction measures. Handle failures and false positives missed expectations and hallucinations that impact your investigation accuracy. 
+    Think about your next steps and decide if to continue on the chosen path or seek alternatives.
 
 ---
 

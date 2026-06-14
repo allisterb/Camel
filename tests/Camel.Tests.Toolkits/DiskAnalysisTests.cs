@@ -309,6 +309,18 @@ public class DiskAnalysisTests : TestsRuntime
     }
 
     [Fact]
+    public async Task FindFilesReturnsMatchesEvenWhenFindHitsAnUnreadableSubdir()
+    {
+        // /mnt/artifacts holds disk images (.E01/.001/.img) plus a root-only `lost+found` that find can't read,
+        // so find exits non-zero while still printing valid matches. FindFilesAsync must return those matches,
+        // not discard them on the non-zero exit. Reproduces the agent's image-discovery call.
+        var r = await toolkit.FindFilesAsync("/mnt/artifacts",
+            ["*.E01", "*.e01", "*.dd", "*.raw", "*.001", "*.aff", "*.vmdk", "*.img"], 2);
+        Assert.NotEmpty(r);
+        Assert.Contains(r, f => f.Name.EndsWith(".E01", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task CanFindFilesAndHash()
     {
         const string d = "/tmp/camel_findfiles";
@@ -329,6 +341,14 @@ public class DiskAnalysisTests : TestsRuntime
         // Multi-pattern overload: both globs matched in one traversal (a.dll, sub/c.dll, b.txt).
         var multi = await toolkit.FindFilesAsync(d, ["*.dll", "*.txt"]);
         Assert.Equal(3, multi.Length);
+
+        // Agent-habit glob idioms that find -iname can't match natively are normalised:
+        // a recursive "**/" prefix (find is already recursive) is dropped...
+        Assert.Equal(2, (await toolkit.FindFilesAsync(d, "**/*.dll")).Length);
+        // ...brace alternation is expanded...
+        Assert.Equal(3, (await toolkit.FindFilesAsync(d, "*.{dll,txt}")).Length);
+        // ...and a path-component glob is matched against the whole path (so the nested file is found by subdir).
+        Assert.Equal("c.dll", Assert.Single(await toolkit.FindFilesAsync(d, "sub/*.dll")).Name);
 
         // A missing directory yields an empty list rather than an error.
         Assert.Empty(await toolkit.FindFilesAsync($"{d}/nope", "*.dll"));

@@ -27,6 +27,14 @@ public enum TransportType
     Http = 1,
 }
 
+/// <summary>
+/// Thrown by the JS global <c>exit(message)</c> to unwind the engine and stop the script immediately —
+/// throwing is just the most reliable way to halt. The <c>Execute</c> handler treats it as a deliberate early
+/// exit: it logs the message and returns it as ordinary output (the result is <em>not</em> flagged as a tool
+/// error), distinct from a script fault or an invented-API hallucination.
+/// </summary>
+public sealed class ExitException(string message) : Exception(message);
+
 public class CamelMCPTools : Runtime
 {
    public CamelMCPTools(SessionRegistry registry)
@@ -34,8 +42,6 @@ public class CamelMCPTools : Runtime
         this.registry = registry;
         jsoptions = new Options();
         jsoptions.Host.StringCompilationAllowed = false;        
-        // Lets generated JS `await` async toolkit methods (CLR Task<T> -> awaitable JS promise). Required so
-        // tool calls run on the async path, where per-session cancellation (CancelExecutions) takes effect.
         jsoptions.ExperimentalFeatures = ExperimentalFeature.TaskInterop;
         jsoptions.Constraints.PromiseTimeout = TimeSpan.FromHours(24);
     }
@@ -87,9 +93,16 @@ public class CamelMCPTools : Runtime
         using var _exec = PushAuditProperty("ExecutionId", executionId);
 
         StringBuilder output = new StringBuilder();
+        // exit(msg) lets a script bail out immediately: it throws ExitException to unwind the engine, and the flag
+        // (set synchronously before the throw) tells the catch block this was an intentional exit — robust even if
+        // Jint wraps the CLR exception as a promise rejection so the type is not preserved.
+        bool exitRequested = false;
+        string? exitMessage = null;
         var jsinterp = new Engine(jsoptions)
           .SetValue("log", new Action<string>((s) => output.AppendLine(s)))
-          .SetValue("error", new Action<string>((s) => output.AppendLine(s)))
+          .SetValue("error", new Action<string>((s) => output.AppendLine("Error: " + s)))
+          // Stop the script now and return its message to the agent as ordinary output (not a tool error).
+          .SetValue("exit", new Action<string>((s) => { exitMessage = s; exitRequested = true; throw new ExitException(s); }))
           // auditInfo/auditError additionally record the line in the per-case audit log (CLEF) as an
           // information/error event, so agent-surfaced output survives in the trail, not just the response.
           .SetValue("auditInfo", new Action<string>((s) => AuditInfo(s, output)))
@@ -157,6 +170,22 @@ public class CamelMCPTools : Runtime
         });
         var auditSw = Stopwatch.StartNew();
         AuditExecution("started", script);   // records the exact code this execution ran, under the case file
+
+        // Builds the result for an exit() call. This is a deliberate early exit, not a tool failure — the
+        // throw is just the most reliable way to unwind the engine — so the result is NOT flagged IsError; the
+        // message is appended to the output the agent receives and recorded in the trail.
+        CallToolResult BuildExitResult()
+        {
+            var exitText = exitMessage ?? "";
+            AuditEvent("execution", "{Message}", "exit: " + exitText);
+            AuditExecution("exited", success: true, durationMs: auditSw.ElapsedMilliseconds);
+            if (exitText.Length > 0) output.AppendLine(exitText);
+            return new CallToolResult
+            {
+                Content = [new TextContentBlock { Text = output.ToString() }, ExecutionBlock(executionId, session.CaseId)],
+            };
+        }
+
         try
         {
             // Wrap in an async IIFE so scripts can `await` async toolkit methods: top-level await isn't allowed
@@ -177,6 +206,11 @@ public class CamelMCPTools : Runtime
             // The client aborted the call; the response channel is already gone, so there is nothing to return.
             AuditExecution("cancelled", success: false, durationMs: auditSw.ElapsedMilliseconds);
             throw;
+        }
+        catch (Exception) when (exitRequested)
+        {
+            // exit(msg) was called: a deliberate early exit, not a fault — return its message as normal output.
+            return BuildExitResult();
         }
         catch (Exception ex)
         {
@@ -218,6 +252,10 @@ public class CamelMCPTools : Runtime
             // Clears the busy flag and re-stamps LastAccess, so the idle window starts when the call ends.
             session.LeaveCall();
         }
+
+        // Defensive: if a script managed to catch the exit throw (e.g. wrapped it in try/catch) yet reached
+        // the end, still honour the intent and return an exit result rather than a silent success.
+        if (exitRequested) return BuildExitResult();
 
         AuditExecution("completed", success: true, durationMs: auditSw.ElapsedMilliseconds);
         return new CallToolResult
@@ -422,14 +460,17 @@ public class CamelMCPTools : Runtime
 }
 
 /// <summary>
-/// MCP resources exposing the Camel JavaScript SDK reference to the agent. The two markdown docs are embedded in
+/// MCP resources exposing the Camel JavaScript SDK reference to the agent. The markdown docs are embedded in
 /// this assembly (see Camel.Server.csproj) and served verbatim, so an agent can read the SDK surface before
 /// generating code for the <c>Execute</c> tool without the docs having to exist on disk at runtime.
+/// NOTE: these are served as <c>text/plain</c>, not <c>text/markdown</c>, on purpose — a client that renders a
+/// markdown resource collapses single-newline line breaks (markdown only breaks on blank lines / hard breaks),
+/// flattening the reference into one long line for the model. Plain text is surfaced to the model verbatim.
 /// </summary>
 public class CamelResources
 {
     [McpServerResource(UriTemplate = "camel://sdk/core", Name = "camel-sdk-core",
-        Title = "Camel JS SDK reference — core", MimeType = "text/markdown")]
+        Title = "Camel JS SDK reference — core", MimeType = "text/plain")]
     [Description("Core reference for the Camel JavaScript SDK used by the Execute tool: the execution " +
         "model (await semantics, return-value shapes, PascalCase naming, positional optional params) and the full " +
         "method signature index — every toolkit and workflow object, each method's parameters and return type. " +
@@ -438,7 +479,7 @@ public class CamelResources
     public static string SdkCore() => ReadEmbedded("Camel.core.md");
 
     [McpServerResource(UriTemplate = "camel://sdk/schema", Name = "camel-sdk-schema",
-        Title = "Camel JS SDK reference — schemas", MimeType = "text/markdown")]
+        Title = "Camel JS SDK reference — schemas", MimeType = "text/plain")]
     [Description("JSON schemas for every parameter and return model type in the Camel JavaScript SDK — the " +
         "companion to 'camel-sdk-core'. Consult this when you need the exact fields of an object a toolkit or " +
         "workflow method returns (e.g. TimelineEvent, FindMalwareReport, TriageReport). Schemas are grouped by " +
@@ -446,7 +487,7 @@ public class CamelResources
     public static string SdkSchema() => ReadEmbedded("Camel.schema.md");
 
     [McpServerResource(UriTemplate = "camel://sdk/discipline", Name = "camel-sdk-discipline",
-        Title = "Camel JS SDK reference — forensic discipline", MimeType = "text/markdown")]
+        Title = "Camel JS SDK reference — forensic discipline", MimeType = "text/plain")]
     [Description("The forensic investigative discipline for the Execute tool: how to reason over what the SDK " +
         "returns — core principles (evidence is sovereign, absence ≠ absence, correlation ≠ causation, benign " +
         "until proven malicious), the analyze/collect/corroborate/record loop, the self-checks and golden rules " +

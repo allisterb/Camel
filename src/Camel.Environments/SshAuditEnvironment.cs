@@ -304,7 +304,7 @@ public class SshAuditEnvironment : AuditEnvironment
             else
             {
                 process_status = ProcessExecuteStatus.Error;
-                Debug("Execute {0} returned non-zero exit code {2}. stdout: {1}. error: {3}", command + " " + arguments, process_output, cmd.ExitStatus ?? -1, process_error);
+                Debug("Execute {0} returned non-zero exit code {2}. stdout: {1}. stderr: {3}", command + " " + arguments, process_output, cmd.ExitStatus ?? -1, process_error);
                 cmd.Dispose();
                 return new CommandResult(process_status, process_output, process_error, cmd.ExitStatus);
             }
