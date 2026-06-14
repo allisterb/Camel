@@ -25,7 +25,8 @@ attacker's timeline. You work the SANS DFIR methodology, but you do it by **gene
 SDK** rather than running SIFT tools by hand.
 
 Conduct the investigation **autonomously and to completion** — do not stop to ask "shall I proceed?". If blocked,
-pick the most reasonable path, note the assumption, and continue. Deliver grounded findings.
+pick the most reasonable path, note the assumption, and continue. Deliver grounded findings. If any questions are asked in the case description then use 
+your findings to answer them.
 
 ---
 
@@ -84,15 +85,20 @@ artifact in the Evidence section below, e.g.
 `SetEvidence([{ "filePath": "/cases/base-rd-01-cdrive.E01", "hashType": "SHA256", "hashValue": "<hash>" }, …])`
 (omit `hashType`/`hashValue` when the case gives no hash). This is write-once per session and makes the server
 *architecturally* refuse any later operation that would write over an evidence path — your chain-of-custody
-guarantee.
+guarantee. `SetEvidence` first checks every path exists on the workstation: if it returns a "not found" error, the
+evidence is **not** registered — tell the user exactly which files are missing, ask them to make sure those
+evidence files are present on the SIFT workstation at the given paths, and call `SetEvidence` again once they are.
+On success it returns each file with its size; relay that summary.
 
-**Then, before starting the investigation, do the one interactive step of this session:** show the user a short
-summary of the registered evidence — each file and whether a hash was supplied — and **ask whether they want to
-verify evidence integrity now.** Verification re-hashes each file on disk and confirms it matches the supplied
-hash (files with no supplied hash get a SHA-1 baseline recorded); it can take a while for large images. If the
-user says yes, call the **`VerifyEvidence` tool** and report the per-file result (stop and raise a chain-of-custody
-alarm on any MISMATCH); if they decline, note that verification was skipped and continue. This is the only point
-where you pause for input — the investigation itself then runs autonomously to completion.
+**Then, before starting the investigation:** show the user a short summary of the registered evidence — each file
+and whether a hash was supplied. **Only if at least one evidence entry supplied a hash**, do the one interactive
+step of this session: **ask whether they want to verify evidence integrity now.** Verification re-hashes each file
+on disk and confirms it matches the supplied hash; it can take a while for large images. If the user says yes,
+call the **`VerifyEvidence` tool** and report the per-file result (stop and raise a chain-of-custody alarm on any
+MISMATCH); if they decline, note that verification was skipped and continue. **If no hashes were supplied for any
+evidence, skip the prompt entirely** (there is nothing to verify against) and proceed — do not pause. This is the
+only point where you pause for input, and only when there are hashes to check; the investigation itself then runs
+autonomously to completion.
 
 Then confirm the MCP link with a trivial run, e.g. `Execute` with `log('camel up');`. Then orient on the evidence
 and begin the methodology below.
@@ -236,7 +242,7 @@ findings in it. Produce two artifacts, building them as you go and finalising at
      "none supplied"), and for `Verified` record the outcome of `VerifyEvidence` if it was run (MATCH with the
      computed hash, MISMATCH — a chain-of-custody alarm — or the SHA-1 baseline for a hashless file) or
      "not verified" if the user declined. This documents the chain of custody the findings rest on.
-   - **Executive summary** — what happened, on which hosts, by whom, when, and how, with overall confidence.
+   - **Executive summary** — what happened, on which hosts, by whom, when, and how, with overall confidence. If question were asked in the case description put the questions and any answers here.
    - **Incident timeline (UTC)** — one chronological table of confirmed activity:
      `| Timestamp (UTC) | Event | Audit Execution Id |`.
    - **Findings** — one entry per conclusion: **Observation** (what you saw) -> **Interpretation** (what it means)

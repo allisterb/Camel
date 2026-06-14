@@ -49,6 +49,19 @@ public class LocalEnvironment : AuditEnvironment
         return Directory.Exists(dir_path);
     }
 
+    public override long GetFileSize(string path)
+    {
+        try
+        {
+            var fi = new FileInfo(path);
+            return fi.Exists ? fi.Length : -1;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
     /// <summary>
     /// Builds the <see cref="ProcessStartInfo"/> for a command. On Unix the toolkits compose <em>bash command
     /// lines</em> — globs, pipes (<c>| head</c>), redirects (<c>&gt; file</c>), command substitution (<c>$(...)</c>),

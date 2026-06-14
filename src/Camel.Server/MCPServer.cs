@@ -83,7 +83,7 @@ public class CamelMCPTools : Runtime
         {
             // Write-once per session: a second attempt is treated as a spoliation event (someone trying to
             // repoint the guard mid-case) — audited and refused rather than silently honoured.
-            if (!session.Environment.TrySetCaseEvidence(evidence))
+            if (session.Environment.EvidenceRegistered)
             {
                 AuditEvent("evidence-spoliation",
                     "Refused attempt to re-register evidence for session {SessionId}: evidence is write-once per session.",
@@ -96,15 +96,40 @@ public class CamelMCPTools : Runtime
                         "to protect the spoliation guard). Start a new session to register different evidence." }],
                 };
             }
-            // Record the registered evidence so the trail shows exactly what was protected and from when.
+
+            // Preflight: confirm every evidence file is actually present on the workstation before arming the
+            // guard. If any is missing, refuse — do NOT register — so the guard is never set against a path that
+            // doesn't exist (a sign the wrong path was given or the evidence isn't staged yet).
+            var summary = session.Environment.GetEvidenceSummary(evidence);
+            if (!summary.AllPresent)
+            {
+                var missing = summary.MissingFiles.ToArray();
+                AuditEvent("evidence",
+                    "Refused to register evidence for session {SessionId}: {Count} file(s) not found on the workstation: {Paths}",
+                    session.SessionId, missing.Length, string.Join(", ", missing));
+                return new CallToolResult
+                {
+                    IsError = true,
+                    Content = [new TextContentBlock { Text =
+                        $"Evidence NOT registered — {missing.Length} file(s) were not found on the SIFT workstation:" +
+                        $"{Environment.NewLine}{string.Join(Environment.NewLine, missing)}{Environment.NewLine}" +
+                        "Make sure every evidence file is present on the workstation at the path given, then call " +
+                        "SetEvidence again." }],
+                };
+            }
+
+            session.Environment.TrySetCaseEvidence(evidence);
+            // Record the registered evidence so the trail shows exactly what was protected, with sizes, and from when.
             AuditEvent("evidence", "Registered {Count} evidence item(s) for session {SessionId}: {Paths}",
-                evidence.Length, session.SessionId, string.Join(", ", evidence.Select(e => e.FilePath)));
+                evidence.Length, session.SessionId,
+                string.Join(", ", summary.Files.Select(f => $"{f.FilePath} ({f.SizeBytes} bytes)")));
+            return new CallToolResult
+            {
+                Content = [new TextContentBlock { Text =
+                    $"Registered {evidence.Length} evidence item(s) for this session; writes to these paths are now refused." +
+                    $"{Environment.NewLine}{string.Join(Environment.NewLine, summary.Files.Select(f => $"{f.FilePath}: present, {f.SizeBytes} bytes"))}" }],
+            };
         }
-        return new CallToolResult
-        {
-            Content = [new TextContentBlock { Text =
-                $"Registered {evidence.Length} evidence item(s) for this session; writes to these paths are now refused." }],
-        };
     }
 
     [McpServerTool(Name = "VerifyEvidence"), Description(

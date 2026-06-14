@@ -49,6 +49,10 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     #region Abstract properties and methods
     public abstract bool FileExists(string file_path);
     public abstract bool DirectoryExists(string dir_path);
+
+    /// <summary>Returns the size in bytes of the regular file at <paramref name="path"/>, or <c>-1</c> if it does
+    /// not exist or cannot be sized (e.g. it is a directory or is unreadable).</summary>
+    public abstract long GetFileSize(string path);
     public abstract CommandResult Execute(string command, string arguments,Dictionary<string, string>? EnvironmentVariables = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null);
     public abstract Task<CommandResult> ExecuteAsync(string command, string arguments, Dictionary<string, string>? EnvironmentVariables = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null);
     public abstract CommandResult ExecuteAsUser(string command, string arguments, string user, SecureString password, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null);
@@ -276,6 +280,23 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     {
         var i = normalizedPath.LastIndexOf(PathSeparator[0]);
         return i <= 0 ? normalizedPath[..(i + 1)] : normalizedPath[..i];
+    }
+
+    /// <summary>
+    /// Preflight check run before registering evidence: for each supplied <paramref name="evidence"/> entry,
+    /// reports whether the path exists on this environment and its size, as a <see cref="CaseEvidenceSummary"/>
+    /// (<see cref="CaseEvidenceSummary.AllPresent"/> is false if any is missing). The <c>SetEvidence</c> tool calls
+    /// this first and refuses registration when a file is absent, so the spoliation guard is never armed against
+    /// paths that don't exist yet.
+    /// </summary>
+    public CaseEvidenceSummary GetEvidenceSummary(EvidenceInfo[] evidence)
+    {
+        var files = (evidence ?? Array.Empty<EvidenceInfo>()).Select(e =>
+        {
+            var exists = FileExists(e.FilePath) || DirectoryExists(e.FilePath);
+            return new EvidenceFileSummary(e.FilePath, exists, exists ? GetFileSize(e.FilePath) : -1);
+        }).ToArray();
+        return new CaseEvidenceSummary(files.All(f => f.Exists), files);
     }
 
     /// <summary>

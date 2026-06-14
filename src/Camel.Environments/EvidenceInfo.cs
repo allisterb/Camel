@@ -1,6 +1,8 @@
 namespace Camel.Environments;
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Serialization;
 
 /// <summary>The cryptographic hash algorithm used to fingerprint a piece of evidence. <see cref="None"/> is used
@@ -26,6 +28,27 @@ public enum HashType
 /// when no hash is known (the default).</param>
 /// <param name="HashValue">The known-good hash of the evidence, used to verify integrity; empty when unknown.</param>
 public record EvidenceInfo(string FilePath, HashType HashType = HashType.None, string HashValue = "");
+
+/// <summary>The presence/size preflight result for a single evidence file (see
+/// <see cref="AuditEnvironment.GetEvidenceSummary"/>).</summary>
+/// <param name="FilePath">The evidence path that was checked.</param>
+/// <param name="Exists">True if the path exists on the environment (as a file or directory).</param>
+/// <param name="SizeBytes">The file size in bytes, or <c>-1</c> when the path is missing or cannot be sized
+/// (e.g. it is a directory/mount).</param>
+public record EvidenceFileSummary(string FilePath, bool Exists, long SizeBytes);
+
+/// <summary>
+/// The preflight summary produced before registering evidence (see <see cref="AuditEnvironment.GetEvidenceSummary"/>):
+/// whether every supplied evidence path is present on the environment, with each file's existence and size. The
+/// <c>SetEvidence</c> tool uses it to refuse registration when any evidence file is missing.
+/// </summary>
+/// <param name="AllPresent">True when every supplied evidence path exists.</param>
+/// <param name="Files">One <see cref="EvidenceFileSummary"/> per supplied evidence item, in order.</param>
+public record CaseEvidenceSummary(bool AllPresent, EvidenceFileSummary[] Files)
+{
+    /// <summary>The paths of evidence files that do not exist on the environment (empty when all are present).</summary>
+    public IEnumerable<string> MissingFiles => Files.Where(f => !f.Exists).Select(f => f.FilePath);
+}
 
 /// <summary>The re-hash result for a single registered evidence item (see
 /// <see cref="AuditEnvironment.VerifyCaseEvidenceAsync"/>).</summary>

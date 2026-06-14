@@ -198,7 +198,21 @@ public class SshAuditEnvironment : AuditEnvironment
         {
             Debug("stat {0} returned {1}.", dir_path, stat_cmd.Error);
             return false;
-        }            
+        }
+    }
+
+    public override long GetFileSize(string path)
+    {
+        EnsureConnected();
+        // stat -c %s prints the size in bytes for a regular file. Quote the path so spaces / NTFS '$' names survive.
+        SshCommand stat_cmd = sshClient.RunCommand($"stat -c %s '{path}'");
+        if (long.TryParse(stat_cmd.Result?.Trim(), out var size))
+        {
+            Debug("stat -c %s {0} returned {1}.", path, size);
+            return size;
+        }
+        Debug("stat -c %s {0} failed: {1}.", path, stat_cmd.Error);
+        return -1;
     }
 
     public override CommandResult Execute(string command, string arguments, Dictionary<string, string>? env = null, Action<string>? OutputDataReceived = null, Action<string>? OutputErrorReceived = null)

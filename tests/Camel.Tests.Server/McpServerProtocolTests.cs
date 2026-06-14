@@ -93,14 +93,15 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
     {
         await using var client = await NewClientAsync();
 
-        // First registration succeeds; hashType is accepted as a string ("SHA256"), and a hashless entry is fine.
+        // Use paths that exist on the SIFT workstation so the SetEvidence presence preflight passes. The first
+        // entry also checks that hashType is accepted as a string ("SHA256"); a hashless entry is fine too.
         var first = await client.CallToolAsync("SetEvidence",
             new Dictionary<string, object?>
             {
                 ["evidence"] = new object[]
                 {
-                    new Dictionary<string, object?> { ["filePath"] = "/cases/base.E01", ["hashType"] = "SHA256", ["hashValue"] = "abc123" },
-                    new Dictionary<string, object?> { ["filePath"] = "/cases/mem.img" },
+                    new Dictionary<string, object?> { ["filePath"] = "/etc/passwd", ["hashType"] = "SHA256", ["hashValue"] = "abc123" },
+                    new Dictionary<string, object?> { ["filePath"] = "/etc/hostname" },
                 },
             });
         Assert.NotEqual(true, first.IsError);
@@ -111,10 +112,33 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
         var second = await client.CallToolAsync("SetEvidence",
             new Dictionary<string, object?>
             {
-                ["evidence"] = new object[] { new Dictionary<string, object?> { ["filePath"] = "/cases/other.E01" } },
+                ["evidence"] = new object[] { new Dictionary<string, object?> { ["filePath"] = "/etc/passwd" } },
             });
         Assert.Equal(true, second.IsError);
         Assert.Contains("already been registered", Text(second));
+    }
+
+    [Fact]
+    public async Task SetEvidenceRefusedWhenFileMissing()
+    {
+        await using var client = await NewClientAsync();
+
+        // Preflight: a path that does not exist on the workstation must NOT register evidence; it returns an error
+        // naming the missing file so the analyst can stage it and retry.
+        var missing = "/cases/does-not-exist-" + Guid.NewGuid().ToString("N") + ".E01";
+        var r = await client.CallToolAsync("SetEvidence",
+            new Dictionary<string, object?>
+            {
+                ["evidence"] = new object[] { new Dictionary<string, object?> { ["filePath"] = missing } },
+            });
+        Assert.Equal(true, r.IsError);
+        Assert.Contains("not found", Text(r));
+        Assert.Contains(missing, Text(r));
+
+        // Nothing was registered, so a subsequent VerifyEvidence reports there is no evidence yet.
+        var v = await client.CallToolAsync("VerifyEvidence", new Dictionary<string, object?>());
+        Assert.Equal(true, v.IsError);
+        Assert.Contains("SetEvidence first", Text(v));
     }
 
     [Fact]
@@ -137,14 +161,14 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
         await client.CallToolAsync("SetEvidence",
             new Dictionary<string, object?>
             {
-                ["evidence"] = new object[] { new Dictionary<string, object?> { ["filePath"] = "/cases/base.E01" } },
+                ["evidence"] = new object[] { new Dictionary<string, object?> { ["filePath"] = "/etc/passwd" } },
             });
 
         // A toolkit method whose destination is the registered evidence path must be refused architecturally,
         // before any command runs — the spoliation guard throws and the script surfaces it as an error.
         // (ExtractStringsAsync guards its outputFile; here it points at the registered evidence.)
         var r = await client.CallToolAsync("Execute",
-            Script("await MemoryAnalysisToolkit.ExtractStringsAsync('/tmp/whatever', '/cases/base.E01');"));
+            Script("await MemoryAnalysisToolkit.ExtractStringsAsync('/tmp/whatever', '/etc/passwd');"));
 
         Assert.Equal(true, r.IsError);
         Assert.Contains("spoliat", Text(r), StringComparison.OrdinalIgnoreCase);

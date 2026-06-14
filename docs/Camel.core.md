@@ -59,8 +59,11 @@ that produced it. Two things are expected of you:
    This is a separate MCP tool, not a JS SDK call. The server then **architecturally refuses** any later tool
    execution that would write over, extract into, or modify a registered evidence path (or its directory),
    throwing an evidence-spoliation error — chain-of-custody enforced by the server, not by prompt discipline.
-   Evidence is write-once per session; a second `SetEvidence` call is refused and audited (start a new session to
-   change it). Read the evidence as input freely — only writes onto evidence paths are blocked. Optionally call
+   `SetEvidence` first preflights that every path exists on the workstation: if any is missing it registers
+   nothing and returns a "not found" error listing them (stage the files and retry); on success it returns each
+   file with its size. Evidence is write-once per session; a second `SetEvidence` call is refused and audited
+   (start a new session to change it). Read the evidence as input freely — only writes onto evidence paths are
+   blocked. Optionally call
    the **`VerifyEvidence` MCP tool** after `SetEvidence` to re-hash each file on disk and confirm it matches the
    supplied hash (no-hash files get a SHA-1 baseline); a mismatch is a chain-of-custody alarm. It can be slow on
    large images, so it is on-demand, not automatic.
