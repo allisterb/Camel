@@ -45,8 +45,10 @@ public class TimelineToolkit : Toolkit
     /// files, not the .plaso output). Returns true on success.
     /// </summary>
     public async Task<bool> Log2TimelineAsync(string source, string storageFile, string? parsers = null, bool hash = false,
-        string? filterFile = null, string? partitions = null, string? vssStores = null, string timezone = "UTC") =>
-        await ExecuteToolTextAsync("Log2Timeline",
+        string? filterFile = null, string? partitions = null, string? vssStores = null, string timezone = "UTC")
+    {
+        auditEnvironment.FailIfEvidenceSpoliationRisk(storageFile);   // never write/append the .plaso over evidence
+        return await ExecuteToolTextAsync("Log2Timeline",
             $"-q --status-view none --storage-file {Q(storageFile)}" +
             (parsers is not null ? $" --parsers {parsers}" : "") +
             (filterFile is not null ? $" -f {Q(filterFile)}" : "") +
@@ -54,6 +56,7 @@ public class TimelineToolkit : Toolkit
             (vssStores is not null ? $" --vss-stores {vssStores}" : "") +
             (hash ? " --hashers md5,sha256" : "") +
             $" --timezone {timezone} {Q(source)}") is not null;
+    }
 
     /// <summary>
     /// Sorts/exports the events in <paramref name="storageFile"/> (one or more .plaso files) as a timeline.
@@ -81,9 +84,12 @@ public class TimelineToolkit : Toolkit
     /// <see cref="TimelineEvent.Labels"/>. Idempotent in effect — re-tagging re-applies the same labels.
     /// Returns true on success.
     /// </summary>
-    public async Task<bool> PsortTagAsync(string storageFile, string taggingFile) =>
-        await ExecuteToolTextAsync("Psort",
+    public async Task<bool> PsortTagAsync(string storageFile, string taggingFile)
+    {
+        auditEnvironment.FailIfEvidenceSpoliationRisk(storageFile);   // tagging rewrites the storage file in place
+        return await ExecuteToolTextAsync("Psort",
             $"-q --analysis tagging --tagging-file {Q(taggingFile)} -o null {Q(storageFile)}") is not null;
+    }
 
     /// <summary>
     /// Keyword-searches the <em>rendered</em> timeline of <paramref name="storageFile"/>: psort writes the full
@@ -179,12 +185,15 @@ public class TimelineToolkit : Toolkit
     /// Filter by <paramref name="names"/> (glob patterns, comma-separated) and/or <paramref name="extensions"/>
     /// (comma-separated, no dots). Returns true on success.
     /// </summary>
-    public async Task<bool> ImageExportAsync(string source, string outputDir, string? names = null, string? extensions = null) =>
-        await ExecuteToolTextAsync("ImageExport",
+    public async Task<bool> ImageExportAsync(string source, string outputDir, string? names = null, string? extensions = null)
+    {
+        auditEnvironment.FailIfEvidenceSpoliationRisk(outputDir);   // never extract files onto evidence
+        return await ExecuteToolTextAsync("ImageExport",
             $"-q --write {Q(outputDir)}" +
             (names is not null ? $" --name {Qd(names)}" : "") +
             (extensions is not null ? $" --extension {Qd(extensions)}" : "") +
             $" {Q(source)}") is not null;
+    }
 
     /// <summary>
     /// Runs hayabusa's Sigma-based detection timeline over Windows event logs and returns the alerts.

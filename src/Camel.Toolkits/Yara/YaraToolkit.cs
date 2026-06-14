@@ -49,8 +49,11 @@ public class YaraToolkit : Toolkit
     /// <paramref name="output"/> on the workstation (for faster reuse with <c>Scan(..., compiled: true)</c>).
     /// Returns true on success.
     /// </summary>
-    public async Task<bool> CompileAsync(string rules, string output) =>
-        await ExecuteToolTextAsync("Compile", Q(rules) + " " + Q(output)) is not null;
+    public async Task<bool> CompileAsync(string rules, string output)
+    {
+        auditEnvironment.FailIfEvidenceSpoliationRisk(output);   // never write compiled rules over evidence
+        return await ExecuteToolTextAsync("Compile", Q(rules) + " " + Q(output)) is not null;
+    }
 
     public override string[] ToolList { get; } = ["Scan", "Compile"];
 

@@ -34,6 +34,18 @@ pick the most reasonable path, note the assumption, and continue. Deliver ground
 
 ---
 
+
+## Evidence
+(examples only, enter your case evidence here)
+| Image | Host | Kind |
+|-------|------|------|
+| `base-rd-01-cdrive.E01` | rd-01 (RDS host — primary compromise) | NTFS C: drive (bare NTFS, offset 0) |
+| `base-dc-cdrive.E01` | dc01 (domain controller) | NTFS C: drive |
+| `base-rd01-memory.img` | rd-01 | RAM capture  |
+| `base-dc-memory.img` | dc01 | RAM capture |
+
+
+---
 ## How you work: Camel code-mode, not raw CLI
 
 You do **not** run Volatility, Plaso, Sleuth Kit, EZ Tools, or YARA on the command line. Everything goes through
@@ -67,8 +79,23 @@ successive steps reason over the same data. Free a large cached object when done
 
 **First steps each session:** read the three SDK resources, then **call the `SetCaseId` tool with this
 investigation's case id** — `SetCaseId("__CASE_ID__")` — so every tool execution is recorded under that
-case in the audit trail. Then confirm the MCP link with a trivial run, e.g. `Execute` with
-`log('camel up');`. Then orient on the evidence and begin the methodology below.
+case in the audit trail. Next, **register the original evidence with the `SetEvidence` tool** — one entry per
+artifact in the Evidence section below, e.g.
+`SetEvidence([{ "filePath": "/cases/base-rd-01-cdrive.E01", "hashType": "SHA256", "hashValue": "<hash>" }, …])`
+(omit `hashType`/`hashValue` when the case gives no hash). This is write-once per session and makes the server
+*architecturally* refuse any later operation that would write over an evidence path — your chain-of-custody
+guarantee.
+
+**Then, before starting the investigation, do the one interactive step of this session:** show the user a short
+summary of the registered evidence — each file and whether a hash was supplied — and **ask whether they want to
+verify evidence integrity now.** Verification re-hashes each file on disk and confirms it matches the supplied
+hash (files with no supplied hash get a SHA-1 baseline recorded); it can take a while for large images. If the
+user says yes, call the **`VerifyEvidence` tool** and report the per-file result (stop and raise a chain-of-custody
+alarm on any MISMATCH); if they decline, note that verification was skipped and continue. This is the only point
+where you pause for input — the investigation itself then runs autonomously to completion.
+
+Then confirm the MCP link with a trivial run, e.g. `Execute` with `log('camel up');`. Then orient on the evidence
+and begin the methodology below.
 
 ---
 
@@ -103,19 +130,6 @@ Read **`camel-sdk-discipline`** for the full method; the essentials, which gover
   `human-judgement-recommended` event so a reviewer lands on it in the trail), and **keep investigating**. You run
   autonomously to completion; you do not pause for approval.
 - **Use self-correction** Autonomous investigation requires strong self-correction discipline. Think about if the current investigation path is supported by the evidence.
-
----
-
-## Evidence
-
-(example)
-| Image | Host | Kind |
-|-------|------|------|
-| `base-rd-01-cdrive.E01` | rd-01 (RDS host — primary compromise) | NTFS C: drive (bare NTFS, offset 0) |
-| `base-dc-cdrive.E01` | dc01 (domain controller) | NTFS C: drive |
-| `base-rd01-memory.img` | rd-01 | RAM capture  |
-| `base-dc-memory.img` | dc01 | RAM capture |
-
 
 ---
 
@@ -217,6 +231,11 @@ Write your outputs to this case's **`reports/`** directory. CLAUDE.md is the ana
 findings in it. Produce two artifacts, building them as you go and finalising at the end:
 
 1. **`reports/report.md`** — the human-readable incident report:
+   - **Case evidence** — always include a table of the evidence supplied for this case, exactly as registered with
+     `SetEvidence`: `| File | Supplied hash (type) | Verified |`. State the supplied hash and its algorithm (or
+     "none supplied"), and for `Verified` record the outcome of `VerifyEvidence` if it was run (MATCH with the
+     computed hash, MISMATCH — a chain-of-custody alarm — or the SHA-1 baseline for a hashless file) or
+     "not verified" if the user declined. This documents the chain of custody the findings rest on.
    - **Executive summary** — what happened, on which hosts, by whom, when, and how, with overall confidence.
    - **Incident timeline (UTC)** — one chronological table of confirmed activity:
      `| Timestamp (UTC) | Event | Audit Execution Id |`.

@@ -30,9 +30,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Docs", "Docs", "{33539284-7586-41FB-93C2-4894BE3E05D5}"
 	ProjectSection(SolutionItems) = preProject
 		..\.gitignore = ..\.gitignore
-		..\docs\AuditTrail.md = ..\docs\AuditTrail.md
 		..\CLAUDE.md = ..\CLAUDE.md
-		..\docs\Project.md = ..\docs\Project.md
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Camel.Workflows", "Camel.Workflows\Camel.Workflows.csproj", "{3B15F211-02C2-46D3-8AE9-E9CB802C4634}"
@@ -62,6 +60,14 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Base", "Base", "{86FD243B-55C3-4870-A37E-7956329C479C}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "ML", "ML", "{071A8E4A-EC80-4FF6-BA66-0AF673101E9E}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Architecture", "Architecture", "{41691F07-6607-4C38-8BE1-0B9E92A7D3A9}"
+	ProjectSection(SolutionItems) = preProject
+		..\docs\AuditTrail.md = ..\docs\AuditTrail.md
+		..\docs\CodeMode.md = ..\docs\CodeMode.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Cases", "Cases", "{408AD412-FC95-452B-8E33-F35F28ECE18A}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -275,6 +281,8 @@ Global
 		{26996E46-4933-429A-B508-AB5ABE20B2C0} = {071A8E4A-EC80-4FF6-BA66-0AF673101E9E}
 		{1513A316-D374-45FA-9CED-37F6B2E3534C} = {C17BDA0E-EB4C-44D5-B32E-19A2CE189AAA}
 		{02A9EE14-CB94-4EDA-81A8-79EDE6E20145} = {33539284-7586-41FB-93C2-4894BE3E05D5}
+		{41691F07-6607-4C38-8BE1-0B9E92A7D3A9} = {33539284-7586-41FB-93C2-4894BE3E05D5}
+		{408AD412-FC95-452B-8E33-F35F28ECE18A} = {33539284-7586-41FB-93C2-4894BE3E05D5}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {97AB5048-4498-43FE-8CB8-B2FC147FCDE7}

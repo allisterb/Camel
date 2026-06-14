@@ -109,8 +109,11 @@ public class DiskAnalysisToolkit : Toolkit
     /// deleted entries) with each row prefixed by the mount point <paramref name="mountPoint"/>. Feed the
     /// result to <see cref="MactimeAsync"/> to build a sorted timeline. Returns true on success.
     /// </summary>
-    public async Task<bool> FlsBodyfileAsync(string image, string outputFile, int? offset = null, string mountPoint = "/") =>
-        await ExecuteToolTextAsync("Fls", $"-r -m {Q(mountPoint)} {Offset(offset)}{Q(image)} > {Q(outputFile)}") is not null;
+    public async Task<bool> FlsBodyfileAsync(string image, string outputFile, int? offset = null, string mountPoint = "/")
+    {
+        auditEnvironment.FailIfEvidenceSpoliationRisk(outputFile);   // never redirect the bodyfile over evidence
+        return await ExecuteToolTextAsync("Fls", $"-r -m {Q(mountPoint)} {Offset(offset)}{Q(image)} > {Q(outputFile)}") is not null;
+    }
 
     public async Task<Istat?> IstatAsync(string image, long inode, int? offset = null) =>
         await ExecuteToolTextAsync("Istat", Offset(offset) + Q(image) + $" {inode}") is { } o ? Models.Istat.Parse(o) : null;
@@ -126,8 +129,11 @@ public class DiskAnalysisToolkit : Toolkit
     /// the raw bytes to <paramref name="outputFile"/> on the workstation (icat stdout redirected to
     /// the file). Returns true on success.
     /// </summary>
-    public async Task<bool> IcatAsync(string image, long inode, string outputFile, int? offset = null) =>
-        await ExecuteToolTextAsync("Icat", Offset(offset) + Q(image) + $" {inode} > {Q(outputFile)}") is not null;
+    public async Task<bool> IcatAsync(string image, long inode, string outputFile, int? offset = null)
+    {
+        auditEnvironment.FailIfEvidenceSpoliationRisk(outputFile);   // never redirect extracted bytes over evidence
+        return await ExecuteToolTextAsync("Icat", Offset(offset) + Q(image) + $" {inode} > {Q(outputFile)}") is not null;
+    }
 
     /// <summary>
     /// Lists files matching <paramref name="namePattern"/> under a <em>mounted</em> directory
@@ -239,6 +245,7 @@ public class DiskAnalysisToolkit : Toolkit
     /// </summary>
     public async Task<int?> TskRecoverAsync(string image, string outputDir, bool all, long? dirInode = null, int? offset = null)
     {
+        auditEnvironment.FailIfEvidenceSpoliationRisk(outputDir);   // never recover files (and chown) onto evidence
         var o = await ExecuteToolTextAsync("TskRecover",
             (all ? "-e " : "") + Offset(offset) + (dirInode is not null ? $"-d {dirInode} " : "") +
             Q(image) + " " + Q(outputDir));
@@ -262,8 +269,11 @@ public class DiskAnalysisToolkit : Toolkit
     /// timelines (e.g. a memory bodyfile from timeliner) where returning every row is not wanted. Returns
     /// true on success.
     /// </summary>
-    public async Task<bool> MactimeToFileAsync(string bodyfile, string outputFile, string timezone = "UTC") =>
-        await ExecuteToolTextAsync("Mactime", $"-z {timezone} -b {Q(bodyfile)} > {Q(outputFile)}") is not null;
+    public async Task<bool> MactimeToFileAsync(string bodyfile, string outputFile, string timezone = "UTC")
+    {
+        auditEnvironment.FailIfEvidenceSpoliationRisk(outputFile);   // never redirect the timeline over evidence
+        return await ExecuteToolTextAsync("Mactime", $"-z {timezone} -b {Q(bodyfile)} > {Q(outputFile)}") is not null;
+    }
     #endregion
 
     // Single-quote a path so spaces in image/file names survive the shell.

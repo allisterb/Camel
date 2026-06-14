@@ -21,6 +21,8 @@ using ModelContextProtocol.Server;
 using ModelContextProtocol.Protocol;
 using Jint;
 
+using Camel.Environments;
+
 public enum TransportType
 {
     Stdio = 0,
@@ -62,6 +64,112 @@ public class CamelMCPTools : Runtime
             AuditEvent("case", "Case id set to {CaseId} (was {Previous}) for session {SessionId}",
                 session.CaseId, previous, session.SessionId);
         return $"Case id set to '{session.CaseId}' for this session. Audit trail file: audit-{session.CaseId}.clef";
+    }
+
+    [McpServerTool(Name = "SetEvidence"), Description(
+        "Register the ORIGINAL evidence files for this session so the server can architecturally prevent their " +
+        "spoliation: any subsequent tool execution that would write over, extract into, or otherwise modify a " +
+        "registered evidence path (or its containing directory) is refused. Pass one entry per evidence artifact " +
+        "(disk image, memory capture, mounted volume, hive, log, …) with its 'filePath'; include 'hashType' " +
+        "(None/MD5/SHA1/SHA256) and 'hashValue' when the case provides a known hash, otherwise omit them. " +
+        "Call this ONCE at the very start of an investigation, before any Execute call that touches the evidence. " +
+        "Evidence is write-once per session: a second SetEvidence call is refused, recorded as an " +
+        "evidence-spoliation event in the audit trail, and returns an error — start a new session to change it.")]
+    public CallToolResult SetEvidence(EvidenceInfo[] evidence, RequestContext<CallToolRequestParams> context)
+    {
+        var session = registry.GetOrCreate(SessionId(context.Server));
+        evidence ??= [];
+        using (PushAuditProperty("CaseId", session.CaseId))
+        {
+            // Write-once per session: a second attempt is treated as a spoliation event (someone trying to
+            // repoint the guard mid-case) — audited and refused rather than silently honoured.
+            if (!session.Environment.TrySetCaseEvidence(evidence))
+            {
+                AuditEvent("evidence-spoliation",
+                    "Refused attempt to re-register evidence for session {SessionId}: evidence is write-once per session.",
+                    session.SessionId);
+                return new CallToolResult
+                {
+                    IsError = true,
+                    Content = [new TextContentBlock { Text =
+                        "Evidence has already been registered for this session and cannot be changed (write-once, " +
+                        "to protect the spoliation guard). Start a new session to register different evidence." }],
+                };
+            }
+            // Record the registered evidence so the trail shows exactly what was protected and from when.
+            AuditEvent("evidence", "Registered {Count} evidence item(s) for session {SessionId}: {Paths}",
+                evidence.Length, session.SessionId, string.Join(", ", evidence.Select(e => e.FilePath)));
+        }
+        return new CallToolResult
+        {
+            Content = [new TextContentBlock { Text =
+                $"Registered {evidence.Length} evidence item(s) for this session; writes to these paths are now refused." }],
+        };
+    }
+
+    [McpServerTool(Name = "VerifyEvidence"), Description(
+        "Verify the integrity of the evidence registered with SetEvidence: each file is re-hashed on disk and, " +
+        "when a hash was supplied, compared against it (a mismatch is a chain-of-custody alarm and returns an " +
+        "error); for a file with no supplied hash the current SHA-1 is recorded as a baseline. Returns one line " +
+        "per file with the computed hash and OK/MISMATCH/baseline status. This can take a while for large images " +
+        "(it hashes the whole file). Call it only after SetEvidence; it does not modify the evidence.")]
+    public async Task<CallToolResult> VerifyEvidence(RequestContext<CallToolRequestParams> context)
+    {
+        var session = registry.GetOrCreate(SessionId(context.Server));
+        using var _case = PushAuditProperty("CaseId", session.CaseId);
+
+        if (!session.Environment.EvidenceRegistered)
+            return new CallToolResult
+            {
+                IsError = true,
+                Content = [new TextContentBlock { Text =
+                    "No evidence has been registered for this session — call SetEvidence first, then VerifyEvidence." }],
+            };
+
+        // Hashing a large image can take minutes; mark the session busy so the idle sweeper can't dispose its
+        // SSH connection out from under the hash.
+        session.EnterCall();
+        CaseEvidenceVerification verification;
+        try { verification = await session.Environment.VerifyCaseEvidenceAsync(); }
+        finally { session.LeaveCall(); }
+
+        // One human-readable line per item: matched / SHA-1 baseline / mismatch.
+        static string Line(EvidenceHashCheck c)
+        {
+            var hasHash = c.Evidence.HashType != HashType.None && !string.IsNullOrEmpty(c.Evidence.HashValue);
+            if (!hasHash)
+                return $"{c.Evidence.FilePath}: SHA1 baseline {(c.CurrentHash.Length > 0 ? c.CurrentHash : "(unreadable)")}";
+            return c.Matched
+                ? $"{c.Evidence.FilePath}: {c.Evidence.HashType} OK ({c.CurrentHash})"
+                : $"{c.Evidence.FilePath}: {c.Evidence.HashType} MISMATCH expected={c.Evidence.HashValue} " +
+                  $"actual={(c.CurrentHash.Length > 0 ? c.CurrentHash : "(unreadable)")}";
+        }
+        var lines = string.Join(Environment.NewLine, verification.Results.Select(Line));
+
+        if (!verification.Success)
+        {
+            // A supplied hash did not match the file on disk: the evidence is not what was acquired. Flag it loudly.
+            var bad = verification.Results.Where(r => !r.Matched).Select(r => r.Evidence.FilePath);
+            AuditEvent("evidence-spoliation",
+                "Evidence hash verification FAILED for session {SessionId}: {Paths} do not match the supplied hash.",
+                session.SessionId, string.Join(", ", bad));
+            return new CallToolResult
+            {
+                IsError = true,
+                Content = [new TextContentBlock { Text =
+                    $"HASH VERIFICATION FAILED — the file(s) on disk do not match the supplied hash. Treat this as a " +
+                    $"chain-of-custody problem and stop.{Environment.NewLine}{lines}" }],
+            };
+        }
+
+        AuditEvent("evidence-verification",
+            "Verified {Count} evidence item(s) for session {SessionId}: all supplied hashes match.",
+            verification.Results.Length, session.SessionId);
+        return new CallToolResult
+        {
+            Content = [new TextContentBlock { Text =
+                $"Evidence verification passed.{Environment.NewLine}{lines}" }],
+        };
     }
 
     [McpServerTool(Name = "Execute"), Description(

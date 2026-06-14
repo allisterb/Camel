@@ -201,7 +201,29 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     /// protection here, at the environment that is "closest" to where the physical evidence resides, makes
     /// it common to every toolkit rather than something each tool has to remember. Empty by default.
     /// </summary>
-    protected EvidenceInfo[] CaseEvidence { get; set; } = Array.Empty<EvidenceInfo>();
+    protected EvidenceInfo[] CaseEvidence { get; private set; } = Array.Empty<EvidenceInfo>();
+
+    // Set once TrySetCaseEvidence succeeds. Evidence is write-once per environment (i.e. per session), so the
+    // spoliation guard can't be silently repointed mid-investigation.
+    private bool evidenceRegistered;
+
+    /// <summary>True once case evidence has been registered for this environment (see <see cref="TrySetCaseEvidence"/>).</summary>
+    public bool EvidenceRegistered => evidenceRegistered;
+
+    /// <summary>
+    /// Registers the original case evidence for this environment — once. Returns true if accepted; false if
+    /// evidence was already registered, in which case nothing changes and the existing evidence stands. Evidence
+    /// is deliberately write-once per session so an analyst (or a confused agent) cannot silently repoint the
+    /// spoliation guard part-way through a case; changing it requires a fresh session. The caller (the
+    /// <c>SetEvidence</c> MCP tool) is responsible for auditing a refused second attempt as a spoliation event.
+    /// </summary>
+    public bool TrySetCaseEvidence(EvidenceInfo[] evidence)
+    {
+        if (evidenceRegistered) return false;
+        CaseEvidence = evidence ?? Array.Empty<EvidenceInfo>();
+        evidenceRegistered = true;
+        return true;
+    }
 
     /// <summary>
     /// Returns true if <paramref name="path"/> refers to a piece of registered case evidence (see
@@ -255,6 +277,57 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         var i = normalizedPath.LastIndexOf(PathSeparator[0]);
         return i <= 0 ? normalizedPath[..(i + 1)] : normalizedPath[..i];
     }
+
+    /// <summary>
+    /// Re-hashes every registered evidence file on disk and compares it against the hash that was supplied when
+    /// it was registered, returning a <see cref="CaseEvidenceVerification"/>. For an item that supplied a hash,
+    /// the same algorithm is recomputed and compared (case-insensitive); a mismatch — or a file that cannot be
+    /// hashed — sets <see cref="CaseEvidenceVerification.Success"/> false. For an item with no supplied hash, the
+    /// file's current SHA-1 is recorded as a baseline and never fails the result. This is the integrity check a
+    /// chain-of-custody report cites: the evidence on disk is the evidence that was acquired.
+    /// </summary>
+    public async Task<CaseEvidenceVerification> VerifyCaseEvidenceAsync()
+    {
+        var results = new List<EvidenceHashCheck>(CaseEvidence.Length);
+        var success = true;
+        foreach (var e in CaseEvidence)
+        {
+            var hasHash = e.HashType != HashType.None && !string.IsNullOrEmpty(e.HashValue);
+            // With a supplied hash, recompute with that algorithm to compare; otherwise record SHA-1 as the baseline.
+            var current = await ComputeFileHashAsync(e.FilePath, hasHash ? e.HashType : HashType.SHA1);
+            var matched = !hasHash || (current.Length > 0 && string.Equals(current, e.HashValue, StringComparison.OrdinalIgnoreCase));
+            if (!matched) success = false;
+            results.Add(new EvidenceHashCheck(e, current, matched));
+        }
+        return new CaseEvidenceVerification(success, results.ToArray());
+    }
+
+    // Computes the hex digest of a file on this environment with the given algorithm, or "" on failure. Unix uses
+    // the coreutils sum tools (retrying under sudo for root-owned evidence on a forensic mount); Windows uses
+    // certutil. The output is normalised to lower-case hex.
+    private async Task<string> ComputeFileHashAsync(string path, HashType type)
+    {
+        if (IsWindows)
+        {
+            var alg = type switch { HashType.MD5 => "MD5", HashType.SHA256 => "SHA256", _ => "SHA1" };
+            var rw = await ExecuteCommandAsync("certutil", $"-hashfile \"{path}\" {alg}");
+            return rw.IsCompleted ? ExtractCertutilHash(rw.Output) : "";
+        }
+        var cmd = type switch { HashType.MD5 => "md5sum", HashType.SHA256 => "sha256sum", _ => "sha1sum" };
+        var r = await ExecuteCommandAsync(cmd, $"'{path}'");
+        if (!r.IsCompleted && IsUnix) r = await ExecuteCommandAsync(cmd, $"'{path}'", admin: true);   // root-owned evidence
+        if (!r.IsCompleted) return "";
+        // coreutils sum tools print "<hex>␣␣<path>"; take the leading hex token.
+        var tok = r.Output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        return tok.Length > 0 ? tok[0].Trim().ToLowerInvariant() : "";
+    }
+
+    // certutil -hashfile prints the digest on its own line (often space-grouped) between a header and a footer
+    // line; pick the first all-hex line once spaces are stripped.
+    private static string ExtractCertutilHash(string output) =>
+        output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(l => l.Replace(" ", ""))
+            .FirstOrDefault(l => l.Length >= 32 && l.All(Uri.IsHexDigit))?.ToLowerInvariant() ?? "";
     #endregion
 
     #region Methods

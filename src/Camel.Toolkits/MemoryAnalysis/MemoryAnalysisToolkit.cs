@@ -226,6 +226,7 @@ public class MemoryAnalysisToolkit : Toolkit
     /// </summary>
     public async Task<bool> ExtractStringsAsync(string inputFile, string outputFile, bool unicode = false, int minLength = 8)
     {
+        auditEnvironment.FailIfEvidenceSpoliationRisk(outputFile);   // never redirect extracted strings over evidence
         // Ensure the destination directory exists (created as the login user so strings can write into it).
         int slash = outputFile.LastIndexOf('/');
         if (slash > 0)
@@ -245,6 +246,7 @@ public class MemoryAnalysisToolkit : Toolkit
     /// </summary>
     public async Task<string?> TimelinerBodyfileAsync(string image, string outputDir)
     {
+        auditEnvironment.FailIfEvidenceSpoliationRisk(outputDir);   // never write the bodyfile (and chown) onto evidence
         // Created as the login user so the (sudo'd) plugin can write into it.
         await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {outputDir}", false);
 
@@ -269,6 +271,9 @@ public class MemoryAnalysisToolkit : Toolkit
     /// </summary>
     private async Task<string[]?> DumpAsync(string args, string outputDir)
     {
+        // Single chokepoint for all dump plugins (DumpFiles/DumpProcessExecutable/DumpProcessMemory): never let
+        // a memory dump land on registered evidence.
+        auditEnvironment.FailIfEvidenceSpoliationRisk(outputDir);
         // Created as the login user so the (sudo'd) plugin can still write its dump files into it.
         await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {outputDir}", false);
 

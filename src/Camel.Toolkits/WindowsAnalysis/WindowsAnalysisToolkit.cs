@@ -62,6 +62,8 @@ public class WindowsAnalysisToolkit : Toolkit
     {
         if (outputFile is null && outputDir is null)
             throw new ArgumentException("MFTECmdCsvAsync requires either an output file (--csvf) or output directory (--csv).");
+        if (outputDir is not null) auditEnvironment.FailIfEvidenceSpoliationRisk(outputDir);   // never write the CSV onto evidence
+        if (outputFile is not null) auditEnvironment.FailIfEvidenceSpoliationRisk(outputFile);
 
         var args = $"-f {Q(file)} " +
             (allTimestamps ? "--at " : "") +
@@ -86,6 +88,8 @@ public class WindowsAnalysisToolkit : Toolkit
     {
         if (outputFile is null && outputDir is null)
             throw new ArgumentException("MFTECmdBodyfileAsync requires either an output file (--bodyf) or output directory (--body).");
+        if (outputDir is not null) auditEnvironment.FailIfEvidenceSpoliationRisk(outputDir);   // never write the bodyfile onto evidence
+        if (outputFile is not null) auditEnvironment.FailIfEvidenceSpoliationRisk(outputFile);
 
         var args = $"-f {Q(file)} " +
             (vss ? "--vss " : "") +
@@ -112,6 +116,7 @@ public class WindowsAnalysisToolkit : Toolkit
     /// </summary>
     public async Task<SBECmdCsvResult?> SBECmdCsvAsync(string directory, string outputDir)
     {
+        auditEnvironment.FailIfEvidenceSpoliationRisk(outputDir);   // never write the shellbag CSVs onto evidence
         var stdout = await ExecuteToolTextAsync("SBECmd", $"-d {Q(directory)} --csv {Q(outputDir)}");
         if (stdout is null) return null;
 
@@ -197,6 +202,8 @@ public class WindowsAnalysisToolkit : Toolkit
             throw new ArgumentException("EvtxECmdCsvAsync requires either a file (-f) or a directory (-d).");
         if (outputFile is null && outputDir is null)
             throw new ArgumentException("EvtxECmdCsvAsync requires either an output file (--csvf) or output directory (--csv).");
+        if (outputDir is not null) auditEnvironment.FailIfEvidenceSpoliationRisk(outputDir);   // never write the CSV onto evidence
+        if (outputFile is not null) auditEnvironment.FailIfEvidenceSpoliationRisk(outputFile);
 
         var args = EvtxArgs(file, directory, includeIds, excludeIds, startDate, endDate) +
             (outputDir is not null ? $"--csv {Q(outputDir)} " : "") +

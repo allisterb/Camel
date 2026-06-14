@@ -89,6 +89,68 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
     }
 
     [Fact]
+    public async Task SetEvidenceIsWriteOncePerSession()
+    {
+        await using var client = await NewClientAsync();
+
+        // First registration succeeds; hashType is accepted as a string ("SHA256"), and a hashless entry is fine.
+        var first = await client.CallToolAsync("SetEvidence",
+            new Dictionary<string, object?>
+            {
+                ["evidence"] = new object[]
+                {
+                    new Dictionary<string, object?> { ["filePath"] = "/cases/base.E01", ["hashType"] = "SHA256", ["hashValue"] = "abc123" },
+                    new Dictionary<string, object?> { ["filePath"] = "/cases/mem.img" },
+                },
+            });
+        Assert.NotEqual(true, first.IsError);
+        Assert.Contains("Registered 2 evidence", Text(first));
+
+        // Write-once: a second registration on the same session is refused and flagged as an error (the agent
+        // is told to start a new session), so the spoliation guard can't be silently repointed mid-case.
+        var second = await client.CallToolAsync("SetEvidence",
+            new Dictionary<string, object?>
+            {
+                ["evidence"] = new object[] { new Dictionary<string, object?> { ["filePath"] = "/cases/other.E01" } },
+            });
+        Assert.Equal(true, second.IsError);
+        Assert.Contains("already been registered", Text(second));
+    }
+
+    [Fact]
+    public async Task VerifyEvidenceRequiresRegistrationFirst()
+    {
+        await using var client = await NewClientAsync();
+
+        // VerifyEvidence before any SetEvidence is a usage error, not a silent pass.
+        var r = await client.CallToolAsync("VerifyEvidence", new Dictionary<string, object?>());
+
+        Assert.Equal(true, r.IsError);
+        Assert.Contains("SetEvidence first", Text(r));
+    }
+
+    [Fact]
+    public async Task RegisteredEvidenceWriteIsRefusedInScript()
+    {
+        await using var client = await NewClientAsync();
+
+        await client.CallToolAsync("SetEvidence",
+            new Dictionary<string, object?>
+            {
+                ["evidence"] = new object[] { new Dictionary<string, object?> { ["filePath"] = "/cases/base.E01" } },
+            });
+
+        // A toolkit method whose destination is the registered evidence path must be refused architecturally,
+        // before any command runs — the spoliation guard throws and the script surfaces it as an error.
+        // (ExtractStringsAsync guards its outputFile; here it points at the registered evidence.)
+        var r = await client.CallToolAsync("Execute",
+            Script("await MemoryAnalysisToolkit.ExtractStringsAsync('/tmp/whatever', '/cases/base.E01');"));
+
+        Assert.Equal(true, r.IsError);
+        Assert.Contains("spoliat", Text(r), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task TableRendersAsciiGrid()
     {
         await using var client = await NewClientAsync();

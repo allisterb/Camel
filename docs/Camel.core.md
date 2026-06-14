@@ -53,7 +53,18 @@ that produced it. Two things are expected of you:
    (e.g. `srl-2018-rd01`). This is a separate MCP tool, not a JS SDK call. Every tool execution afterward is
    written to `audit-<caseId>.clef` and tagged with the case, the toolkit/tool, the command, host, exit code, and
    duration.
-2. **Every `Execute` result ends with an audit handle line** — `[audit] case=<caseId> execution=<id>`.
+2. **Call the `SetEvidence` MCP tool once, right after `SetCaseId`,** to register the original evidence files
+   (disk images, memory captures, mounts, hives, logs) as `[{ filePath, hashType?, hashValue? }]` — `hashType` is
+   one of `None`/`MD5`/`SHA1`/`SHA256`, and both hash fields are optional (omit them when the case gives no hash).
+   This is a separate MCP tool, not a JS SDK call. The server then **architecturally refuses** any later tool
+   execution that would write over, extract into, or modify a registered evidence path (or its directory),
+   throwing an evidence-spoliation error — chain-of-custody enforced by the server, not by prompt discipline.
+   Evidence is write-once per session; a second `SetEvidence` call is refused and audited (start a new session to
+   change it). Read the evidence as input freely — only writes onto evidence paths are blocked. Optionally call
+   the **`VerifyEvidence` MCP tool** after `SetEvidence` to re-hash each file on disk and confirm it matches the
+   supplied hash (no-hash files get a SHA-1 baseline); a mismatch is a chain-of-custody alarm. It can be slow on
+   large images, so it is on-demand, not automatic.
+3. **Every `Execute` result ends with an audit handle line** — `[audit] case=<caseId> execution=<id>`.
    **Cite that `execution` id (and the toolkit/method) next to the findings it supports in your report**, so a
    reviewer can trace each finding to its tool executions in the case's audit file. Treat it as the evidence
    citation for everything that script established.
@@ -340,10 +351,10 @@ such as `malware_index.yar`, `webshells_index.yar`).
 
 A growing collection of commonly used Unix utilities on the SIFT workstation, wrapped as typed methods so the
 agent can run them server-side in one call instead of scripting shell. The current set covers **archive
-decompression** for acquired disk and memory images (commonly shipped as `.bz2`, `.zip`, or `.7z`) and **file/
-directory copy** for staging evidence into standard locations — the workstation does the work and you get the
-resulting file path(s) and sizes back, with no follow-up directory walk. Pass `sudo: true` when the source or
-destination is root-owned.
+decompression** for acquired disk and memory images (commonly shipped as `.bz2`, `.zip`, or `.7z`), **file/
+directory copy** for staging evidence into standard locations, and **file hashing** for integrity checks — the
+workstation does the work and you get the resulting file path(s)/sizes/digests back, with no follow-up directory
+walk. Pass `sudo: true` when the source or destination is root-owned.
 
 - `Bunzip2Async(file: string, outputFile?: string, sudo?: bool)` → `DecompressResult` — decompress a bzip2
   file, keeping the original. When `outputFile` is omitted the destination is `file` with a trailing `.bz2`
@@ -362,6 +373,11 @@ destination is root-owned.
 - `CopyDirAsync(source: string, dest: string, sudo?: bool, verify?: bool)` → `CopyResult` — recursively copy a
   directory to `dest` (the target dir path, created as a copy of `source`), preserving mode/timestamps (`cp -rp`).
   `Files` lists every copied file with its size.
+- `Md5SumAsync(file: string, sudo?: bool)` / `Sha1SumAsync(file: string, sudo?: bool)` /
+  `Sha256SumAsync(file: string, sudo?: bool)` → `string` (lower-case hex digest, or `null` on failure) — hash a
+  single file read-only. Use to verify an acquired image/file against a known hash from the case description.
+  (For the registered case evidence as a whole, prefer the `VerifyEvidence` MCP tool, which re-hashes every
+  evidence file and compares against the supplied hashes in one step.)
 
 Pass `verify: true` to SHA-256 each source file against its copy after the copy; the result's `Verified` is then
 `true`/`false` and `Mismatches` lists any destination paths whose hash didn't match (empty `[]` on success).

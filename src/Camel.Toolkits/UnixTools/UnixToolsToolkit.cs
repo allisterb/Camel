@@ -29,6 +29,7 @@ public class UnixToolsToolkit : Toolkit
     public async Task<DecompressResult?> Bunzip2Async(string file, string? outputFile = null, bool sudo = false)
     {
         var output = outputFile ?? (file.EndsWith(".bz2", StringComparison.OrdinalIgnoreCase) ? file[..^4] : file + ".out");
+        auditEnvironment.FailIfEvidenceSpoliationRisk(output);   // never decompress over registered evidence
         // Decompress to the chosen path, then list it (size\tpath) so the result carries the output size
         // back in one round-trip. The redirect/listing run in the remote shell, same as the disk icat path.
         return await RunAsync("Bunzip2",
@@ -47,6 +48,7 @@ public class UnixToolsToolkit : Toolkit
     /// </summary>
     public async Task<DecompressResult?> UnzipAsync(string archive, string destDir, string[]? files = null, bool sudo = false)
     {
+        auditEnvironment.FailIfEvidenceSpoliationRisk(destDir);   // never extract into registered evidence
         var members = files is { Length: > 0 } ? " " + string.Join(" ", files.Select(Q)) : "";
         // unzip -o overwrites; -q suppresses the per-file listing (we get paths from the find below instead).
         return await RunAsync("Unzip",
@@ -65,6 +67,7 @@ public class UnixToolsToolkit : Toolkit
     /// </summary>
     public async Task<DecompressResult?> SevenZipExtractAsync(string archive, string destDir, string[]? files = null, bool sudo = false)
     {
+        auditEnvironment.FailIfEvidenceSpoliationRisk(destDir);   // never extract into registered evidence
         var members = files is { Length: > 0 } ? " " + string.Join(" ", files.Select(Q)) : "";
         // 7z x preserves paths; -y assumes yes to prompts; -bso0/-bsp0 silence the banner/progress so only the
         // find listing (size\tpath) drives the result. The -o<dir> switch takes no space before the path.
@@ -85,6 +88,7 @@ public class UnixToolsToolkit : Toolkit
     /// </summary>
     public async Task<CopyResult?> CopyFileAsync(string source, string dest, bool sudo = false, bool verify = false)
     {
+        auditEnvironment.FailIfEvidenceSpoliationRisk(dest);   // never copy over registered evidence
         if (ParentDir(dest) is { Length: > 0 } parent)
             await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {Q(parent)}", sudo);
         if (await RunAsync("CopyFile",
@@ -108,6 +112,7 @@ public class UnixToolsToolkit : Toolkit
     /// </summary>
     public async Task<CopyResult?> CopyDirAsync(string source, string dest, bool sudo = false, bool verify = false)
     {
+        auditEnvironment.FailIfEvidenceSpoliationRisk(dest);   // never copy over registered evidence
         if (ParentDir(dest) is { Length: > 0 } parent)
             await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {Q(parent)}", sudo);
         if (await RunAsync("CopyDir",
@@ -119,7 +124,37 @@ public class UnixToolsToolkit : Toolkit
         return result with { Verified = ok, Mismatches = bad };
     }
 
-    public override string[] ToolList { get; } = ["Bunzip2", "Unzip", "SevenZip", "CopyFile", "CopyDir"];
+    /// <summary>
+    /// Computes the MD5 hex digest of <paramref name="file"/> on the workstation (<c>md5sum</c>), or null on
+    /// failure. Use it to verify an acquired image/file against a known MD5 from the case description. Set
+    /// <paramref name="sudo"/> when the file is root-owned (e.g. on a forensic mount). Read-only — never modifies the file.
+    /// </summary>
+    public async Task<string?> Md5SumAsync(string file, bool sudo = false) =>
+        HashFromSum(await RunAsync("MD5Sum", Q(file), sudo));
+
+    /// <summary>
+    /// Computes the SHA-256 hex digest of <paramref name="file"/> on the workstation (<c>sha256sum</c>), or null on
+    /// failure. Use it to verify an acquired image/file against a known SHA-256 from the case description. Set
+    /// <paramref name="sudo"/> when the file is root-owned (e.g. on a forensic mount). Read-only — never modifies the file.
+    /// </summary>
+    public async Task<string?> Sha256SumAsync(string file, bool sudo = false) =>
+        HashFromSum(await RunAsync("SHA256Sum", Q(file), sudo));
+
+    /// <summary>
+    /// Computes the SHA-1 hex digest of <paramref name="file"/> on the workstation (<c>sha1sum</c>), or null on
+    /// failure. Use it to verify an acquired image/file against a known SHA-1 from the case description. Set
+    /// <paramref name="sudo"/> when the file is root-owned (e.g. on a forensic mount). Read-only — never modifies the file.
+    /// </summary>
+    public async Task<string?> Sha1SumAsync(string file, bool sudo = false) =>
+        HashFromSum(await RunAsync("SHA1Sum", Q(file), sudo));
+
+    // md5sum/sha1sum/sha256sum print "<hex>␣␣<path>"; take the leading hex token, lower-cased.
+    private static string? HashFromSum(string? output) =>
+        output is null ? null
+            : output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries) is { Length: > 0 } t
+                ? t[0].Trim().ToLowerInvariant() : null;
+
+    public override string[] ToolList { get; } = ["Bunzip2", "Unzip", "SevenZip", "CopyFile", "CopyDir", "MD5Sum", "SHA1Sum", "SHA256Sum"];
 
     #region Verification helpers
     /// <summary>

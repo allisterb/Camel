@@ -7,6 +7,7 @@ This lowering significantly reduces the time AI agents must spend in autonomous 
 Toolsets based on large APIs lik can consume a large number of input tokens before execution even begins. There are also limited ways to transform and filter the results of MCP tool calls before passing them through the model, or perform operations like aggregation, joins across multiple data sources, or select and extract specific fields, all of which increases the input token requirements. AI agents in general have far more training data for correct program generation in languages like JavaScript than for reasoning over tool usage for system administration tasks. As the context window size grows the possibility for the model performing system administration tasks to make mistakes using the API or misunderstand the user’s intentions or the consequences of an operation increases. 
 # Advantages
 
+# Security
 
 Using AI to execute code is always fraught with problems and in a potentially adversarial situation like digital forensic investigations, such concerns are multiplied
 
