@@ -273,39 +273,81 @@ internal class Program : Runtime
 
         var dataFiles = 0;
 
-        // audit-data.js — embed the per-case CLEF (prefer audit-<caseId>.clef, else the single audit-*.clef).
+        // The data sidecars are written independently and best-effort: a per-turn Stop bake runs WHILE the case's
+        // MCP server is still appending to the CLEF, so the reads use a shared open (ReadAllTextShared) and a single
+        // sidecar failing must NOT abort the others (it previously did — the audit read threw a sharing violation,
+        // leaving report.html/js written but every data sidecar missing).
         var clef = Path.Combine(logsDir, $"audit-{caseId}.clef");
         if (!File.Exists(clef) && Directory.Exists(logsDir))
             clef = Directory.EnumerateFiles(logsDir, "audit-*.clef").FirstOrDefault() ?? clef;
+
+        // audit-data.js — embed the per-case CLEF (read with a shared lock since the live server still writes it).
         if (File.Exists(clef))
-        {
-            var name = Path.GetFileName(clef);
-            File.WriteAllText(Path.Combine(reportsDir, "audit-data.js"),
-                $"/* Embedded copy of logs/{name} so report.html opens with data by double-click. */\n" +
-                $"window.__AUDIT_CLEF__={JsonSerializer.Serialize(File.ReadAllText(clef), JsDataOpts)};\n" +
-                $"window.__AUDIT_SOURCE__={JsonSerializer.Serialize($"../logs/{name} (embedded)", JsDataOpts)};\n");
-            dataFiles++;
-        }
+            dataFiles += TryWriteSidecar("audit-data.js", () =>
+            {
+                var name = Path.GetFileName(clef);
+                File.WriteAllText(Path.Combine(reportsDir, "audit-data.js"),
+                    $"/* Embedded copy of logs/{name} so report.html opens with data by double-click. */\n" +
+                    $"window.__AUDIT_CLEF__={JsonSerializer.Serialize(ReadAllTextShared(clef), JsDataOpts)};\n" +
+                    $"window.__AUDIT_SOURCE__={JsonSerializer.Serialize($"../logs/{name} (embedded)", JsDataOpts)};\n");
+            });
 
         // chatlog-data.js — trimmed reconstruction of the preserved client transcript(s).
-        if (BuildChatlogData(logsDir) is string chat)
+        dataFiles += TryWriteSidecar("chatlog-data.js", () =>
         {
+            if (BuildChatlogData(logsDir) is not string chat) return false;
             File.WriteAllText(Path.Combine(reportsDir, "chatlog-data.js"),
                 "/* Trimmed reconstruction of logs/chatlog-*.jsonl for the Conversation tab. */\n" +
                 $"window.__CHATLOG__={chat};\n");
-            dataFiles++;
-        }
+            return true;
+        });
 
-        // token-usage-data.js — new-vs-cached token economics for the Conversation tab, aggregated across the
-        // same per-session transcripts the conversation is built from (so the figures match what's shown).
-        if (BuildTokenUsageData(logsDir) is JsonObject tokens)
+        // token-usage-data.js — token economics + runtime breakdown, aggregated across the same per-session
+        // transcripts the conversation is built from. toolCallMs (from the CLEF) splits run time into tool vs model.
+        dataFiles += TryWriteSidecar("token-usage-data.js", () =>
         {
+            if (BuildTokenUsageData(logsDir) is not JsonObject tokens) return false;
+            if (File.Exists(clef)) tokens["toolCallMs"] = SumToolCallMs(clef);
             File.WriteAllText(Path.Combine(reportsDir, "token-usage-data.js"),
-                "/* Token-usage summary (new vs cached) for the Conversation tab, aggregated from logs/chatlog-*.jsonl. */\n" +
+                "/* Token-usage + runtime summary for the Conversation tab, aggregated from logs/chatlog-*.jsonl and the audit CLEF. */\n" +
                 $"window.__TOKEN_USAGE__={tokens.ToJsonString(JsDataOpts)};\n");
-            dataFiles++;
-        }
+            return true;
+        });
         return dataFiles;
+    }
+
+    /// <summary>
+    /// Writes one report data sidecar, isolating failures: returns 1 if the write reported producing a file, else
+    /// 0; a thrown exception (e.g. a transient read race against the live MCP server) is logged and swallowed so
+    /// the other sidecars still get written. <paramref name="write"/> returns void (always counts) or a bool.
+    /// </summary>
+    static int TryWriteSidecar(string what, Func<bool> write)
+    {
+        try { return write() ? 1 : 0; }
+        catch (Exception ex) { Console.Error.WriteLine($"[bake-report] {what} skipped: {ex.Message}"); return 0; }
+    }
+    static int TryWriteSidecar(string what, Action write) => TryWriteSidecar(what, () => { write(); return true; });
+
+    /// <summary>
+    /// Reads a file another process may hold open for writing — the case's live MCP server appends to the audit
+    /// CLEF during a session. <see cref="File.ReadAllText(string)"/> opens with <c>FileShare.Read</c>, which throws
+    /// a sharing violation against that writer; opening with <c>FileShare.ReadWrite</c> lets the per-turn bake read
+    /// the live log. (This is why the Stop-hook bake silently failed while a session was running.)
+    /// </summary>
+    static string ReadAllTextShared(string path)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var sr = new StreamReader(fs);
+        return sr.ReadToEnd();
+    }
+
+    /// <summary>Line-by-line shared read (see <see cref="ReadAllTextShared"/>) for the CLEF while it is being written.</summary>
+    static IEnumerable<string> ReadLinesShared(string path)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var sr = new StreamReader(fs);
+        string? line;
+        while ((line = sr.ReadLine()) is not null) yield return line;
     }
 
     // The case id names the per-case audit file and is substituted into report.html. Prefer the single
@@ -593,8 +635,76 @@ internal class Program : Runtime
     /// </summary>
     static JsonObject? BuildTokenUsageData(string logsDir)
     {
-        var acc = AccumulateTokens(LatestChatlogFiles(logsDir));
-        return acc.Turns > 0 ? TokenSummaryObject(acc) : null;
+        var files = LatestChatlogFiles(logsDir);
+        var acc = AccumulateTokens(files);
+        if (acc.Turns == 0) return null;
+        var obj = TokenSummaryObject(acc);
+        // Investigation wall-clock: sum each session transcript's own first->last span (summing per file avoids
+        // counting the idle gap between a session ending and a later resume as "investigation time").
+        var (ms, first, last) = TranscriptSpan(files);
+        if (ms > 0)
+        {
+            obj["durationMs"] = ms;
+            obj["firstActivityUtc"] = first;
+            obj["lastActivityUtc"] = last;
+        }
+        return obj;
+    }
+
+    /// <summary>
+    /// The investigation wall-clock from the preserved transcripts: for each session file the span between its
+    /// earliest and latest entry <c>timestamp</c>, summed across sessions (so a gap between a session ending and a
+    /// later resume is not counted). Returns total milliseconds plus the overall earliest/latest timestamps (ISO).
+    /// </summary>
+    static (long ms, string? first, string? last) TranscriptSpan(IEnumerable<string> paths)
+    {
+        long totalMs = 0;
+        DateTime? globalFirst = null, globalLast = null;
+        const System.Globalization.DateTimeStyles styles =
+            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal;
+        foreach (var path in paths)
+        {
+            if (!File.Exists(path)) continue;
+            DateTime? fileMin = null, fileMax = null;
+            foreach (var line in File.ReadLines(path))
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                JsonNode? n; try { n = JsonNode.Parse(line); } catch { continue; }
+                var ts = n?["timestamp"]?.GetValue<string>();
+                if (ts is null || !DateTime.TryParse(ts, null, styles, out var d)) continue;
+                if (fileMin is null || d < fileMin) fileMin = d;
+                if (fileMax is null || d > fileMax) fileMax = d;
+            }
+            if (fileMin is not null && fileMax is not null)
+            {
+                totalMs += (long)(fileMax.Value - fileMin.Value).TotalMilliseconds;
+                if (globalFirst is null || fileMin < globalFirst) globalFirst = fileMin;
+                if (globalLast is null || fileMax > globalLast) globalLast = fileMax;
+            }
+        }
+        return (totalMs, globalFirst?.ToString("o"), globalLast?.ToString("o"));
+    }
+
+    /// <summary>
+    /// Total server-side tool-execution time: the sum of <c>DurationMs</c> over every <c>command</c> event in the
+    /// audit CLEF. Note this sums each tool call's own duration, so when the agent fanned calls out in parallel
+    /// (Task.WhenAll) the sum can exceed the wall-clock tool time — the viewer clamps it to the total run time.
+    /// Returns 0 when the file is absent or has no timed commands.
+    /// </summary>
+    static long SumToolCallMs(string clefPath)
+    {
+        if (!File.Exists(clefPath)) return 0;
+        long total = 0;
+        foreach (var line in ReadLinesShared(clefPath))   // shared read: the live server still writes the CLEF
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            JsonNode? n; try { n = JsonNode.Parse(line); } catch { continue; }
+            if (n?["EventType"]?.GetValue<string>() != "command") continue;
+            var d = n?["DurationMs"];
+            if (d is null) continue;
+            try { var ms = d.GetValue<double>(); if (ms > 0) total += (long)ms; } catch { }
+        }
+        return total;
     }
 
     /// <summary>Path to this running CLI assembly (empty for single-file publishes — fall back to the assembly dir).</summary>

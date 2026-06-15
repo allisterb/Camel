@@ -74,6 +74,13 @@ function modelCost(model, m) {
        + (m.cache_read_input_tokens || 0) * inR * 0.1;       // cache read
 }
 const fmtUsd = (n) => n < 0.01 ? "<$0.01" : "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function fmtDur(ms) {
+  const s = Math.round(ms / 1000);
+  if (s < 90) return s + "s";
+  const m = Math.round(s / 60);
+  if (m < 90) return m + " min";
+  return Math.floor(m / 60) + "h " + (m % 60) + "m";
+}
 
 // ---------- parsing ----------
 function parseClef(text) {
@@ -538,6 +545,28 @@ function renderTokenPanel() {
     tokenKey("sw-new", "New", fresh, pct(fresh), `incl. ${fmtNum(b.output_tokens || 0)} output`),
     tokenKey("sw-cached", "Cached", cached, pct(cached), `${cacheHitPct}% of input reused from cache`)));
 
+  // Runtime breakdown: total wall-clock split into model reasoning (+agent/transport) vs tool execution.
+  if (t.durationMs) {
+    const totalMs = t.durationMs;
+    const toolMs = Math.min(t.toolCallMs || 0, totalMs);   // clamp: parallel tool calls can sum past wall-clock
+    const reasonMs = Math.max(0, totalMs - toolMs);
+    const denom = (reasonMs + toolMs) || 1;
+    const rt = el("div", { class: "tp-runtime" });
+    rt.append(el("div", { class: "tp-rt-head" },
+      el("span", { class: "tp-rt-label" }, "Runtime"),
+      el("span", { class: "tp-rt-total" }, "~" + fmtDur(totalMs)),
+      el("span", { class: "tp-sub" }, "total run time")));
+    const bar = el("div", { class: "tp-bar", title: `Model reasoning ${fmtDur(reasonMs)} / tool execution ${fmtDur(toolMs)}` });
+    const segR = el("span", { class: "seg-reason" }); segR.style.width = (reasonMs / denom * 100) + "%";
+    const segT = el("span", { class: "seg-tool" }); segT.style.width = (toolMs / denom * 100) + "%";
+    bar.append(segR, segT);
+    rt.append(bar);
+    rt.append(el("div", { class: "tp-legend" },
+      rtKey("sw-reason", "Model reasoning", reasonMs, totalMs),
+      (t.toolCallMs != null ? rtKey("sw-tool", "Tool calls", toolMs, totalMs) : null)));
+    panel.append(rt);
+  }
+
   if (models.length) {
     const tb = el("tbody", {});
     for (const [name, m] of models) {
@@ -564,6 +593,15 @@ function tokenKey(swClass, label, num, pct, note) {
     el("span", { class: "sw " + swClass }),
     `${label} `, el("span", { class: "num" }, fmtNum(num)),
     el("span", { class: "pct" }, ` (${pct}%)${note ? " - " + note : ""}`));
+}
+
+// Legend key for the runtime bar: a duration + its percent of the total run time.
+function rtKey(swClass, label, ms, totalMs) {
+  const pct = totalMs ? Math.round((ms / totalMs) * 1000) / 10 : 0;
+  return el("span", { class: "key" },
+    el("span", { class: "sw " + swClass }),
+    `${label} `, el("span", { class: "num" }, fmtDur(ms)),
+    el("span", { class: "pct" }, ` (${pct}%)`));
 }
 
 function renderChat() {
