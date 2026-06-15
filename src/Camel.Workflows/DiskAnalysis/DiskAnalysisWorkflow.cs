@@ -5,7 +5,7 @@ using System;
 using Camel.Toolkits.Models;
 using Camel.Workflows.Models;
 
-public class DiskAnalysisWorkflow : Workflow
+public partial class DiskAnalysisWorkflow : Workflow
 {
     public DiskAnalysisWorkflow(CamelToolkitsApi api) : base(api) {}
 

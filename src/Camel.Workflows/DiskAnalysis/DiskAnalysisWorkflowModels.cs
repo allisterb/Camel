@@ -1,5 +1,7 @@
 namespace Camel.Workflows.Models;
 
+using System;
+
 using Camel.Toolkits.Models;
 
 /// <summary>
@@ -89,4 +91,52 @@ public record FileSystemMount
         this.Offset = offset;
         this.Info = info;
     }
+}
+
+/// <summary>The result of a signature-carving run: the recovered files (with type/size/offset), grouped by type.</summary>
+public record CarveReport
+{
+    public string OutputDir { get; init; } = "";
+    /// <summary>The carver used: "foremost", "scalpel", or "photorec".</summary>
+    public string Carver { get; init; } = "";
+    public CarvedFile[] CarvedFiles { get; init; } = [];
+    /// <summary>Carved-file counts per type (jpg/png/pdf/…), most common first.</summary>
+    public NameCount[] ByType { get; init; } = [];
+    public int TotalFiles { get; init; }
+}
+
+/// <summary>The result of a bulk_extractor feature-extraction run: the feature categories found, with counts and top values.</summary>
+public record FeatureExtractionReport
+{
+    public string OutputDir { get; init; } = "";
+    public FeatureCategory[] Features { get; init; } = [];
+}
+
+/// <summary>One bulk_extractor feature category (email/url/domain/ccn/telephone/ip/…) with its hit count and most-frequent values.</summary>
+public record FeatureCategory
+{
+    public required string Category { get; init; }
+    public long Count { get; init; }
+    /// <summary>The most frequent values for this feature (from the category histogram), most-frequent first.</summary>
+    public string[] TopValues { get; init; } = [];
+}
+
+/// <summary>The result of enumerating deleted files on a filesystem image.</summary>
+public record DeletedFilesReport
+{
+    public DeletedFileEntry[] DeletedFiles { get; init; } = [];
+    public int Count { get; init; }
+}
+
+/// <summary>One deleted file recovered from the filesystem metadata: its path, inode, size, and recoverability.</summary>
+public record DeletedFileEntry
+{
+    public string Path { get; init; } = "";
+    /// <summary>The TSK inode address (pass to <c>RecoverDeletedFileAsync</c> / <c>icat</c> to extract its content).</summary>
+    public string Inode { get; init; } = "";
+    public long Size { get; init; }
+    /// <summary>The inode's change time (updated at deletion), the best available "deleted ~when" signal.</summary>
+    public DateTime? DeletedTime { get; init; }
+    /// <summary>False when the inode has been reallocated to a new file (content likely overwritten).</summary>
+    public bool Recoverable { get; init; }
 }

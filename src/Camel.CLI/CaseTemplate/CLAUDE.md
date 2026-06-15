@@ -205,6 +205,9 @@ via known signatures, keywords, and "evidence of…" categories), and anti-foren
 - PowerShell: `AnalyzePowerShellAsync` (4104 script blocks, decodes encoded payloads).
 - Disk handling, recovery, filesystem timeline: `DiskAnalysisWorkflow.*` (mount/verify/recover/timeline) and the
   `DiskAnalysisToolkit` / `WindowsAnalysisToolkit` for lower-level access.
+- File carving & deleted-file recovery (FOR508.5): `DiskAnalysisWorkflow.CarveUnallocatedSpaceAsync` (blkls→foremost),
+  `CarveFilesAsync`, `ExtractForensicFeaturesAsync` (bulk_extractor emails/URLs/CCNs), `ListDeletedFilesAsync` +
+  `RecoverDeletedFileAsync(image, inode, out)`. Toolkit primitives: `Blkls`/`Foremost`/`PhotoRec`/`BulkExtractor`/`Extundelete`.
 - Web-server intrusion (SQLi → webshell): `WebServerWorkflow.AnalyzeWebServerLogsAsync`,
   `ScanWebRootForWebshellsAsync`.
 

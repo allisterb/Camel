@@ -1787,3 +1787,52 @@ Address/offset fields are rendered by Volatility as `"0x…"` strings. Each row 
   "TopSourceIps": { "type": "array", "items": { "$ref": "NameCount" } },
   "Alerts": { "type": "array", "items": { "$ref": "SuricataAlert" } } } }
 ```
+
+---
+
+## DiskAnalysisToolkit / DiskAnalysisWorkflow (carving & recovery)
+
+### CarvedFile Schema
+```json
+{ "type": "object", "properties": {
+  "Type": { "type": "string", "description": "jpg/png/pdf/zip/…" }, "Name": { "type": "string" },
+  "Size": { "type": "integer" }, "Path": { "type": "string" },
+  "Offset": { "type": "integer", "description": "Byte offset within the carved input." }, "Comment": { "type": "string" } } }
+```
+### BulkFeatureFile Schema
+```json
+{ "type": "object", "properties": {
+  "Name": { "type": "string" }, "Category": { "type": "string", "description": "email/url/domain/ccn/telephone/ip/…" },
+  "Count": { "type": "integer" }, "Path": { "type": "string" },
+  "TopValues": { "type": "array", "items": { "type": "string" } } } }
+```
+### CarveReport Schema
+```json
+{ "type": "object", "properties": {
+  "OutputDir": { "type": "string" }, "Carver": { "type": "string" },
+  "CarvedFiles": { "type": "array", "items": { "$ref": "CarvedFile" } },
+  "ByType": { "type": "array", "items": { "$ref": "NameCount" } }, "TotalFiles": { "type": "integer" } } }
+```
+### FeatureExtractionReport Schema
+```json
+{ "type": "object", "properties": {
+  "OutputDir": { "type": "string" }, "Features": { "type": "array", "items": { "$ref": "FeatureCategory" } } } }
+```
+### FeatureCategory Schema
+```json
+{ "type": "object", "properties": {
+  "Category": { "type": "string" }, "Count": { "type": "integer" },
+  "TopValues": { "type": "array", "items": { "type": "string" } } } }
+```
+### DeletedFilesReport Schema
+```json
+{ "type": "object", "properties": {
+  "DeletedFiles": { "type": "array", "items": { "$ref": "DeletedFileEntry" } }, "Count": { "type": "integer" } } }
+```
+### DeletedFileEntry Schema
+```json
+{ "type": "object", "properties": {
+  "Path": { "type": "string" }, "Inode": { "type": "string", "description": "TSK inode address (pass to RecoverDeletedFileAsync)." },
+  "Size": { "type": "integer" }, "DeletedTime": { "type": "string", "format": "date-time" },
+  "Recoverable": { "type": "boolean", "description": "False when the inode was reallocated (content likely overwritten)." } } }
+```

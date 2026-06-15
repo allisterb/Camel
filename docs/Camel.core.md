@@ -256,9 +256,9 @@ method returns `null` (≠ empty result).
 
 ## DiskAnalysisToolkit
 
-The Sleuth Kit (TSK), libewf (EWF/E01), loopback/NTFS mounting, file recovery, and mactime. The optional
-`offset: int` argument is a **partition start sector** (from `MmlsAsync` / `ListPartitionsAsync`); omit it for a
-single-volume image.
+The Sleuth Kit (TSK), libewf (EWF/E01), loopback/NTFS mounting, file recovery, **signature carving**, and mactime.
+The optional `offset: int` argument is a **partition start sector** (from `MmlsAsync` / `ListPartitionsAsync`);
+omit it for a single-volume image. All carving/recovery tools ship with SIFT — no installs needed.
 
 - `EwfInfoAsync(image: string)` → `EwfInfo` — EWF metadata + acquisition hashes (null on failure).
 - `EwfVerifyAsync(image: string)` → `EwfVerify` — recompute & compare acquisition hash.
@@ -288,6 +288,19 @@ single-volume image.
   server-side `grep -E -f`; returns only matching lines (`[]` on no match, null on unreadable file).
 - `TskRecoverAsync(image: string, outputDir: string, all: bool, dirInode?: long, offset?: int)` → `int` —
   bulk-recover files (count); `all=true` includes deleted/unallocated.
+- `IcatByAddrAsync(image: string, inode: string, outputFile: string, offset?: int)` → `bool` — extract a file by
+  TSK inode **address string** (plain ext inode, or NTFS `mft-type-id`, as `FlsEntry.Inode` carries).
+- `BlklsAsync(image: string, outputFile: string, offset?: int, slackOnly?: bool)` → `long` (bytes) — extract a
+  filesystem's **unallocated** blocks (or `-s` slack) for carving.
+- `ForemostAsync(input: string, outputDir: string, fileTypes?: string)` → `CarvedFile[]` — signature-carve with
+  foremost (`fileTypes` default `"all"`; `outputDir` must not pre-exist).
+- `ScalpelAsync(input: string, outputDir: string, confFile?: string)` → `CarvedFile[]` — signature-carve with scalpel.
+- `PhotoRecAsync(input: string, outputDir: string, fileTypes?: string)` → `string[]` — carve with photorec (recovered paths).
+- `BulkExtractorAsync(input: string, outputDir: string)` → `BulkFeatureFile[]` — extract features (email/url/domain/
+  ccn/phone/ip) with counts + top values, regardless of filesystem.
+- `SigfindAsync(image: string, signature: string, offset?: int)` → `long[]` — block offsets of a hex byte signature.
+- `ExtundeleteAsync(image: string, outputDir: string, restoreAll?: bool)` → `int` — ext3/4 undelete (count recovered).
+- `DeleteFileAsync(path: string)` → `bool` — delete a non-evidence temp file (e.g. an unallocated extract).
 - `FlsBodyfileAsync(image: string, outputFile: string, offset?: int, mountPoint?: string)` → `bool` — `fls -r -m` bodyfile.
 - `MactimeAsync(bodyfile: string, timezone?: string)` → `MactimeEntry[]` — render a sorted timeline (default UTC).
 - `MactimeToFileAsync(bodyfile: string, outputFile: string, timezone?: string)` → `bool` — render a large timeline to a file.
@@ -522,6 +535,16 @@ Disk-image acquisition, mounting, verification, and recovery (read-only forensic
   → `WorkflowResult<FilesystemTimeline>` — fls bodyfile → mactime.
 - `RecoverFilesAsync(imageFile: string, outputDir: string, offset?: int, includeDeleted?: bool)` → `WorkflowResult<FileRecovery>`
   — tsk_recover (`includeDeleted` default true).
+- `CarveFilesAsync(image: string, outputDir: string, carver?: string, fileTypes?: string)` → `WorkflowResult<CarveReport>`
+  — signature-carve the whole image (carver `foremost` (default)/`scalpel`/`photorec`); inventory by type.
+- `CarveUnallocatedSpaceAsync(image: string, outputDir: string, offset?: int, carver?: string)` → `WorkflowResult<CarveReport>`
+  — the FOR508.5 recipe: `blkls` extract unallocated → carve deleted files out of it (temp extract auto-cleaned).
+- `ExtractForensicFeaturesAsync(image: string, outputDir: string)` → `WorkflowResult<FeatureExtractionReport>`
+  — bulk_extractor features (emails/URLs/domains/CCNs/phones/IPs) with counts + top values.
+- `ListDeletedFilesAsync(image: string, offset?: int, maxFiles?: int)` → `WorkflowResult<DeletedFilesReport>`
+  — deleted files from fs metadata (path/inode/size/deleted-time/recoverable), largest first.
+- `RecoverDeletedFileAsync(image: string, inode: string, outputFile: string, offset?: int)` → `WorkflowResult<string>`
+  — extract one deleted file by TSK inode address (`icat`).
 - `UnmountImageAsync(imageMount: EwfImageMount, ...filesystemMounts: FileSystemMount[])` → `WorkflowResult<string[]>`
   — unmount filesystem mounts then the raw device; returns the unmounted dirs.
 

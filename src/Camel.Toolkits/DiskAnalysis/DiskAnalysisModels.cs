@@ -448,3 +448,37 @@ public class MactimeEntry
         return fields;
     }
 }
+
+/// <summary>
+/// A file recovered by signature carving (foremost/scalpel) from a raw image or an unallocated-space extract.
+/// <see cref="Offset"/> is the byte offset of the file within the carved input; <see cref="Path"/> is where the
+/// carver wrote the recovered file on the workstation.
+/// </summary>
+public record CarvedFile
+{
+    /// <summary>File type / category (e.g. "jpg", "png", "pdf", "zip").</summary>
+    public string Type { get; init; } = "";
+    public string Name { get; init; } = "";
+    public long Size { get; init; }
+    public string Path { get; init; } = "";
+    /// <summary>Byte offset of the carved file within the input that was carved.</summary>
+    public long Offset { get; init; }
+    /// <summary>Any extra note foremost recorded (e.g. image dimensions).</summary>
+    public string? Comment { get; init; }
+}
+
+/// <summary>
+/// A bulk_extractor feature recorder output: one feature file (e.g. <c>email.txt</c>) with the number of features
+/// it found. The histogram-derived top values are surfaced separately by the feature-extraction workflow.
+/// </summary>
+public record BulkFeatureFile
+{
+    /// <summary>The feature file name, e.g. "email.txt".</summary>
+    public string Name { get; init; } = "";
+    /// <summary>The feature category (file name without ".txt"), e.g. "email", "url", "domain", "ccn".</summary>
+    public string Category { get; init; } = "";
+    public long Count { get; init; }
+    public string Path { get; init; } = "";
+    /// <summary>The most frequent values for this feature (from the category histogram), most-frequent first.</summary>
+    public string[] TopValues { get; init; } = [];
+}
