@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -39,7 +41,7 @@ internal class Program : Runtime
             with.CaseInsensitiveEnumValues = true;
             with.HelpWriter = null;
         });
-        var result = parser.ParseArguments<ServerOptions, CreateCaseOptions, PreserveChatlogOptions>(args);
+        var result = parser.ParseArguments<ServerOptions, CreateCaseOptions, PreserveChatlogOptions, BakeReportOptions>(args);
         try
         {
             await result.MapResult(
@@ -47,6 +49,7 @@ internal class Program : Runtime
                 async (ServerOptions opts) => await HandleServerArgs(opts),
                 async (CreateCaseOptions opts) => await HandleCreateCaseArgs(opts),
                 async (PreserveChatlogOptions opts) => await HandlePreserveChatlog(opts),
+                async (BakeReportOptions opts) => await HandleBakeReportArgs(opts),
                 errs => HandleParseError(result, errs)
             );
         }
@@ -221,6 +224,170 @@ internal class Program : Runtime
         return Task.CompletedTask;
     }
 
+    static Task HandleBakeReportArgs(BakeReportOptions opts)
+    {
+        var caseDir = Path.GetFullPath(opts.CaseDir);
+        if (!Directory.Exists(caseDir))
+        {
+            Error($"Case directory not found: {caseDir}");
+            Environment.Exit(2);
+        }
+        var n = BakeReport(caseDir);
+        Info($"Baked report for {caseDir} ({n} data file(s) embedded).");
+        AnsiConsole.MarkupLine($"[grey]Open {Path.Combine(caseDir, "reports", "report.html")} in a browser.[/]");
+        return Task.CompletedTask;
+    }
+
+    // JSON serialization for the generated *.js data files: relaxed escaping (these are standalone .js, not inline
+    // HTML, so no need to escape < > & — keeps the embed smaller and readable).
+    static readonly JsonSerializerOptions JsDataOpts = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    /// <summary>
+    /// Regenerates a case's self-contained report viewer and embeds its current data so <c>reports/report.html</c>
+    /// opens by double-click with no server: re-emits <c>report.html</c> (case id + base64 <c>accuracy.md</c> /
+    /// <c>iocs.csv</c>) and <c>report.js</c> from the embedded template, and writes the sibling <c>audit-data.js</c>
+    /// (the <c>.clef</c>) and <c>chatlog-data.js</c> (trimmed conversation). Best-effort and idempotent; missing
+    /// inputs are simply skipped. Returns the number of sibling data files written.
+    /// </summary>
+    static int BakeReport(string caseDir)
+    {
+        var reportsDir = Path.Combine(caseDir, "reports");
+        var logsDir = Path.Combine(caseDir, "logs");
+        Directory.CreateDirectory(reportsDir);
+        var caseId = ResolveCaseId(caseDir, logsDir);
+
+        static string B64OfFile(string p) =>
+            File.Exists(p) ? Convert.ToBase64String(Encoding.UTF8.GetBytes(File.ReadAllText(p))) : "";
+
+        // report.html + report.js — regenerated from the embedded template (they are viewer files, not user-edited),
+        // so re-baking also upgrades an older case's viewer to the current template.
+        File.WriteAllText(Path.Combine(reportsDir, "report.html"),
+            ReadEmbedded("Camel.CLI.CaseTemplate.report.html")
+                .Replace("__CASE_ID__", caseId)
+                .Replace("__ACCURACY_B64__", B64OfFile(Path.Combine(reportsDir, "accuracy.md")))
+                .Replace("__IOCS_B64__", B64OfFile(Path.Combine(reportsDir, "iocs.csv"))));
+        File.WriteAllText(Path.Combine(reportsDir, "report.js"), ReadEmbedded("Camel.CLI.CaseTemplate.report.js"));
+
+        var dataFiles = 0;
+
+        // audit-data.js — embed the per-case CLEF (prefer audit-<caseId>.clef, else the single audit-*.clef).
+        var clef = Path.Combine(logsDir, $"audit-{caseId}.clef");
+        if (!File.Exists(clef) && Directory.Exists(logsDir))
+            clef = Directory.EnumerateFiles(logsDir, "audit-*.clef").FirstOrDefault() ?? clef;
+        if (File.Exists(clef))
+        {
+            var name = Path.GetFileName(clef);
+            File.WriteAllText(Path.Combine(reportsDir, "audit-data.js"),
+                $"/* Embedded copy of logs/{name} so report.html opens with data by double-click. */\n" +
+                $"window.__AUDIT_CLEF__={JsonSerializer.Serialize(File.ReadAllText(clef), JsDataOpts)};\n" +
+                $"window.__AUDIT_SOURCE__={JsonSerializer.Serialize($"../logs/{name} (embedded)", JsDataOpts)};\n");
+            dataFiles++;
+        }
+
+        // chatlog-data.js — trimmed reconstruction of the preserved client transcript(s).
+        if (BuildChatlogData(logsDir) is string chat)
+        {
+            File.WriteAllText(Path.Combine(reportsDir, "chatlog-data.js"),
+                "/* Trimmed reconstruction of logs/chatlog-*.jsonl for the Conversation tab. */\n" +
+                $"window.__CHATLOG__={chat};\n");
+            dataFiles++;
+        }
+        return dataFiles;
+    }
+
+    // The case id names the per-case audit file and is substituted into report.html. Prefer the single
+    // audit-&lt;id&gt;.clef in logs/ (authoritative — it is the SetCaseId value); fall back to the case dir name.
+    static string ResolveCaseId(string caseDir, string logsDir)
+    {
+        if (Directory.Exists(logsDir))
+        {
+            var clefs = Directory.EnumerateFiles(logsDir, "audit-*.clef").ToList();
+            if (clefs.Count == 1) return Path.GetFileNameWithoutExtension(clefs[0])["audit-".Length..];
+        }
+        return Path.GetFileName(caseDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+    }
+
+    /// <summary>
+    /// Reads every <c>logs/chatlog-*.jsonl</c> (the Claude Code transcripts the SessionEnd hook preserved) and
+    /// builds the trimmed conversation the report's Conversation tab renders: per session, the user/assistant turns
+    /// with their text / thinking / tool_use / tool_result blocks, capping tool input/output so the embed stays
+    /// small. Returns the JSON array as a string, or <c>null</c> when there is no conversation to show.
+    /// </summary>
+    static string? BuildChatlogData(string logsDir)
+    {
+        if (!Directory.Exists(logsDir)) return null;
+        // preserve-chatlog writes the FULL transcript each SessionEnd, so several chatlog-<sessionId>-<ts>.jsonl
+        // files for one session id are cumulative, overlapping snapshots — keep only the latest (most complete) per
+        // session id so the conversation isn't shown several times. Distinct session ids are kept as distinct sessions.
+        var rx = new Regex(@"^chatlog-(.+)-\d{8}T\d{6}Z\.jsonl$");
+        var latest = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var path in Directory.EnumerateFiles(logsDir, "chatlog-*.jsonl"))
+        {
+            var fn = Path.GetFileName(path);
+            var sid = rx.Match(fn) is { Success: true } m ? m.Groups[1].Value : fn;
+            if (!latest.TryGetValue(sid, out var cur) || string.CompareOrdinal(fn, Path.GetFileName(cur)) > 0)
+                latest[sid] = path;
+        }
+        var files = latest.Values.OrderBy(f => Path.GetFileName(f), StringComparer.Ordinal).ToList();
+        if (files.Count == 0) return null;
+
+        static (string text, int trunc) Cap(string s, int n) => s.Length > n ? (s[..n], s.Length - n) : (s, 0);
+
+        var sessions = new JsonArray();
+        foreach (var file in files)
+        {
+            var turns = new JsonArray();
+            foreach (var line in File.ReadLines(file))
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                JsonNode? o; try { o = JsonNode.Parse(line); } catch { continue; }
+                var type = o?["type"]?.GetValue<string>();
+                if (type != "user" && type != "assistant") continue;
+
+                var blocks = new JsonArray();
+                var content = o?["message"]?["content"];
+                if (content is JsonValue cv && cv.TryGetValue<string>(out var s))
+                {
+                    if (!string.IsNullOrWhiteSpace(s)) blocks.Add(new JsonObject { ["k"] = "text", ["text"] = s });
+                }
+                else if (content is JsonArray arr)
+                {
+                    foreach (var b in arr)
+                    {
+                        switch (b?["type"]?.GetValue<string>())
+                        {
+                            case "text" when b["text"]?.GetValue<string>() is string tx && !string.IsNullOrWhiteSpace(tx):
+                                blocks.Add(new JsonObject { ["k"] = "text", ["text"] = tx }); break;
+                            case "thinking" when b["thinking"]?.GetValue<string>() is string th && !string.IsNullOrWhiteSpace(th):
+                                blocks.Add(new JsonObject { ["k"] = "thinking", ["text"] = th }); break;
+                            case "tool_use":
+                                var (inp, it) = Cap(b["input"]?.ToJsonString(JsDataOpts) ?? "", 4000);
+                                blocks.Add(new JsonObject { ["k"] = "tool_use", ["name"] = b["name"]?.GetValue<string>(),
+                                    ["id"] = b["id"]?.GetValue<string>(), ["input"] = inp, ["trunc"] = it }); break;
+                            case "tool_result":
+                                var rc = b["content"];
+                                var raw = rc is JsonValue rv && rv.TryGetValue<string>(out var rs) ? rs : rc?.ToJsonString(JsDataOpts) ?? "";
+                                var (txt, rt) = Cap(raw, 2000);
+                                blocks.Add(new JsonObject { ["k"] = "tool_result", ["id"] = b["tool_use_id"]?.GetValue<string>(),
+                                    ["err"] = b["is_error"]?.GetValue<bool>() ?? false, ["text"] = txt, ["trunc"] = rt }); break;
+                        }
+                    }
+                }
+                if (blocks.Count == 0) continue;
+                turns.Add(new JsonObject
+                {
+                    ["role"] = type,
+                    ["ts"] = o?["timestamp"]?.GetValue<string>(),
+                    ["meta"] = o?["isMeta"]?.GetValue<bool>() ?? false,
+                    ["side"] = o?["isSidechain"]?.GetValue<bool>() ?? false,
+                    ["blocks"] = blocks,
+                });
+            }
+            if (turns.Count > 0) sessions.Add(new JsonObject { ["file"] = Path.GetFileName(file), ["turns"] = turns });
+        }
+        return sessions.Count > 0 ? sessions.ToJsonString(JsDataOpts) : null;
+    }
+
     /// <summary>
     /// Claude Code <c>SessionEnd</c> hook (wired into each case's <c>.claude/settings.json</c> by
     /// <c>create-case</c>). Reads the hook JSON payload from stdin, then (1) copies the client chat
@@ -259,6 +426,17 @@ internal class Program : Runtime
             Console.Out.WriteLine($"[preserve-chatlog] Preserved client chat log -> {dst}");
 
             WriteTokenUsage(src, logsDir, sessionId);
+
+            // Bake the self-contained report now that the chat log is in place, so reports/report.html opens with
+            // this session's findings/audit-trail/IOCs/accuracy/conversation by double-click. Best-effort: the
+            // audit .clef may still be mid-flush from the (separate) MCP server process, so this stays re-runnable
+            // via `bake-report`. baseDir is the case root ($CLAUDE_PROJECT_DIR).
+            try
+            {
+                var n = BakeReport(baseDir);
+                Console.Out.WriteLine($"[preserve-chatlog] Baked report ({n} data file(s)) -> {Path.Combine(baseDir, "reports", "report.html")}");
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[preserve-chatlog] Report bake skipped: {ex.Message}"); }
         }
         catch (Exception ex)
         {

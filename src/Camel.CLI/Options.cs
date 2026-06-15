@@ -84,6 +84,14 @@ public class PreserveChatlogOptions : Options
 }
 
 
+[Verb("bake-report", HelpText = "Regenerate a case's self-contained HTML report (reports/report.html + report.js) and embed its current data — audit log, chat log(s), accuracy.md, iocs.csv — so it opens by double-click with no server. Runs automatically at session end; run it manually to re-bake. Safe to re-run.")]
+public class BakeReportOptions : Options
+{
+    [Value(0, MetaName = "case-dir", Required = true, HelpText = "The case directory (the one containing CLAUDE.md, logs/, and reports/).")]
+    public string CaseDir { get; set; } = String.Empty;
+}
+
+
 [Verb("create-case", HelpText = "Create a Camel case directory (CLAUDE.md + .mcp.json + analysis/exports/reports) and register the MCP server. Accepts the same connection options as the server verb; they are baked into the generated .mcp.json so Claude Code launches Camel in that mode.")]
 public class CreateCaseOptions : ConnectionOptions
 {
