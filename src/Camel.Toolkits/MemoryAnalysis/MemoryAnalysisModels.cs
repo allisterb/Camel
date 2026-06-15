@@ -575,3 +575,217 @@ public class WindowsVadYaraScan
     public string? Process { get; set; }
     public object[] __children { get; set; } = [];
 }
+
+// =====================================================================================================
+// Linux memory models (Volatility 3 linux.* plugins).
+//
+// Column names below are taken verbatim from the installed plugin sources' TreeGrid definitions, so the
+// JsonPropertyName attributes match the keys Volatility's JSON renderer emits (which preserves spaces and
+// parentheses, e.g. "OFFSET (V)", "Process Name"). Volatility renders format_hints.Hex columns (offsets,
+// kernel addresses) as "0x…" strings, so those fields are typed string?; datetimes render as ISO-8601.
+//
+// NOTE: like the Windows credential models, these schemas are derived from the plugin columns and could not be
+// validated against a live Linux memory image with matching ISF symbols on the workstation. Linux plugins
+// require an ISF symbol table for the captured kernel banner (auto-fetched from the public symbol server for
+// known kernels, otherwise generated with dwarf2json); when none is available the method returns null.
+// =====================================================================================================
+
+/// <summary>linux.pslist: one task from the kernel task list (the live, allocated process view).</summary>
+public class LinuxPsList
+{
+    [JsonPropertyName("OFFSET (V)")] public string? Offset { get; set; }
+    public int PID { get; set; }
+    public int TID { get; set; }
+    public int PPID { get; set; }
+    public string COMM { get; set; } = "";
+    public int? UID { get; set; }
+    public int? GID { get; set; }
+    public int? EUID { get; set; }
+    public int? EGID { get; set; }
+    [JsonPropertyName("CREATION TIME")] public DateTime? CreationTime { get; set; }
+    [JsonPropertyName("File output")] public string? FileOutput { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>linux.psscan: a task recovered by scanning memory for task_struct pool allocations — surfaces
+/// processes unlinked from the task list (a hidden/rootkit process is in psscan but not pslist).</summary>
+public class LinuxPsScan
+{
+    [JsonPropertyName("OFFSET (P)")] public string? Offset { get; set; }
+    public int PID { get; set; }
+    public int TID { get; set; }
+    public int PPID { get; set; }
+    public string COMM { get; set; } = "";
+    public string? EXIT_STATE { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>linux.pstree: the process tree (parent/child nesting in <see cref="__children"/>).</summary>
+public class LinuxPsTree
+{
+    [JsonPropertyName("OFFSET (V)")] public string? Offset { get; set; }
+    public int PID { get; set; }
+    public int TID { get; set; }
+    public int PPID { get; set; }
+    public string COMM { get; set; } = "";
+    public LinuxPsTree[] __children { get; set; } = [];
+}
+
+/// <summary>linux.psaux: each process with its full argument vector (<see cref="ARGS"/>) — the Linux
+/// equivalent of windows.cmdline, for spotting masqueraded or suspicious command lines.</summary>
+public class LinuxPsAux
+{
+    public int PID { get; set; }
+    public int PPID { get; set; }
+    public string COMM { get; set; } = "";
+    public string? ARGS { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>linux.bash: a bash command recovered from a process's in-memory history buffer, with the time it
+/// was run — typed commands that may never have been flushed to ~/.bash_history.</summary>
+public class LinuxBash
+{
+    public int PID { get; set; }
+    public string Process { get; set; } = "";
+    public DateTime? CommandTime { get; set; }
+    public string Command { get; set; } = "";
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>linux.lsof: one open file descriptor of a process (sockets, pipes, regular files).</summary>
+public class LinuxLsof
+{
+    public int PID { get; set; }
+    public int TID { get; set; }
+    public string Process { get; set; } = "";
+    public int FD { get; set; }
+    public string? Path { get; set; }
+    public string? Device { get; set; }
+    public long? Inode { get; set; }
+    public string? Type { get; set; }
+    public string? Mode { get; set; }
+    public DateTime? Changed { get; set; }
+    public DateTime? Modified { get; set; }
+    public DateTime? Accessed { get; set; }
+    public long? Size { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>linux.sockstat: one network/Unix socket with its owning process and connection endpoints.</summary>
+public class LinuxSockstat
+{
+    public int NetNS { get; set; }
+    [JsonPropertyName("Process Name")] public string? ProcessName { get; set; }
+    public int PID { get; set; }
+    public int TID { get; set; }
+    public int FD { get; set; }
+    [JsonPropertyName("Sock Offset")] public string? SockOffset { get; set; }
+    public string? Family { get; set; }
+    public string? Type { get; set; }
+    public string? Proto { get; set; }
+    [JsonPropertyName("Source Addr")] public string? SourceAddr { get; set; }
+    [JsonPropertyName("Source Port")] public string? SourcePort { get; set; }
+    [JsonPropertyName("Destination Addr")] public string? DestinationAddr { get; set; }
+    [JsonPropertyName("Destination Port")] public string? DestinationPort { get; set; }
+    public string? State { get; set; }
+    public string? Filter { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>linux.lsmod / linux.malware.check_modules / linux.malware.hidden_modules: one kernel module. The
+/// same column set is shared by all three plugins. check_modules/hidden_modules surface modules present in
+/// memory but missing from the kernel's module list (a hidden/rootkit module).</summary>
+public class LinuxModule
+{
+    [JsonPropertyName("Offset")] public string? Offset { get; set; }
+    [JsonPropertyName("Module Name")] public string ModuleName { get; set; } = "";
+    [JsonPropertyName("Code Size")] public string? CodeSize { get; set; }
+    public string? Taints { get; set; }
+    [JsonPropertyName("Load Arguments")] public string? LoadArguments { get; set; }
+    [JsonPropertyName("File Output")] public string? FileOutput { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>linux.malware.malfind: a process memory region with execute+write permissions and no backing file
+/// (classic injected-code / shellcode indicator). <see cref="Protection"/> is the VMA's protection flags.</summary>
+public class LinuxMalfind
+{
+    public int PID { get; set; }
+    public string Process { get; set; } = "";
+    [JsonPropertyName("Start")] public string? Start { get; set; }
+    [JsonPropertyName("End")] public string? End { get; set; }
+    public string? Path { get; set; }
+    public string? Protection { get; set; }
+    public string? Hexdump { get; set; }
+    public string? Disasm { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>linux.malware.tty_check: a TTY whose receive handler points at code outside the kernel/known
+/// modules — a keystroke-logging rootkit hook.</summary>
+public class LinuxTtyCheck
+{
+    public string Name { get; set; } = "";
+    [JsonPropertyName("Address")] public string? Address { get; set; }
+    public string? Module { get; set; }
+    public string? Symbol { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>linux.malware.check_syscall: one system-call table entry whose handler does not resolve to a known
+/// kernel symbol — a hooked syscall (rootkit). <see cref="HandlerSymbol"/> is "UNKNOWN" when hooked.</summary>
+public class LinuxCheckSyscall
+{
+    [JsonPropertyName("Table Address")] public string? TableAddress { get; set; }
+    [JsonPropertyName("Table Name")] public string? TableName { get; set; }
+    public int Index { get; set; }
+    [JsonPropertyName("Handler Address")] public string? HandlerAddress { get; set; }
+    [JsonPropertyName("Handler Symbol")] public string? HandlerSymbol { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>linux.malware.check_afinfo: a network protocol-handler (seq_ops) function pointer that has been
+/// overwritten to point outside the kernel — a network-hiding rootkit hook.</summary>
+public class LinuxCheckAfinfo
+{
+    [JsonPropertyName("Symbol Name")] public string? SymbolName { get; set; }
+    public string? Member { get; set; }
+    [JsonPropertyName("Handler Address")] public string? HandlerAddress { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>linux.malware.netfilter: a registered netfilter hook. A hook whose handler is outside a known
+/// module (<see cref="IsHooked"/>) can hide traffic or implement a backdoor knock.</summary>
+public class LinuxNetfilter
+{
+    [JsonPropertyName("Net NS")] public int NetNS { get; set; }
+    public string? Proto { get; set; }
+    public string? Hook { get; set; }
+    public int Priority { get; set; }
+    [JsonPropertyName("Handler")] public string? Handler { get; set; }
+    public string? Module { get; set; }
+    public string? Symbol { get; set; }
+    [JsonPropertyName("Is Hooked")] public string? IsHooked { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>linux.malware.check_creds: a set of processes that share one in-kernel cred structure — normally
+/// impossible, and a hallmark of a credential-stealing rootkit. <see cref="PIDs"/> is the sharing process list.</summary>
+public class LinuxCheckCreds
+{
+    [JsonPropertyName("CredVAddr")] public string? CredVAddr { get; set; }
+    public string? PIDs { get; set; }
+    public object[] __children { get; set; } = [];
+}
+
+/// <summary>linux.kmsg: one kernel log-buffer (dmesg) line recovered from memory.</summary>
+public class LinuxKmsg
+{
+    public string? Facility { get; set; }
+    public string? Level { get; set; }
+    public string? Timestamp { get; set; }
+    public string? Caller { get; set; }
+    public string? Line { get; set; }
+    public object[] __children { get; set; } = [];
+}

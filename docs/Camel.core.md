@@ -162,8 +162,8 @@ if (!r.IsSuccess) error(r.Message); else log(r.Message);  // inspect r.Result �
 
 Toolkit methods execute a SIFT tool on the workstation and return a parsed model — an array or object — or `null`
 if the command failed. The toolkit objects are `MemoryAnalysisToolkit`, `DiskAnalysisToolkit`,
-`WindowsAnalysisToolkit`, `TimelineAnalysisToolkit`, `YaraToolkit`, `UnixToolsToolkit`, and
-`AnomalyDetectionToolkit`. The JSON schema for each return type named below is in the `camel-sdk-schema` resource.
+`WindowsAnalysisToolkit`, `TimelineAnalysisToolkit`, `YaraToolkit`, `UnixToolsToolkit`, `LinuxAnalysisToolkit`,
+and `AnomalyDetectionToolkit`. The JSON schema for each return type named below is in the `camel-sdk-schema` resource.
 
 ---
 
@@ -223,8 +223,33 @@ optional `pid: int` restrict output to one process.
 - `TimelinerBodyfileAsync(image: string, outputDir: string)` → `string` (path) — mactime bodyfile of all
   timestamped artifacts (`volatility.body`), or null.
 
-> Most Volatility plugins are independent — fan out multiple `Windows*Async` calls and `await` them together
-> (e.g. `Promise.all`); the environment bounds SSH concurrency.
+### Linux memory plugins
+
+For a **Linux** memory image. Same call shape as the Windows methods. **Symbols caveat:** every Linux plugin
+needs an ISF symbol table matching the captured kernel's banner (none ship with Volatility); `vol` auto-fetches
+known kernels from the public symbol server, otherwise generate symbols with `dwarf2json`. With no symbols the
+method returns `null` (≠ empty result).
+
+- `LinuxPsListAsync(filename: string, pid?: int)` → `LinuxPsList[]` — task-list processes (live view).
+- `LinuxPsScanAsync(filename: string)` → `LinuxPsScan[]` — pool-scan processes (finds unlinked/hidden).
+- `LinuxPsTreeAsync(filename: string, pid?: int)` → `LinuxPsTree[]` — process tree (`__children`).
+- `LinuxPsAuxAsync(filename: string, pid?: int)` → `LinuxPsAux[]` — processes with full argument vectors.
+- `LinuxBashAsync(filename: string, pid?: int)` → `LinuxBash[]` — bash history recovered from process memory.
+- `LinuxLsofAsync(filename: string, pid?: int)` → `LinuxLsof[]` — open file descriptors per process.
+- `LinuxSockstatAsync(filename: string)` → `LinuxSockstat[]` — sockets with owning process/endpoints (netstat view).
+- `LinuxLsmodAsync(filename: string)` → `LinuxModule[]` — loaded kernel modules.
+- `LinuxCheckModulesAsync(filename: string)` → `LinuxModule[]` — modules in memory but missing from the list (hidden).
+- `LinuxHiddenModulesAsync(filename: string)` → `LinuxModule[]` — modules carved from memory (empty = none hidden).
+- `LinuxCheckSyscallAsync(filename: string)` → `LinuxCheckSyscall[]` — hooked syscall-table entries (empty = clean).
+- `LinuxCheckAfinfoAsync(filename: string)` → `LinuxCheckAfinfo[]` — overwritten protocol handlers (empty = clean).
+- `LinuxCheckCredsAsync(filename: string)` → `LinuxCheckCreds[]` — processes sharing one cred struct (empty = clean).
+- `LinuxTtyCheckAsync(filename: string)` → `LinuxTtyCheck[]` — hooked TTY handlers / keyloggers (empty = clean).
+- `LinuxMalfindAsync(filename: string, pid?: int)` → `LinuxMalfind[]` — injected WX regions (empty = clean).
+- `LinuxNetfilterAsync(filename: string)` → `LinuxNetfilter[]` — registered netfilter hooks (foreign = backdoor).
+- `LinuxKmsgAsync(filename: string)` → `LinuxKmsg[]` — kernel ring buffer (dmesg) from memory.
+
+> Most Volatility plugins are independent — fan out multiple `Windows*Async`/`Linux*Async` calls and `await` them
+> together (e.g. `Promise.all`); the environment bounds SSH concurrency.
 
 ---
 
@@ -396,6 +421,34 @@ const procs = await MemoryAnalysisToolkit.WindowsPsScanAsync(d.OutputPath);
 
 ---
 
+## LinuxAnalysisToolkit
+
+Typed extractors for **Linux host artifacts on a mounted root filesystem** (a forensic image mounted read-only,
+or a live root). Each method takes a `rootDir` (the mount point, e.g. `/mnt/linux`, or `/` for the live host) or
+an explicit artifact path, and is read-only. Reads default to **sudo** (forensic mounts are root-owned). Grounded
+in Bruce Nikkel, *Practical Linux Forensics*. Tooling note: everything here is satisfied by the base SIFT image —
+no installs are needed for the default Debian/Ubuntu (dpkg) path.
+
+- `SystemInfoAsync(rootDir: string, sudo?: bool)` → `LinuxSystemInfo` — os-release/hostname/timezone/machine-id.
+- `UserAccountsAsync(rootDir: string, sudo?: bool)` → `LinuxUserAccount[]` — passwd⋈shadow (hash-free `PasswordState`).
+- `SudoersAsync(rootDir: string, sudo?: bool)` → `SudoRule[]` — sudoers + sudoers.d grants.
+- `CronEntriesAsync(rootDir: string, sudo?: bool)` → `CronEntry[]` — every cron location (system/user/script dirs).
+- `LastLoginsAsync(wtmpPath?: string, rootDir?: string, sudo?: bool)` → `LinuxLogin[]` — successful logins (`last`).
+- `FailedLoginsAsync(btmpPath?: string, rootDir?: string, sudo?: bool)` → `LinuxLogin[]` — failed logins (`lastb`).
+- `UtmpDumpAsync(path: string, sudo?: bool)` → `UtmpRecord[]` — raw utmp/wtmp/btmp (boot records, tamper checks).
+- `JournalAsync(journalDir: string, maxEntries?: int, unit?: string, sudo?: bool)` → `JournalEntry[]` — systemd journal.
+- `InstalledPackagesAsync(rootDir: string, sudo?: bool)` → `LinuxPackage[]` — dpkg status inventory.
+- `PackageLogAsync(rootDir: string, sudo?: bool)` → `PackageEvent[]` — dpkg.log + apt history install timeline.
+- `ShellHistoryAsync(rootDir: string, sudo?: bool)` → `ShellHistoryEntry[]` — every user's bash/zsh/python history.
+- `ClamScanAsync(path: string, recurse?: bool, sudo?: bool)` → `ClamAvMatch[]` — ClamAV infected-file scan.
+- `SetuidFilesAsync(rootDir: string, sudo?: bool)` → `LinuxFile[]` — SUID/SGID binaries.
+- `WorldWritableFilesAsync(rootDir: string, sudo?: bool)` → `LinuxFile[]` — world-writable files.
+- `FilesInDirsAsync(dirs: string[], sudo?: bool)` → `LinuxFile[]` — files under given dirs (e.g. /tmp staging).
+- `ReadFilesAsync(paths: string[], sudo?: bool)` → array of `{ Path, Content }` — slurp arbitrary small artifact
+  files/globs in one round trip (systemd units, rc files, authorized_keys, …).
+
+---
+
 ## AnomalyDetectionToolkit
 
 A **pure-compute** (no workstation I/O) triage engine over a canonical timeline. It turns a timeline into a
@@ -424,7 +477,8 @@ log(AnomalyDetectionToolkit.Summarize(report, 25));
 Workflows codify multi-step DFIR procedures over the toolkits. **Every workflow method is async and returns
 `WorkflowResult<T>`** (access the payload via `result.Result`). The workflow objects are `DiskAnalysisWorkflow`,
 `MemoryAnalysisWorkflow`, `WindowsAnalysisWorkflow`, `TimelineAnalysisWorkflow`, `AntiForensicsAnalysisWorkflow`,
-`WebServerWorkflow`. The JSON schema for each payload type named below is in the `camel-sdk-schema` resource.
+`WebServerWorkflow`, and `LinuxAnalysisWorkflow`. The JSON schema for each payload type named below is in the
+`camel-sdk-schema` resource.
 
 ---
 
@@ -556,6 +610,42 @@ the web root on a mounted volume.
   injected PHP backdoor). `maxFindings` caps detail rows (default 100).
 - `ScanWebRootForWebshellsAsync(webRoot: string, rulesFile?: string)` → `WorkflowResult<WebshellScanReport>`
   — YARA-scan the web root with the bundled web-shell pack (default `webshells_index.yar`).
+
+---
+
+## LinuxAnalysisWorkflow
+
+Triage a **mounted Linux root filesystem** for compromise: the correlation/scoring layer over
+`LinuxAnalysisToolkit`. `rootDir` is the mount point (e.g. `/mnt/linux`, or `/` for the live host). Each report
+carries the raw artifacts plus the flagged items (with the reason flagged).
+
+- `TriageHostAsync(rootDir: string)` → `WorkflowResult<LinuxHostTriageReport>` — runs the account, login, auth,
+  persistence, history and file hunts **in parallel** and rolls up the top findings (`TopFindings`). Start here.
+- `AnalyzeUserAccountsAsync(rootDir: string)` → `WorkflowResult<UserAccountReport>` — UID-0 extras, empty passwords,
+  service accounts with login shells, NOPASSWD/ALL sudo grants.
+- `AnalyzeLoginActivityAsync(rootDir: string)` → `WorkflowResult<LoginActivityReport>` — wtmp/btmp: source-IP
+  ranking, brute-force sources, success-after-failures, remote root logins.
+- `AnalyzeAuthLogAsync(rootDir: string)` → `WorkflowResult<AuthEventReport>` — auth.log/secure: sshd accepted/failed,
+  sudo/su, account changes, SSH brute-force (server-side prefiltered).
+- `HuntPersistenceAsync(rootDir: string)` → `WorkflowResult<LinuxPersistenceReport>` — cron, systemd units/timers,
+  rc.local, init, shell rc, ld.so.preload, authorized_keys, udev, motd — scored for implant tells.
+- `AnalyzeShellHistoryAsync(rootDir: string)` → `WorkflowResult<ShellHistoryReport>` — attacker-pattern commands
+  (recon/download/privesc/persistence/lateral-c2/cleanup/credaccess) across all users' histories.
+- `AnalyzeInstalledPackagesAsync(rootDir: string)` → `WorkflowResult<PackageReport>` — dpkg inventory + install
+  timeline; flags dual-use/offensive tooling installs (nmap, netcat, masscan, …).
+- `HuntAnomalousFilesAsync(rootDir: string)` → `WorkflowResult<FileAnomalyReport>` — off-baseline SUID/SGID,
+  world-writable system files, executables staged in /tmp·/dev/shm·/var/tmp.
+- `ScanForMalwareAsync(target: string, yaraRulesFile?: string)` → `WorkflowResult<LinuxMalwareReport>` — ClamAV +
+  YARA over a target (default rules: the bundled master `index.yar`).
+- `AnalyzeJournalAsync(rootDir: string, maxEntries?: int)` → `WorkflowResult<JournalReport>` — systemd journal:
+  sudo/ssh/service-start counts + notable entries.
+
+```js
+// One-call Linux host triage over a mounted image.
+const t = await LinuxAnalysisWorkflow.TriageHostAsync("/mnt/linux");
+log(t.Message);
+for (const f of t.Result.TopFindings) log(f);
+```
 
 ---
 

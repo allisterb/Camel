@@ -169,7 +169,7 @@ public class SshAuditEnvironment : AuditEnvironment
         System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
         sw.Start();
         EnsureConnected();
-        SshCommand ls_cmd = sshClient.RunCommand("stat " + file_path);
+        SshCommand ls_cmd = sshClient.RunCommand("stat " + "'" + file_path + "'");
         sw.Stop();
         if (!string.IsNullOrEmpty(ls_cmd.Result))
         {
@@ -188,7 +188,7 @@ public class SshAuditEnvironment : AuditEnvironment
     public override bool DirectoryExists(string dir_path)
     {
         EnsureConnected();
-        SshCommand stat_cmd = sshClient.RunCommand("stat " + dir_path);
+        SshCommand stat_cmd = sshClient.RunCommand("stat " + "'" + dir_path + "'");
         if (!string.IsNullOrEmpty(stat_cmd.Result))
         {
             Debug("stat {0} returned {1}.", dir_path, stat_cmd.Result);
@@ -480,7 +480,7 @@ public class SshAuditEnvironment : AuditEnvironment
         sw.Start();
         Parallel.ForEach(files, new ParallelOptions() { MaxDegreeOfParallelism = 20 }, (_f, state) => 
         {
-            SshCommand cmd = this.sshClient.CreateCommand("cat " + _f.FullName);
+            SshCommand cmd = this.sshClient.CreateCommand("cat " + $"'{_f.FullName}'");
             Stopwatch cs = new Stopwatch();
             cs.Start();
             var result = cmd.BeginExecute(new AsyncCallback(SshCommandAsyncCallback), new KeyValuePair<SshCommand, Stopwatch>(cmd, cs));

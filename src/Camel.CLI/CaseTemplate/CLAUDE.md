@@ -208,6 +208,19 @@ via known signatures, keywords, and "evidence of…" categories), and anti-foren
 - Web-server intrusion (SQLi → webshell): `WebServerWorkflow.AnalyzeWebServerLogsAsync`,
   `ScanWebRootForWebshellsAsync`.
 
+### C. Linux host analysis (mounted Linux root)
+
+For a **mounted Linux root filesystem** (`rootDir`, e.g. `/mnt/linux`). Grounded in Nikkel, *Practical Linux Forensics*.
+- **Start here:** `LinuxAnalysisWorkflow.TriageHostAsync(rootDir)` — runs the account/login/auth/persistence/history/
+  file hunts in parallel and rolls up `Result.TopFindings`.
+- **Targeted hunts:** `AnalyzeUserAccountsAsync` (passwd/shadow/sudoers), `AnalyzeLoginActivityAsync` (wtmp/btmp),
+  `AnalyzeAuthLogAsync` (auth.log/secure), `HuntPersistenceAsync` (cron/systemd/rc/ld.so.preload/authorized_keys/udev),
+  `AnalyzeShellHistoryAsync`, `AnalyzeInstalledPackagesAsync`, `HuntAnomalousFilesAsync` (SUID/world-writable/temp),
+  `AnalyzeJournalAsync`, `ScanForMalwareAsync` (ClamAV + YARA).
+- **Raw artifacts:** `LinuxAnalysisToolkit.*` (UserAccounts/CronEntries/LastLogins/Journal/InstalledPackages/…).
+- **Memory (Linux image):** `MemoryAnalysisToolkit.Linux*Async` (pslist/psaux/bash/sockstat/check_syscall/malfind/…).
+  Needs an ISF symbol table matching the kernel banner (auto-fetched for known kernels, else dwarf2json).
+
 
 ### Example code
 ```js
@@ -228,6 +241,13 @@ const r = await MemoryAnalysisWorkflow.FindMalwareAsync("/cases/mem.raw", "/case
 if (r.IsSuccess)
   for (const s of r.Result.HighConfidenceSuspects)
     log(`${s.Process} (PID ${s.Pid}) [${s.Categories.join(", ")}] ${s.Signals.join("; ")}`);
+```
+
+```js
+// Mounted Linux root → one-call host triage.
+const t = await LinuxAnalysisWorkflow.TriageHostAsync("/mnt/linux");
+log(t.Message);
+for (const f of t.Result.TopFindings) log(f);
 ```
 ---
 

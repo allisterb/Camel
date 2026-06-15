@@ -27,6 +27,7 @@ public class CamelToolkitsApi : Runtime
     private YaraToolkit? _yara;
     private TimelineToolkit? _timeline;
     private UnixToolsToolkit? _unix;
+    private LinuxAnalysisToolkit? _linux;
     #endregion
 
     #region Properties
@@ -61,5 +62,14 @@ public class CamelToolkitsApi : Runtime
     /// with the base SIFT image).
     /// </summary>
     public UnixToolsToolkit UnixTools => _unix ??= new UnixToolsToolkit(env, config);
+
+    /// <summary>
+    /// The Linux host-analysis toolkit (typed extractors for accounts, logs, login records, cron/systemd
+    /// persistence, packages, shell history, and a ClamAV scanner over a mounted Linux root). Constructed lazily
+    /// on first use; first access requires a <c>Tools:LinuxAnalysis</c> config section. Its wrapped tools
+    /// (<c>last</c>/<c>lastb</c>/<c>utmpdump</c>/<c>journalctl</c>/<c>clamscan</c>) ship with the base SIFT image,
+    /// so it needs no provisioning.
+    /// </summary>
+    public LinuxAnalysisToolkit LinuxAnalysis => _linux ??= new LinuxAnalysisToolkit(env, config);
     #endregion
 }

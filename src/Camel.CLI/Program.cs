@@ -220,7 +220,7 @@ internal class Program : Runtime
 
         Info($"Case '{opts.CaseId}' ready at {caseDir}.");
         AnsiConsole.MarkupLine($"[cyan]\nFill in the case details in {Path.Combine(caseDir, "CLAUDE.md")}. When you are ready launch Claude in that directory.[/]");
-        AnsiConsole.MarkupLine($"[grey]Open {viewerHtmlPath} in a browser to review findings and the audit trail.[/]");
+        AnsiConsole.MarkupLine($"[cyan]When the investigation completes, open {viewerHtmlPath} in a browser to review findings and the audit trail.[/]");
         return Task.CompletedTask;
     }
 

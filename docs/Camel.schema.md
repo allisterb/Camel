@@ -1334,3 +1334,295 @@ types are defined once (in the toolkit that owns them) and referenced by name el
 { "type": "object", "properties": {
   "Path": { "type": "string" }, "Rules": { "type": "array", "items": { "type": "string" }, "description": "Distinct rules that fired (a real shell trips many)." } } }
 ```
+
+---
+
+## MemoryAnalysisToolkit (Linux plugins)
+
+Address/offset fields are rendered by Volatility as `"0x…"` strings. Each row also carries `__children` (array).
+
+### LinuxPsList Schema
+```json
+{ "type": "object", "properties": {
+  "Offset": { "type": "string" }, "PID": { "type": "integer" }, "TID": { "type": "integer" }, "PPID": { "type": "integer" },
+  "COMM": { "type": "string" }, "UID": { "type": "integer" }, "GID": { "type": "integer" },
+  "EUID": { "type": "integer" }, "EGID": { "type": "integer" },
+  "CreationTime": { "type": "string", "format": "date-time" }, "FileOutput": { "type": "string" } } }
+```
+### LinuxPsScan Schema
+```json
+{ "type": "object", "properties": {
+  "Offset": { "type": "string" }, "PID": { "type": "integer" }, "TID": { "type": "integer" }, "PPID": { "type": "integer" },
+  "COMM": { "type": "string" }, "EXIT_STATE": { "type": "string" } } }
+```
+### LinuxPsTree Schema
+```json
+{ "type": "object", "properties": {
+  "Offset": { "type": "string" }, "PID": { "type": "integer" }, "TID": { "type": "integer" }, "PPID": { "type": "integer" },
+  "COMM": { "type": "string" }, "__children": { "type": "array", "items": { "$ref": "LinuxPsTree" } } } }
+```
+### LinuxPsAux Schema
+```json
+{ "type": "object", "properties": {
+  "PID": { "type": "integer" }, "PPID": { "type": "integer" }, "COMM": { "type": "string" }, "ARGS": { "type": "string" } } }
+```
+### LinuxBash Schema
+```json
+{ "type": "object", "properties": {
+  "PID": { "type": "integer" }, "Process": { "type": "string" },
+  "CommandTime": { "type": "string", "format": "date-time" }, "Command": { "type": "string" } } }
+```
+### LinuxLsof Schema
+```json
+{ "type": "object", "properties": {
+  "PID": { "type": "integer" }, "TID": { "type": "integer" }, "Process": { "type": "string" }, "FD": { "type": "integer" },
+  "Path": { "type": "string" }, "Device": { "type": "string" }, "Inode": { "type": "integer" },
+  "Type": { "type": "string" }, "Mode": { "type": "string" }, "Size": { "type": "integer" },
+  "Changed": { "type": "string", "format": "date-time" }, "Modified": { "type": "string", "format": "date-time" },
+  "Accessed": { "type": "string", "format": "date-time" } } }
+```
+### LinuxSockstat Schema
+```json
+{ "type": "object", "properties": {
+  "NetNS": { "type": "integer" }, "ProcessName": { "type": "string" }, "PID": { "type": "integer" }, "TID": { "type": "integer" },
+  "FD": { "type": "integer" }, "SockOffset": { "type": "string" }, "Family": { "type": "string" }, "Type": { "type": "string" },
+  "Proto": { "type": "string" }, "SourceAddr": { "type": "string" }, "SourcePort": { "type": "string" },
+  "DestinationAddr": { "type": "string" }, "DestinationPort": { "type": "string" }, "State": { "type": "string" }, "Filter": { "type": "string" } } }
+```
+### LinuxModule Schema
+```json
+{ "type": "object", "description": "Shared by LinuxLsmodAsync / LinuxCheckModulesAsync / LinuxHiddenModulesAsync.", "properties": {
+  "Offset": { "type": "string" }, "ModuleName": { "type": "string" }, "CodeSize": { "type": "string" },
+  "Taints": { "type": "string" }, "LoadArguments": { "type": "string" }, "FileOutput": { "type": "string" } } }
+```
+### LinuxMalfind Schema
+```json
+{ "type": "object", "properties": {
+  "PID": { "type": "integer" }, "Process": { "type": "string" }, "Start": { "type": "string" }, "End": { "type": "string" },
+  "Path": { "type": "string" }, "Protection": { "type": "string" }, "Hexdump": { "type": "string" }, "Disasm": { "type": "string" } } }
+```
+### LinuxTtyCheck Schema
+```json
+{ "type": "object", "properties": {
+  "Name": { "type": "string" }, "Address": { "type": "string" }, "Module": { "type": "string" }, "Symbol": { "type": "string" } } }
+```
+### LinuxCheckSyscall Schema
+```json
+{ "type": "object", "properties": {
+  "TableAddress": { "type": "string" }, "TableName": { "type": "string" }, "Index": { "type": "integer" },
+  "HandlerAddress": { "type": "string" }, "HandlerSymbol": { "type": "string" } } }
+```
+### LinuxCheckAfinfo Schema
+```json
+{ "type": "object", "properties": {
+  "SymbolName": { "type": "string" }, "Member": { "type": "string" }, "HandlerAddress": { "type": "string" } } }
+```
+### LinuxNetfilter Schema
+```json
+{ "type": "object", "properties": {
+  "NetNS": { "type": "integer" }, "Proto": { "type": "string" }, "Hook": { "type": "string" }, "Priority": { "type": "integer" },
+  "Handler": { "type": "string" }, "Module": { "type": "string" }, "Symbol": { "type": "string" }, "IsHooked": { "type": "string" } } }
+```
+### LinuxCheckCreds Schema
+```json
+{ "type": "object", "properties": { "CredVAddr": { "type": "string" }, "PIDs": { "type": "string" } } }
+```
+### LinuxKmsg Schema
+```json
+{ "type": "object", "properties": {
+  "Facility": { "type": "string" }, "Level": { "type": "string" }, "Timestamp": { "type": "string" },
+  "Caller": { "type": "string" }, "Line": { "type": "string" } } }
+```
+
+---
+
+## LinuxAnalysisToolkit
+
+### LinuxSystemInfo Schema
+```json
+{ "type": "object", "properties": {
+  "Hostname": { "type": "string" }, "PrettyName": { "type": "string" }, "DistroId": { "type": "string" },
+  "VersionId": { "type": "string" }, "Name": { "type": "string" }, "Version": { "type": "string" },
+  "Timezone": { "type": "string" }, "MachineId": { "type": "string" }, "IdLike": { "type": "string" } } }
+```
+### LinuxUserAccount Schema
+```json
+{ "type": "object", "properties": {
+  "Username": { "type": "string" }, "Uid": { "type": "integer" }, "Gid": { "type": "integer" },
+  "Gecos": { "type": "string" }, "Home": { "type": "string" }, "Shell": { "type": "string" },
+  "HasLoginShell": { "type": "boolean" }, "IsSystemAccount": { "type": "boolean" },
+  "PasswordState": { "type": "string", "enum": ["set", "empty", "locked", "none", "unknown"] },
+  "PasswordLastChanged": { "type": "string", "format": "date-time" } } }
+```
+### SudoRule Schema
+```json
+{ "type": "object", "properties": {
+  "Source": { "type": "string" }, "Raw": { "type": "string" }, "Principal": { "type": "string" }, "Spec": { "type": "string" },
+  "NoPasswd": { "type": "boolean" }, "GrantsAll": { "type": "boolean" } } }
+```
+### CronEntry Schema
+```json
+{ "type": "object", "properties": {
+  "Source": { "type": "string" }, "User": { "type": "string" }, "Schedule": { "type": "string" },
+  "Command": { "type": "string" }, "Raw": { "type": "string" }, "IsReboot": { "type": "boolean" } } }
+```
+### LinuxLogin Schema
+```json
+{ "type": "object", "properties": {
+  "User": { "type": "string" }, "Terminal": { "type": "string" }, "Host": { "type": "string" },
+  "Start": { "type": "string", "format": "date-time" }, "Status": { "type": "string" },
+  "StillLoggedIn": { "type": "boolean" }, "Raw": { "type": "string" } } }
+```
+### UtmpRecord Schema
+```json
+{ "type": "object", "properties": {
+  "Type": { "type": "integer" }, "TypeName": { "type": "string" }, "Pid": { "type": "integer" }, "Id": { "type": "string" },
+  "User": { "type": "string" }, "Line": { "type": "string" }, "Host": { "type": "string" }, "Address": { "type": "string" },
+  "Time": { "type": "string", "format": "date-time" } } }
+```
+### JournalEntry Schema
+```json
+{ "type": "object", "properties": {
+  "Timestamp": { "type": "string", "format": "date-time" }, "Unit": { "type": "string" }, "Identifier": { "type": "string" },
+  "Pid": { "type": "integer" }, "Uid": { "type": "integer" }, "Priority": { "type": "integer" },
+  "Hostname": { "type": "string" }, "Message": { "type": "string" } } }
+```
+### LinuxPackage Schema
+```json
+{ "type": "object", "properties": {
+  "Name": { "type": "string" }, "Version": { "type": "string" }, "Architecture": { "type": "string" },
+  "Status": { "type": "string" }, "Section": { "type": "string" }, "Priority": { "type": "string" }, "Installed": { "type": "boolean" } } }
+```
+### PackageEvent Schema
+```json
+{ "type": "object", "properties": {
+  "Timestamp": { "type": "string", "format": "date-time" }, "Action": { "type": "string" }, "Package": { "type": "string" },
+  "Version": { "type": "string" }, "PreviousVersion": { "type": "string" }, "Source": { "type": "string" } } }
+```
+### ShellHistoryEntry Schema
+```json
+{ "type": "object", "properties": {
+  "User": { "type": "string" }, "HistoryFile": { "type": "string" }, "LineNumber": { "type": "integer" },
+  "Command": { "type": "string" }, "Timestamp": { "type": "string", "format": "date-time" } } }
+```
+### ClamAvMatch Schema
+```json
+{ "type": "object", "properties": { "Path": { "type": "string" }, "Signature": { "type": "string" } } }
+```
+### LinuxFile Schema
+```json
+{ "type": "object", "properties": {
+  "Path": { "type": "string" }, "Mode": { "type": "string", "description": "Octal, e.g. 4755." },
+  "Owner": { "type": "string" }, "Group": { "type": "string" }, "Size": { "type": "integer" },
+  "Modified": { "type": "string", "format": "date-time" },
+  "IsSetuid": { "type": "boolean" }, "IsSetgid": { "type": "boolean" }, "IsExecutable": { "type": "boolean" } } }
+```
+
+---
+
+## LinuxAnalysisWorkflow
+
+### UserAccountReport Schema
+```json
+{ "type": "object", "properties": {
+  "Accounts": { "type": "array", "items": { "$ref": "LinuxUserAccount" } },
+  "SudoRules": { "type": "array", "items": { "$ref": "SudoRule" } },
+  "Findings": { "type": "array", "items": { "$ref": "AccountFinding" } }, "TotalAccounts": { "type": "integer" } } }
+```
+### AccountFinding Schema
+```json
+{ "type": "object", "properties": {
+  "Username": { "type": "string" }, "Issue": { "type": "string", "description": "uid0-extra | empty-password | service-account-login-shell | sudo-nopasswd | sudo-all" }, "Detail": { "type": "string" } } }
+```
+### LoginActivityReport Schema
+```json
+{ "type": "object", "properties": {
+  "SuccessfulCount": { "type": "integer" }, "FailedCount": { "type": "integer" },
+  "TopSourceIps": { "type": "array", "items": { "$ref": "IpLoginStat" } },
+  "TopFailedUsers": { "type": "array", "items": { "$ref": "NameCount" } },
+  "RecentSuccessful": { "type": "array", "items": { "$ref": "LinuxLogin" } },
+  "Findings": { "type": "array", "items": { "$ref": "LoginFinding" } } } }
+```
+### IpLoginStat Schema
+```json
+{ "type": "object", "properties": { "Ip": { "type": "string" }, "Successful": { "type": "integer" }, "Failed": { "type": "integer" } } }
+```
+### NameCount Schema
+```json
+{ "type": "object", "properties": { "Name": { "type": "string" }, "Count": { "type": "integer" } } }
+```
+### LoginFinding Schema
+```json
+{ "type": "object", "properties": { "Category": { "type": "string" }, "Detail": { "type": "string" } } }
+```
+### AuthEventReport Schema
+```json
+{ "type": "object", "properties": {
+  "LogPath": { "type": "string" }, "AcceptedLogins": { "type": "integer" }, "FailedLogins": { "type": "integer" },
+  "SudoCommands": { "type": "integer" }, "TopSshSourceIps": { "type": "array", "items": { "$ref": "IpLoginStat" } },
+  "Events": { "type": "array", "items": { "$ref": "AuthEvent" } }, "Findings": { "type": "array", "items": { "$ref": "AuthEvent" } } } }
+```
+### AuthEvent Schema
+```json
+{ "type": "object", "properties": {
+  "Time": { "type": "string", "format": "date-time" }, "Type": { "type": "string" }, "User": { "type": "string" },
+  "SourceIp": { "type": "string" }, "Raw": { "type": "string" } } }
+```
+### LinuxPersistenceReport Schema
+```json
+{ "type": "object", "properties": {
+  "Items": { "type": "array", "items": { "$ref": "PersistenceItem" } },
+  "Suspicious": { "type": "array", "items": { "$ref": "PersistenceItem" } }, "TotalItems": { "type": "integer" } } }
+```
+### PersistenceItem Schema
+```json
+{ "type": "object", "properties": {
+  "Mechanism": { "type": "string" }, "Source": { "type": "string" }, "Detail": { "type": "string" },
+  "Score": { "type": "integer" }, "Reasons": { "type": "array", "items": { "type": "string" } } } }
+```
+### ShellHistoryReport Schema
+```json
+{ "type": "object", "properties": {
+  "TotalLines": { "type": "integer" }, "UsersWithHistory": { "type": "integer" },
+  "Suspicious": { "type": "array", "items": { "$ref": "SuspiciousCommand" } } } }
+```
+### SuspiciousCommand Schema
+```json
+{ "type": "object", "properties": {
+  "User": { "type": "string" }, "Command": { "type": "string" }, "Categories": { "type": "array", "items": { "type": "string" } },
+  "Timestamp": { "type": "string", "format": "date-time" }, "HistoryFile": { "type": "string" } } }
+```
+### PackageReport Schema
+```json
+{ "type": "object", "properties": {
+  "InstalledCount": { "type": "integer" }, "RecentEvents": { "type": "array", "items": { "$ref": "PackageEvent" } },
+  "Findings": { "type": "array", "items": { "$ref": "PackageEvent" } } } }
+```
+### FileAnomalyReport Schema
+```json
+{ "type": "object", "properties": {
+  "SuspiciousSetuid": { "type": "array", "items": { "$ref": "LinuxFile" } }, "TotalSetuid": { "type": "integer" },
+  "WorldWritable": { "type": "array", "items": { "$ref": "LinuxFile" } },
+  "ExecutablesInTempDirs": { "type": "array", "items": { "$ref": "LinuxFile" } } } }
+```
+### LinuxMalwareReport Schema
+```json
+{ "type": "object", "properties": {
+  "Target": { "type": "string" }, "ClamMatches": { "type": "array", "items": { "$ref": "ClamAvMatch" } },
+  "YaraMatches": { "type": "array", "items": { "$ref": "YaraMatch" } }, "Note": { "type": "string" } } }
+```
+### JournalReport Schema
+```json
+{ "type": "object", "properties": {
+  "JournalDir": { "type": "string" }, "TotalEntries": { "type": "integer" }, "SudoEvents": { "type": "integer" },
+  "SshEvents": { "type": "integer" }, "ServiceStarts": { "type": "integer" },
+  "Notable": { "type": "array", "items": { "$ref": "JournalEntry" } } } }
+```
+### LinuxHostTriageReport Schema
+```json
+{ "type": "object", "properties": {
+  "System": { "$ref": "LinuxSystemInfo" }, "Accounts": { "$ref": "UserAccountReport" }, "Logins": { "$ref": "LoginActivityReport" },
+  "Auth": { "$ref": "AuthEventReport" }, "Persistence": { "$ref": "LinuxPersistenceReport" },
+  "ShellHistory": { "$ref": "ShellHistoryReport" }, "Files": { "$ref": "FileAnomalyReport" },
+  "TopFindings": { "type": "array", "items": { "type": "string" } } } }
+```

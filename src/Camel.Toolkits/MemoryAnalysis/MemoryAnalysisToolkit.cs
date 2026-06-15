@@ -303,5 +303,92 @@ public class MemoryAnalysisToolkit : Toolkit
         return names.Where(nonEmpty.Contains).Select(f => $"{outputDir.TrimEnd('/')}/{f}").ToArray();
     }
 
+    #region Linux plugins
+    // Volatility 3 Linux memory plugins. These mirror the Windows plugin methods above but target a Linux memory
+    // image. IMPORTANT: every Linux plugin needs an ISF symbol table matching the captured kernel's banner — none
+    // ship with Volatility. For a known kernel `vol` auto-downloads the symbols from the public symbol server on
+    // first use; otherwise generate them from the kernel's debug info with dwarf2json and drop the .json(.xz) into
+    // the symbols/linux directory. Without symbols the plugin fails and the method returns null (not an empty
+    // result), which a caller should treat as "symbols unavailable", distinct from "ran clean, nothing found".
+
+    /// <summary>Lists processes from the kernel task list (linux.pslist) — the live, allocated process view.</summary>
+    public Task<LinuxPsList[]?> LinuxPsListAsync(string filename, int? pid = null) =>
+        ExecuteToolAsync<LinuxPsList[]>("Volatility3", $"-f {filename} -r json linux.pslist" + (pid is not null ? $" --pid {pid}" : ""));
+
+    /// <summary>Scans memory for task_struct allocations (linux.psscan); a process present here but absent from
+    /// <see cref="LinuxPsListAsync"/> has been unlinked from the task list (hidden / rootkit process).</summary>
+    public Task<LinuxPsScan[]?> LinuxPsScanAsync(string filename) =>
+        ExecuteToolAsync<LinuxPsScan[]>("Volatility3", $"-f {filename} -r json linux.psscan");
+
+    /// <summary>Process tree with parent/child nesting in <c>__children</c> (linux.pstree).</summary>
+    public Task<LinuxPsTree[]?> LinuxPsTreeAsync(string filename, int? pid = null) =>
+        ExecuteToolAsync<LinuxPsTree[]>("Volatility3", $"-f {filename} -r json linux.pstree" + (pid is not null ? $" --pid {pid}" : ""));
+
+    /// <summary>Each process with its full argument vector (linux.psaux) — Linux equivalent of windows.cmdline.</summary>
+    public Task<LinuxPsAux[]?> LinuxPsAuxAsync(string filename, int? pid = null) =>
+        ExecuteToolAsync<LinuxPsAux[]>("Volatility3", $"-f {filename} -r json linux.psaux" + (pid is not null ? $" --pid {pid}" : ""));
+
+    /// <summary>Recovers bash command history (with timestamps) from process memory (linux.bash) — typed commands
+    /// that may never have reached <c>~/.bash_history</c>.</summary>
+    public Task<LinuxBash[]?> LinuxBashAsync(string filename, int? pid = null) =>
+        ExecuteToolAsync<LinuxBash[]>("Volatility3", $"-f {filename} -r json linux.bash" + (pid is not null ? $" --pid {pid}" : ""));
+
+    /// <summary>Open file descriptors per process — sockets, pipes, files (linux.lsof).</summary>
+    public Task<LinuxLsof[]?> LinuxLsofAsync(string filename, int? pid = null) =>
+        ExecuteToolAsync<LinuxLsof[]>("Volatility3", $"-f {filename} -r json linux.lsof" + (pid is not null ? $" --pid {pid}" : ""));
+
+    /// <summary>Network and Unix sockets with owning process and endpoints (linux.sockstat) — the netstat view.</summary>
+    public Task<LinuxSockstat[]?> LinuxSockstatAsync(string filename) =>
+        ExecuteToolAsync<LinuxSockstat[]>("Volatility3", $"-f {filename} -r json linux.sockstat");
+
+    /// <summary>Loaded kernel modules from the module list (linux.lsmod).</summary>
+    public Task<LinuxModule[]?> LinuxLsmodAsync(string filename) =>
+        ExecuteToolAsync<LinuxModule[]>("Volatility3", $"-f {filename} -r json linux.lsmod");
+
+    /// <summary>Cross-checks the module list against module-allocation memory (linux.malware.check_modules);
+    /// rows are modules in memory but missing from the list — a hidden/rootkit module.</summary>
+    public Task<LinuxModule[]?> LinuxCheckModulesAsync(string filename) =>
+        ExecuteToolAsync<LinuxModule[]>("Volatility3", $"-f {filename} -r json linux.malware.check_modules");
+
+    /// <summary>Carves module structures directly from kernel memory to find modules hidden from every standard
+    /// list (linux.malware.hidden_modules). Empty result = none hidden.</summary>
+    public Task<LinuxModule[]?> LinuxHiddenModulesAsync(string filename) =>
+        ExecuteToolAsync<LinuxModule[]>("Volatility3", $"-f {filename} -r json linux.malware.hidden_modules");
+
+    /// <summary>System-call table entries whose handler doesn't resolve to a known symbol (linux.malware.check_syscall)
+    /// — hooked syscalls. Empty result = clean.</summary>
+    public Task<LinuxCheckSyscall[]?> LinuxCheckSyscallAsync(string filename) =>
+        ExecuteToolAsync<LinuxCheckSyscall[]>("Volatility3", $"-f {filename} -r json linux.malware.check_syscall");
+
+    /// <summary>Protocol-handler (seq_ops) function pointers overwritten to point outside the kernel
+    /// (linux.malware.check_afinfo) — a network-hiding rootkit hook. Empty result = clean.</summary>
+    public Task<LinuxCheckAfinfo[]?> LinuxCheckAfinfoAsync(string filename) =>
+        ExecuteToolAsync<LinuxCheckAfinfo[]>("Volatility3", $"-f {filename} -r json linux.malware.check_afinfo");
+
+    /// <summary>Processes sharing a single in-kernel cred structure (linux.malware.check_creds) — a hallmark of a
+    /// credential-stealing rootkit. Empty result = clean.</summary>
+    public Task<LinuxCheckCreds[]?> LinuxCheckCredsAsync(string filename) =>
+        ExecuteToolAsync<LinuxCheckCreds[]>("Volatility3", $"-f {filename} -r json linux.malware.check_creds");
+
+    /// <summary>TTYs whose receive handler points outside the kernel/known modules (linux.malware.tty_check) — a
+    /// keystroke-logging rootkit hook. Empty result = clean.</summary>
+    public Task<LinuxTtyCheck[]?> LinuxTtyCheckAsync(string filename) =>
+        ExecuteToolAsync<LinuxTtyCheck[]>("Volatility3", $"-f {filename} -r json linux.malware.tty_check");
+
+    /// <summary>Process memory regions that are writable+executable with no file backing (linux.malware.malfind)
+    /// — injected code / shellcode. Empty result = clean.</summary>
+    public Task<LinuxMalfind[]?> LinuxMalfindAsync(string filename, int? pid = null) =>
+        ExecuteToolAsync<LinuxMalfind[]>("Volatility3", $"-f {filename} -r json linux.malware.malfind" + (pid is not null ? $" --pid {pid}" : ""));
+
+    /// <summary>Registered netfilter hooks (linux.malware.netfilter); a hook handled outside a known module can
+    /// hide traffic or implement a backdoor.</summary>
+    public Task<LinuxNetfilter[]?> LinuxNetfilterAsync(string filename) =>
+        ExecuteToolAsync<LinuxNetfilter[]>("Volatility3", $"-f {filename} -r json linux.malware.netfilter");
+
+    /// <summary>Kernel log buffer (dmesg) recovered from memory (linux.kmsg).</summary>
+    public Task<LinuxKmsg[]?> LinuxKmsgAsync(string filename) =>
+        ExecuteToolAsync<LinuxKmsg[]>("Volatility3", $"-f {filename} -r json linux.kmsg");
+    #endregion
+
     public override string[] ToolList { get; } = ["Volatility3"];
 }
