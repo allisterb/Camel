@@ -9,6 +9,12 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <AssemblyVersion>0.1.0.0</AssemblyVersion>
     <FileVersion>0.1.0.0</FileVersion>
+    <Authors>Allister Beharry</Authors>
+    <Company />
+    <Product>Camel</Product>
+    <PackageProjectUrl>https://github.com/allisterb/Camel</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/allisterb/Camel</RepositoryUrl>
+    <Version>0.1.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
