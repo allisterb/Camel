@@ -1626,3 +1626,164 @@ Address/offset fields are rendered by Volatility as `"0x…"` strings. Each row 
   "ShellHistory": { "$ref": "ShellHistoryReport" }, "Files": { "$ref": "FileAnomalyReport" },
   "TopFindings": { "type": "array", "items": { "type": "string" } } } }
 ```
+
+---
+
+## PacketAnalysisToolkit
+
+### PcapInfo Schema
+```json
+{ "type": "object", "properties": {
+  "FileName": { "type": "string" }, "FileType": { "type": "string" }, "Encapsulation": { "type": "string" },
+  "PacketCount": { "type": "integer" }, "FileSize": { "type": "integer" }, "DataSize": { "type": "integer" },
+  "DurationSeconds": { "type": "number" }, "FirstPacketTime": { "type": "string", "format": "date-time" },
+  "LastPacketTime": { "type": "string", "format": "date-time" }, "DataByteRate": { "type": "number" },
+  "AveragePacketSize": { "type": "number" }, "Sha256": { "type": "string" }, "Sha1": { "type": "string" } } }
+```
+### PacketSummary Schema
+```json
+{ "type": "object", "properties": {
+  "Number": { "type": "integer" }, "Time": { "type": "number", "description": "Epoch seconds." },
+  "Source": { "type": "string" }, "Destination": { "type": "string" }, "Protocol": { "type": "string" },
+  "Length": { "type": "integer" }, "Info": { "type": "string" } } }
+```
+### ProtocolLayer Schema
+```json
+{ "type": "object", "properties": {
+  "Protocol": { "type": "string" }, "Depth": { "type": "integer", "description": "Nesting level (0 = link)." },
+  "Frames": { "type": "integer" }, "Bytes": { "type": "integer" } } }
+```
+### Conversation Schema
+```json
+{ "type": "object", "properties": {
+  "EndpointA": { "type": "string" }, "EndpointB": { "type": "string" },
+  "FramesAToB": { "type": "integer" }, "BytesAToB": { "type": "integer" },
+  "FramesBToA": { "type": "integer" }, "BytesBToA": { "type": "integer" },
+  "TotalFrames": { "type": "integer" }, "TotalBytes": { "type": "integer" },
+  "RelativeStart": { "type": "number" }, "Duration": { "type": "number" } } }
+```
+### Endpoint Schema
+```json
+{ "type": "object", "properties": {
+  "Address": { "type": "string" }, "Packets": { "type": "integer" }, "Bytes": { "type": "integer" },
+  "TxPackets": { "type": "integer" }, "TxBytes": { "type": "integer" },
+  "RxPackets": { "type": "integer" }, "RxBytes": { "type": "integer" } } }
+```
+### TcpTraceConn Schema
+```json
+{ "type": "object", "properties": {
+  "HostA": { "type": "string" }, "PortA": { "type": "integer" }, "HostB": { "type": "string" }, "PortB": { "type": "integer" },
+  "Label": { "type": "string" }, "PacketsAToB": { "type": "integer" }, "PacketsBToA": { "type": "integer" }, "Complete": { "type": "boolean" } } }
+```
+### NgrepMatch Schema
+```json
+{ "type": "object", "properties": {
+  "Protocol": { "type": "string", "description": "T (TCP) or U (UDP)." }, "Source": { "type": "string" },
+  "Destination": { "type": "string" }, "Flags": { "type": "string" }, "Payload": { "type": "string" } } }
+```
+### P0fRecord Schema
+```json
+{ "type": "object", "properties": {
+  "Subject": { "type": "string", "description": "client | server." }, "Address": { "type": "string" },
+  "Os": { "type": "string" }, "Detail": { "type": "string" } } }
+```
+### NetflowRecord Schema
+```json
+{ "type": "object", "properties": {
+  "Start": { "type": "string", "format": "date-time" }, "Duration": { "type": "number" }, "Proto": { "type": "string" },
+  "SrcIp": { "type": "string" }, "SrcPort": { "type": "integer" }, "DstIp": { "type": "string" }, "DstPort": { "type": "integer" },
+  "Packets": { "type": "integer" }, "Bytes": { "type": "integer" }, "Flags": { "type": "string" } } }
+```
+### SuricataAlert Schema
+```json
+{ "type": "object", "properties": {
+  "Timestamp": { "type": "string", "format": "date-time" }, "SrcIp": { "type": "string" }, "SrcPort": { "type": "integer" },
+  "DestIp": { "type": "string" }, "DestPort": { "type": "integer" }, "Proto": { "type": "string" }, "AppProto": { "type": "string" },
+  "SignatureId": { "type": "integer" }, "Signature": { "type": "string" }, "Category": { "type": "string" },
+  "Severity": { "type": "integer", "description": "1 = most severe … 3 = informational." },
+  "HttpHost": { "type": "string" }, "HttpUrl": { "type": "string" } } }
+```
+
+---
+
+## PacketAnalysisWorkflow
+
+### PcapTriageReport Schema
+```json
+{ "type": "object", "properties": {
+  "Info": { "$ref": "PcapInfo" }, "ProtocolHierarchy": { "type": "array", "items": { "$ref": "ProtocolLayer" } },
+  "TopConversations": { "type": "array", "items": { "$ref": "Conversation" } },
+  "TopEndpoints": { "type": "array", "items": { "$ref": "Endpoint" } },
+  "TopDnsQueries": { "type": "array", "items": { "$ref": "NameCount" } },
+  "TopHttpHosts": { "type": "array", "items": { "$ref": "NameCount" } } } }
+```
+### StreamReport Schema
+```json
+{ "type": "object", "properties": {
+  "Protocol": { "type": "string" }, "Index": { "type": "integer" }, "Content": { "type": "string" },
+  "Highlights": { "type": "array", "items": { "type": "string" } } } }
+```
+### DnsTunnelingReport Schema
+```json
+{ "type": "object", "properties": {
+  "TotalQueries": { "type": "integer" }, "UniqueDomains": { "type": "integer" },
+  "SuspiciousDomains": { "type": "array", "items": { "$ref": "DnsDomainFinding" } } } }
+```
+### DnsDomainFinding Schema
+```json
+{ "type": "object", "properties": {
+  "Domain": { "type": "string" }, "QueryCount": { "type": "integer" }, "UniqueSubdomains": { "type": "integer" },
+  "MaxLabelLength": { "type": "integer" }, "AvgEntropy": { "type": "number" },
+  "RareTypes": { "type": "array", "items": { "type": "string" } },
+  "Score": { "type": "integer" }, "Reasons": { "type": "array", "items": { "type": "string" } } } }
+```
+### HttpObjectReport Schema
+```json
+{ "type": "object", "properties": {
+  "OutDir": { "type": "string" }, "CarvedFiles": { "type": "array", "items": { "type": "string" } },
+  "Transactions": { "type": "array", "items": { "$ref": "HttpTransaction" } } } }
+```
+### HttpTransaction Schema
+```json
+{ "type": "object", "properties": {
+  "Method": { "type": "string" }, "Host": { "type": "string" }, "Uri": { "type": "string" }, "UserAgent": { "type": "string" } } }
+```
+### PcapCredentialReport Schema
+```json
+{ "type": "object", "properties": { "Findings": { "type": "array", "items": { "$ref": "CredentialFinding" } } } }
+```
+### CredentialFinding Schema
+```json
+{ "type": "object", "properties": {
+  "Protocol": { "type": "string", "description": "http-basic | ftp | http-form | telnet | smtp-auth | pop | imap" },
+  "Source": { "type": "string" }, "Destination": { "type": "string" },
+  "Username": { "type": "string" }, "Password": { "type": "string" }, "Detail": { "type": "string" } } }
+```
+### BeaconReport Schema
+```json
+{ "type": "object", "properties": { "Beacons": { "type": "array", "items": { "$ref": "BeaconFinding" } } } }
+```
+### BeaconFinding Schema
+```json
+{ "type": "object", "properties": {
+  "Source": { "type": "string" }, "Destination": { "type": "string" }, "DestinationPort": { "type": "integer" },
+  "ConnectionCount": { "type": "integer" }, "MeanIntervalSeconds": { "type": "number" },
+  "JitterRatio": { "type": "number", "description": "stddev/mean of intervals; near 0 = metronomic beacon." }, "Score": { "type": "integer" } } }
+```
+### HostFingerprintReport Schema
+```json
+{ "type": "object", "properties": { "Hosts": { "type": "array", "items": { "$ref": "HostFingerprint" } } } }
+```
+### HostFingerprint Schema
+```json
+{ "type": "object", "properties": {
+  "Address": { "type": "string" }, "Role": { "type": "string" }, "OsGuesses": { "type": "array", "items": { "type": "string" } } } }
+```
+### IdsReport Schema
+```json
+{ "type": "object", "properties": {
+  "AlertCount": { "type": "integer" }, "BySignature": { "type": "array", "items": { "$ref": "NameCount" } },
+  "BySeverity": { "type": "array", "items": { "$ref": "NameCount" } },
+  "TopSourceIps": { "type": "array", "items": { "$ref": "NameCount" } },
+  "Alerts": { "type": "array", "items": { "$ref": "SuricataAlert" } } } }
+```

@@ -28,6 +28,7 @@ public class CamelToolkitsApi : Runtime
     private TimelineToolkit? _timeline;
     private UnixToolsToolkit? _unix;
     private LinuxAnalysisToolkit? _linux;
+    private PacketAnalysisToolkit? _packet;
     #endregion
 
     #region Properties
@@ -71,5 +72,12 @@ public class CamelToolkitsApi : Runtime
     /// so it needs no provisioning.
     /// </summary>
     public LinuxAnalysisToolkit LinuxAnalysis => _linux ??= new LinuxAnalysisToolkit(env, config);
+
+    /// <summary>
+    /// The packet-analysis toolkit (tshark/tcpdump/capinfos/tcptrace/tcpflow/ngrep/p0f/nfdump + the Suricata IDS).
+    /// Constructed lazily on first use; first access requires a <c>Tools:PacketAnalysis</c> config section and
+    /// runs one-time provisioning (apt-installs <c>tshark</c> + <c>suricata</c> with the ET ruleset when missing).
+    /// </summary>
+    public PacketAnalysisToolkit PacketAnalysis => _packet ??= new PacketAnalysisToolkit(env, config);
     #endregion
 }

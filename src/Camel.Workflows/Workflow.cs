@@ -42,6 +42,8 @@ public class Workflow : Runtime
 
     protected LinuxAnalysisToolkit LinuxAnalysis => api.LinuxAnalysis;
 
+    protected PacketAnalysisToolkit PacketAnalysis => api.PacketAnalysis;
+
     /// <summary>
     /// Opens an audit scope attributing every tool execution under it to this workflow and the calling method,
     /// so the per-case audit trail records the full hierarchy (Workflow → WorkflowOperation → Toolkit → Operation

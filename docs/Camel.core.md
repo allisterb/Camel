@@ -163,7 +163,8 @@ if (!r.IsSuccess) error(r.Message); else log(r.Message);  // inspect r.Result �
 Toolkit methods execute a SIFT tool on the workstation and return a parsed model — an array or object — or `null`
 if the command failed. The toolkit objects are `MemoryAnalysisToolkit`, `DiskAnalysisToolkit`,
 `WindowsAnalysisToolkit`, `TimelineAnalysisToolkit`, `YaraToolkit`, `UnixToolsToolkit`, `LinuxAnalysisToolkit`,
-and `AnomalyDetectionToolkit`. The JSON schema for each return type named below is in the `camel-sdk-schema` resource.
+`PacketAnalysisToolkit`, and `AnomalyDetectionToolkit`. The JSON schema for each return type named below is in the
+`camel-sdk-schema` resource.
 
 ---
 
@@ -449,6 +450,32 @@ no installs are needed for the default Debian/Ubuntu (dpkg) path.
 
 ---
 
+## PacketAnalysisToolkit
+
+Wrappers for the SIFT network tools over a capture file (`pcap`/`pcapng`) — Wireshark's analytic power head-less
+via **tshark** plus tcpdump/capinfos/tcptrace/tcpflow/ngrep/p0f/nfdump and the **Suricata** IDS. First use
+auto-provisions `tshark` + `suricata` (+ ET rules) if missing (the worthwhile installs; Zeek has no apt package
+and is not auto-provisioned). Grounded in SANS FOR501.2. Pass `sudo: true` for a root-owned capture on a mounted image.
+
+- `CapInfoAsync(pcap: string)` → `PcapInfo` — capture metadata (packets/bytes/duration/time span/hashes).
+- `ProtocolHierarchyAsync(pcap: string)` → `ProtocolLayer[]` — protocol mix tree (frames/bytes, nesting `Depth`).
+- `ConversationsAsync(pcap: string, proto?: string)` → `Conversation[]` — flows (default tcp): endpoints, directional + total frames/bytes, duration.
+- `EndpointsAsync(pcap: string, proto?: string)` → `Endpoint[]` — per-host packet/byte (tx/rx) totals (default ip).
+- `ReadPacketsAsync(pcap: string, displayFilter?: string, count?: int)` → `PacketSummary[]` — per-packet column view.
+- `FieldsAsync(pcap: string, displayFilter: string, fields: string[])` → `string[][]` — generic `tshark -T fields`
+  extractor (one row per packet); the primitive for custom hunts (DNS names, HTTP hosts, SYN timing, …).
+- `FollowStreamAsync(pcap: string, proto: string, index: int)` → `string` — reassembled stream content.
+- `ExportObjectsAsync(pcap: string, kind: string, outDir: string)` → `string[]` — carve transferred objects (http/smb/tftp/imf).
+- `TcpFlowAsync(pcap: string, outDir: string)` → `string[]` — reassemble every TCP flow to files.
+- `TcpTraceAsync(pcap: string)` → `TcpTraceConn[]` — per-connection TCP summary.
+- `NgrepAsync(pcap: string, pattern: string, bpf?: string)` → `NgrepMatch[]` — regex payload search.
+- `P0fAsync(pcap: string)` → `P0fRecord[]` — passive OS/device fingerprints.
+- `NfdumpAsync(flowSource: string, filter?: string)` → `NetflowRecord[]` — NetFlow records (nfcapd files, not pcap).
+- `SuricataAsync(pcap: string, outDir: string)` → `SuricataAlert[]` — run the IDS, parse `eve.json` alerts.
+- `EditcapSliceAsync(...)` / `MergeAsync(pcaps: string[], outFile: string)` → utility slice / merge.
+
+---
+
 ## AnomalyDetectionToolkit
 
 A **pure-compute** (no workstation I/O) triage engine over a canonical timeline. It turns a timeline into a
@@ -477,8 +504,8 @@ log(AnomalyDetectionToolkit.Summarize(report, 25));
 Workflows codify multi-step DFIR procedures over the toolkits. **Every workflow method is async and returns
 `WorkflowResult<T>`** (access the payload via `result.Result`). The workflow objects are `DiskAnalysisWorkflow`,
 `MemoryAnalysisWorkflow`, `WindowsAnalysisWorkflow`, `TimelineAnalysisWorkflow`, `AntiForensicsAnalysisWorkflow`,
-`WebServerWorkflow`, and `LinuxAnalysisWorkflow`. The JSON schema for each payload type named below is in the
-`camel-sdk-schema` resource.
+`WebServerWorkflow`, `LinuxAnalysisWorkflow`, and `PacketAnalysisWorkflow`. The JSON schema for each payload type
+named below is in the `camel-sdk-schema` resource.
 
 ---
 
@@ -645,6 +672,38 @@ carries the raw artifacts plus the flagged items (with the reason flagged).
 const t = await LinuxAnalysisWorkflow.TriageHostAsync("/mnt/linux");
 log(t.Message);
 for (const f of t.Result.TopFindings) log(f);
+```
+
+---
+
+## PacketAnalysisWorkflow
+
+Analyse a network capture (`pcap`/`pcapng`) for intrusion evidence (SANS FOR501.2). `pcap` is the capture path.
+
+- `TriagePcapAsync(pcap: string, top?: int)` → `WorkflowResult<PcapTriageReport>` — overview: metadata, protocol
+  mix, top conversations/endpoints, busiest DNS/HTTP hosts. Start here.
+- `HuntDnsTunnelingAsync(pcap: string)` → `WorkflowResult<DnsTunnelingReport>` — DNS-tunnel / DNS-backdoor
+  detection (long/high-entropy labels, unique-subdomain volume, TXT/NULL records) — the book's flagship lab.
+- `FollowStreamAsync(pcap: string, proto: string, index: int)` → `WorkflowResult<StreamReport>` — reassemble a
+  stream with credential/command lines highlighted.
+- `ExtractHttpObjectsAsync(pcap: string, outDir: string)` → `WorkflowResult<HttpObjectReport>` — carve HTTP
+  objects + list requests.
+- `ExtractCredentialsAsync(pcap: string)` → `WorkflowResult<PcapCredentialReport>` — cleartext creds (HTTP Basic
+  decoded, FTP USER/PASS, form/login params).
+- `DetectBeaconingAsync(pcap: string)` → `WorkflowResult<BeaconReport>` — timing-based C2-beacon detection (regular
+  connection cadence / low jitter).
+- `FingerprintHostsAsync(pcap: string)` → `WorkflowResult<HostFingerprintReport>` — passive OS fingerprints (p0f).
+- `RunIdsAsync(pcap: string, outDir?: string)` → `WorkflowResult<IdsReport>` — Suricata signature IDS → alerts
+  grouped by signature/severity (the maintained Snort analog).
+
+```js
+// Capture triage → DNS-tunnel hunt → IDS.
+const t = await PacketAnalysisWorkflow.TriagePcapAsync("/cases/suspect.pcap");
+log(t.Message);
+const d = await PacketAnalysisWorkflow.HuntDnsTunnelingAsync("/cases/suspect.pcap");
+for (const dom of d.Result.SuspiciousDomains) log(`${dom.Domain} (score ${dom.Score}): ${dom.Reasons.join(", ")}`);
+const ids = await PacketAnalysisWorkflow.RunIdsAsync("/cases/suspect.pcap");
+log(ids.Message);
 ```
 
 ---

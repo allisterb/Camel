@@ -274,7 +274,8 @@ public class CamelMCPTools : Runtime
           .SetValue("TimelineAnalysisWorkflow", session.WorkflowsApi.TimelineAnalysis)
           .SetValue("AntiForensicsAnalysisWorkflow", session.WorkflowsApi.AntiForensicsAnalysis)
           .SetValue("WebServerWorkflow", session.WorkflowsApi.WebServer)
-          .SetValue("LinuxAnalysisWorkflow", session.WorkflowsApi.LinuxAnalysis);
+          .SetValue("LinuxAnalysisWorkflow", session.WorkflowsApi.LinuxAnalysis)
+          .SetValue("PacketAnalysisWorkflow", session.WorkflowsApi.PacketAnalysis);
 
         // Bind a SIFT toolkit global only when the script actually references it by name. Constructing a toolkit
         // can run one-time provisioning (Toolkit.InstallMissingTools = synchronous wget/apt for the EZ tools,
@@ -293,6 +294,7 @@ public class CamelMCPTools : Runtime
         BindToolkitIfUsed("YaraToolkit", () => session.ToolkitsApi.Yara);
         BindToolkitIfUsed("UnixToolsToolkit", () => session.ToolkitsApi.UnixTools);
         BindToolkitIfUsed("LinuxAnalysisToolkit", () => session.ToolkitsApi.LinuxAnalysis);
+        BindToolkitIfUsed("PacketAnalysisToolkit", () => session.ToolkitsApi.PacketAnalysis);
 
         // Mark the session busy for the duration of the call so the idle sweeper can't dispose its SSH
         // environment out from under a long-running analysis (LastAccess is only stamped at call start).

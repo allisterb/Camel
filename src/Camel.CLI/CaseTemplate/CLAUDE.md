@@ -221,6 +221,16 @@ For a **mounted Linux root filesystem** (`rootDir`, e.g. `/mnt/linux`). Grounded
 - **Memory (Linux image):** `MemoryAnalysisToolkit.Linux*Async` (pslist/psaux/bash/sockstat/check_syscall/malfind/…).
   Needs an ISF symbol table matching the kernel banner (auto-fetched for known kernels, else dwarf2json).
 
+### D. Network / packet analysis (pcap)
+
+For a **capture file** (`pcap`/`pcapng`). Grounded in SANS FOR501.2. First use auto-installs tshark + suricata.
+- **Start here:** `PacketAnalysisWorkflow.TriagePcapAsync(pcap)` — metadata, protocol mix, top talkers, busiest DNS/HTTP hosts.
+- **Hunts:** `HuntDnsTunnelingAsync` (DNS-backdoor/tunnel), `ExtractHttpObjectsAsync` (carve transferred files),
+  `ExtractCredentialsAsync` (cleartext creds), `DetectBeaconingAsync` (C2 timing), `FingerprintHostsAsync` (p0f),
+  `FollowStreamAsync(pcap, "tcp", index)`, `RunIdsAsync` (Suricata signature alerts).
+- **Raw tools:** `PacketAnalysisToolkit.*` (CapInfo/ProtocolHierarchy/Conversations/Endpoints/Fields/FollowStream/
+  Ngrep/TcpTrace/P0f/Suricata). `FieldsAsync(pcap, displayFilter, fields[])` is the generic tshark field extractor.
+
 
 ### Example code
 ```js
