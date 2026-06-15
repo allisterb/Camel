@@ -468,6 +468,83 @@ public record CarvedFile
 }
 
 /// <summary>
+/// bdeinfo: metadata about a BitLocker Drive Encryption (BDE) volume - the encryption method, volume
+/// identifier, creation time, description, and the key protectors guarding it (TPM / recovery password /
+/// password / startup key). <see cref="IsBitLockerVolume"/> is the verdict: true only when bdeinfo
+/// recognised a BDE volume at the inspected offset. The raw tool text is preserved in <see cref="RawText"/>
+/// so nothing is lost to best-effort parsing.
+/// </summary>
+public class BitLockerInfo
+{
+    /// <summary>True when a BitLocker volume was recognised at the inspected offset (else "not a BitLocker volume").</summary>
+    public bool IsBitLockerVolume { get; set; }
+    /// <summary>The volume encryption method, e.g. "AES-CBC 128-bit", "AES-CBC 256-bit with Diffuser", "AES-XTS 256-bit".</summary>
+    public string? EncryptionMethod { get; set; }
+    public string? VolumeIdentifier { get; set; }
+    /// <summary>The volume creation time, as bdeinfo prints it (already UTC).</summary>
+    public string? CreationTime { get; set; }
+    public string? Description { get; set; }
+    /// <summary>The key protectors present on the volume - which credential types can unlock it.</summary>
+    public BitLockerKeyProtector[] KeyProtectors { get; set; } = [];
+    /// <summary>The full unparsed bdeinfo output (authoritative reference).</summary>
+    public string RawText { get; set; } = "";
+
+    private static readonly Regex ProtectorHeader = new(@"^\s*Key protector\b\D*(\d*)\s*:?\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex IdentifierLine = new(@"^\s*Identifier\s*:\s*(.+?)\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex TypeLine = new(@"^\s*Type\s*:\s*(.+?)\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    public static BitLockerInfo Parse(string s)
+    {
+        // Top-level "Label: value" fields. LabelMap keeps the first occurrence of each label, which is fine here
+        // because the per-protector Identifier/Type lines are parsed separately by the block scan below.
+        var m = TskParse.LabelMap(s);
+        var info = new BitLockerInfo
+        {
+            RawText = s,
+            EncryptionMethod = m.Get("Encryption method"),
+            VolumeIdentifier = m.Get("Volume identifier"),
+            CreationTime = m.Get("Creation time"),
+            Description = m.Get("Description"),
+        };
+
+        // Walk the lines, opening a new protector on each "Key protector N:" header and attaching the indented
+        // Identifier/Type lines that follow it to that protector.
+        var protectors = new List<BitLockerKeyProtector>();
+        BitLockerKeyProtector? current = null;
+        foreach (var line in TskParse.Lines(s))
+        {
+            var hdr = ProtectorHeader.Match(line);
+            if (hdr.Success)
+            {
+                current = new BitLockerKeyProtector { Index = TskParse.ToInt(hdr.Groups[1].Value) };
+                protectors.Add(current);
+                continue;
+            }
+            if (current is null) continue;
+            var id = IdentifierLine.Match(line);
+            if (id.Success) { current.Identifier = id.Groups[1].Value; continue; }
+            var ty = TypeLine.Match(line);
+            if (ty.Success) current.Type = ty.Groups[1].Value;
+        }
+
+        info.KeyProtectors = protectors.ToArray();
+        info.IsBitLockerVolume = info.EncryptionMethod is not null || protectors.Count > 0
+            || s.Contains("BitLocker Drive Encryption", StringComparison.OrdinalIgnoreCase);
+        return info;
+    }
+}
+
+/// <summary>One BitLocker key protector: the credential class that can release the volume master key.</summary>
+public class BitLockerKeyProtector
+{
+    /// <summary>The protector's ordinal as bdeinfo numbers them (0-based).</summary>
+    public int Index { get; set; }
+    public string? Identifier { get; set; }
+    /// <summary>Protector type, e.g. "TPM", "TPM and PIN", "Recovery password", "Password", "Startup key", "External key".</summary>
+    public string Type { get; set; } = "";
+}
+
+/// <summary>
 /// A bulk_extractor feature recorder output: one feature file (e.g. <c>email.txt</c>) with the number of features
 /// it found. The histogram-derived top values are surfaced separately by the feature-extraction workflow.
 /// </summary>

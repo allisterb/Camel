@@ -205,6 +205,11 @@ via known signatures, keywords, and "evidence of…" categories), and anti-foren
 - PowerShell: `AnalyzePowerShellAsync` (4104 script blocks, decodes encoded payloads).
 - Disk handling, recovery, filesystem timeline: `DiskAnalysisWorkflow.*` (mount/verify/recover/timeline) and the
   `DiskAnalysisToolkit` / `WindowsAnalysisToolkit` for lower-level access.
+- BitLocker-encrypted volumes: `DiskAnalysisWorkflow.InspectBitLockerVolumeAsync(imageMount, offset)` to confirm a
+  partition is BDE-encrypted and list its key protectors (a BitLocker volume still shows as "NTFS" in mmls), then
+  `UnlockBitLockerVolumeAsync(imageMount, offset, recoveryPassword?/password?/bekFile?/fullKey?)` to decrypt + mount
+  it (exposes a `bde1` device + a browsable mount); tear down with `UnmountBitLockerVolumeAsync`. With no key,
+  `SearchBitLockerRecoveryKeysAsync(input)` string-searches for 48-digit recovery keys (FOR508 fallback).
 - File carving & deleted-file recovery (FOR508.5): `DiskAnalysisWorkflow.CarveUnallocatedSpaceAsync` (blkls→foremost),
   `CarveFilesAsync`, `ExtractForensicFeaturesAsync` (bulk_extractor emails/URLs/CCNs), `ListDeletedFilesAsync` +
   `RecoverDeletedFileAsync(image, inode, out)`. Toolkit primitives: `Blkls`/`Foremost`/`PhotoRec`/`BulkExtractor`/`Extundelete`.
@@ -353,6 +358,9 @@ evidence, so it does not trip the spoliation guard (the guard refuses *writes* o
 - For each EWF image you mounted with `DiskAnalysisWorkflow.MountEwfImageAsync` / `MountFileSystemAsync`, unmount
   with **`DiskAnalysisWorkflow.UnmountImageAsync(imageMount, ...filesystemMounts)`** — it unmounts the filesystem
   mounts first, then the raw device, and returns the dirs it freed.
+- For any BitLocker volume you unlocked with `UnlockBitLockerVolumeAsync`, release it with
+  **`DiskAnalysisWorkflow.UnmountBitLockerVolumeAsync(mount)`** *before* the underlying `UnmountImageAsync` (the bde
+  FUSE device sits on top of the raw EWF device).
 - For any lower-level mount (a loopback/`losetup`, `ddmount`, or a bare mount dir), use
   **`DiskAnalysisToolkit.UnmountAsync(mountDir)`** per mount directory.
 - Verify each unmount's result (`IsSuccess` / `true`) and record the teardown with `auditInfo` (e.g. which mounts

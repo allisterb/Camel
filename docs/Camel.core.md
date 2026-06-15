@@ -300,6 +300,17 @@ omit it for a single-volume image. All carving/recovery tools ship with SIFT —
   ccn/phone/ip) with counts + top values, regardless of filesystem.
 - `SigfindAsync(image: string, signature: string, offset?: int)` → `long[]` — block offsets of a hex byte signature.
 - `ExtundeleteAsync(image: string, outputDir: string, restoreAll?: bool)` → `int` — ext3/4 undelete (count recovered).
+- `BdeInfoAsync(source: string, offset?: int, recoveryPassword?: string, password?: string, bekFile?: string, fullKey?: string)`
+  → `BitLockerInfo` — read BitLocker (BDE) volume metadata + key protectors via `bdeinfo` (`source` = a raw device
+  like `ewf1`, or a raw image; `offset` = partition start sector). No credential needed to read metadata. Returns
+  null when there is no BDE volume at the offset (i.e. not BitLocker-encrypted) — else check `IsBitLockerVolume`.
+- `BdeMountAsync(volume: string, mountDir: string, recoveryPassword?: string, password?: string, bekFile?: string, fullKey?: string, offset?: int)`
+  → `bool` — unlock + mount a BitLocker volume RO with `bdemount`, exposing the decrypted volume as `<mountDir>/bde1`
+  (a raw device the TSK tools and a loopback mount use just like `ewf1`). Supply one credential. False on a wrong
+  credential.
+- `SearchBitLockerRecoveryKeysAsync(input: string, maxMatches?: int)` → `string[]` — string-search `input` (image/
+  device/extract/memory dump) for 48-digit BitLocker recovery keys (`strings | grep`). The FOR508 "no key supplied"
+  fallback. Returns the distinct candidate keys (`[]` if none, null if unreadable).
 - `DeleteFileAsync(path: string)` → `bool` — delete a non-evidence temp file (e.g. an unallocated extract).
 - `FlsBodyfileAsync(image: string, outputFile: string, offset?: int, mountPoint?: string)` → `bool` — `fls -r -m` bodyfile.
 - `MactimeAsync(bodyfile: string, timezone?: string)` → `MactimeEntry[]` — render a sorted timeline (default UTC).
@@ -547,6 +558,17 @@ Disk-image acquisition, mounting, verification, and recovery (read-only forensic
   — extract one deleted file by TSK inode address (`icat`).
 - `UnmountImageAsync(imageMount: EwfImageMount, ...filesystemMounts: FileSystemMount[])` → `WorkflowResult<string[]>`
   — unmount filesystem mounts then the raw device; returns the unmounted dirs.
+- `InspectBitLockerVolumeAsync(imageMount: EwfImageMount, offset: int)` → `WorkflowResult<BitLockerInfo>` — confirm a
+  partition is BitLocker-encrypted and report its encryption method + key protectors (no credential needed). A BDE
+  volume still shows as "NTFS" in mmls, so use this to tell encrypted from unencrypted before mounting.
+- `UnlockBitLockerVolumeAsync(imageMount: EwfImageMount, offset: int, recoveryPassword?: string, password?: string, bekFile?: string, fullKey?: string, bdeMountDir?: string, fsMountDir?: string, mountFilesystem?: bool)`
+  → `WorkflowResult<BitLockerVolumeMount>` — confirm (bdeinfo) → decrypt (bdemount → `bde1`) → optionally loop-mount
+  the cleartext volume for browsing. Supply one credential. The result's `DecryptedDevice` feeds the TSK tools with
+  **no offset**; `FilesystemMountDir` (when mounted) is browsable. Tear down with `UnmountBitLockerVolumeAsync`.
+- `UnmountBitLockerVolumeAsync(mount: BitLockerVolumeMount)` → `WorkflowResult<string[]>` — unmount the decrypted
+  filesystem then the bde FUSE device (release before the underlying `UnmountImageAsync`).
+- `SearchBitLockerRecoveryKeysAsync(input: string, maxMatches?: int)` → `WorkflowResult<string[]>` — find 48-digit
+  recovery keys by string search when no key is supplied (try each as `recoveryPassword`).
 
 ---
 

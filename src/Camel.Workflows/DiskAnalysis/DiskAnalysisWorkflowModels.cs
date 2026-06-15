@@ -93,6 +93,35 @@ public record FileSystemMount
     }
 }
 
+/// <summary>
+/// The result of unlocking and mounting a BitLocker (BDE) volume: the FUSE mount directory holding the decrypted
+/// raw device (<see cref="DecryptedDevice"/>, i.e. <c>&lt;BdeMountDir&gt;/bde1</c>) that the Sleuth Kit tools and
+/// a loopback mount operate on just like an <see cref="EwfImageMount.RawDevice"/>, the volume's BitLocker metadata
+/// (<see cref="Info"/>), and - when the decrypted filesystem was also loop-mounted for browsing - that mount
+/// directory (<see cref="FilesystemMountDir"/>) and its <c>fsstat</c> detail (<see cref="FilesystemInfo"/>).
+/// </summary>
+public record BitLockerVolumeMount
+{
+    /// <summary>The bdemount FUSE directory containing the decrypted <c>bde1</c> device.</summary>
+    public string BdeMountDir { get; }
+    /// <summary>The decrypted raw volume device (<c>&lt;BdeMountDir&gt;/bde1</c>); pass it to the TSK tools with no offset.</summary>
+    public string DecryptedDevice { get; }
+    /// <summary>Where the decrypted volume was loop-mounted read-only for direct file browsing, or null if not mounted.</summary>
+    public string? FilesystemMountDir { get; }
+    /// <summary>The BitLocker volume metadata and key protectors (from bdeinfo).</summary>
+    public BitLockerInfo Info { get; }
+    /// <summary>The decrypted filesystem's fsstat detail, when the filesystem was mounted; otherwise null.</summary>
+    public FsStat? FilesystemInfo { get; }
+    public BitLockerVolumeMount(string bdeMountDir, BitLockerInfo info, string? filesystemMountDir, FsStat? filesystemInfo)
+    {
+        this.BdeMountDir = bdeMountDir;
+        this.DecryptedDevice = $"{bdeMountDir.TrimEnd('/')}/bde1";
+        this.Info = info;
+        this.FilesystemMountDir = filesystemMountDir;
+        this.FilesystemInfo = filesystemInfo;
+    }
+}
+
 /// <summary>The result of a signature-carving run: the recovered files (with type/size/offset), grouped by type.</summary>
 public record CarveReport
 {

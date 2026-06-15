@@ -359,6 +359,68 @@ public class DiskAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("rm", $"-rf {d}", out _, false);
     }
 
+    [Fact]
+    public void BitLockerInfoParsesBdeinfoOutput()
+    {
+        // Representative libbde 20240502 bdeinfo output for a TPM + recovery-password protected volume. Parsing is
+        // pure (no SSH), so this validates the model regardless of whether a BDE image is available on the box.
+        const string sample =
+            "bdeinfo 20240502\n\n" +
+            "BitLocker Drive Encryption (BDE) information:\n\n" +
+            "Encryption method:\t\tAES-CBC 256-bit\n" +
+            "Volume identifier:\t\tf9778cc8-6e4d-4f3a-9b1e-2a7c0d5e6f10\n" +
+            "Creation time:\t\t\tApr 06, 2010 12:34:56.789012300 UTC\n" +
+            "Description:\t\t\tThinkPad T410\n\n" +
+            "Number of key protectors:\t2\n\n" +
+            "Key protector 0:\n" +
+            "\tIdentifier:\t\tfdc18091-1111-2222-3333-444455556666\n" +
+            "\tType:\t\t\tTPM\n\n" +
+            "Key protector 1:\n" +
+            "\tIdentifier:\t\t8e3cb232-aaaa-bbbb-cccc-ddddeeeeffff\n" +
+            "\tType:\t\t\tRecovery password\n";
+
+        var info = Camel.Toolkits.Models.BitLockerInfo.Parse(sample);
+        Assert.True(info.IsBitLockerVolume);
+        Assert.Equal("AES-CBC 256-bit", info.EncryptionMethod);
+        Assert.Equal("f9778cc8-6e4d-4f3a-9b1e-2a7c0d5e6f10", info.VolumeIdentifier);
+        Assert.Equal("ThinkPad T410", info.Description);
+        Assert.Equal(2, info.KeyProtectors.Length);
+        Assert.Contains(info.KeyProtectors, p => p.Index == 0 && p.Type == "TPM");
+        Assert.Contains(info.KeyProtectors, p => p.Index == 1 && p.Type == "Recovery password");
+    }
+
+    [Fact]
+    public async Task BdeInfoReturnsNullForNonBitLockerVolume()
+    {
+        // bdeinfo against a non-encrypted volume must report no BDE volume (graceful null), confirming the tool
+        // plumbing as well. The NIST image's NTFS partition is not BitLocker-encrypted.
+        const string raw = "/tmp/camel_ewfraw_bde";
+        sshenv.ExecuteCommand("umount", raw, out _, true);
+        sshenv.ExecuteCommand("mkdir", $"-p {raw}", out _, false);
+        Assert.True(await toolkit.EwfMountRawAsync(Image, raw));
+
+        var info = await toolkit.BdeInfoAsync($"{raw}/ewf1", NtfsOffset);
+        Assert.Null(info);
+
+        sshenv.ExecuteCommand("umount", raw, out _, true);
+    }
+
+    [Fact]
+    public async Task CanSearchBitLockerRecoveryKeys()
+    {
+        // A file holding a 48-digit recovery key (as Windows saves it) amid noise; the string search must find it.
+        const string f = "/tmp/camel_bde_rk.txt";
+        const string key = "123456-234567-345678-456789-567890-678901-789012-890123";
+        sshenv.ExecuteCommand("bash",
+            $"-c \"printf 'BitLocker Drive Encryption recovery key\\n{key}\\nsome other noise 12345\\n' > {f}\"", out _, false);
+
+        var keys = await toolkit.SearchBitLockerRecoveryKeysAsync(f);
+        Assert.NotNull(keys);
+        Assert.Contains(key, keys);
+
+        sshenv.ExecuteCommand("rm", $"-f {f}", out _, false);
+    }
+
     const string Image = "/mnt/artifacts/4Dell Latitude CPi.E01";
     const int NtfsOffset = 63;
 

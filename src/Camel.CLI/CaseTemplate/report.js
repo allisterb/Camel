@@ -36,6 +36,44 @@ const el = (tag, attrs = {}, ...kids) => {
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmtTime = (d) => d && !isNaN(d) ? d.toISOString().replace("T", " ").replace("Z", "Z").slice(0, 23) : "";
 const splitIds = (s) => String(s ?? "").split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
+const fmtNum = (n) => Number(n || 0).toLocaleString("en-US");
+const shortModel = (m) => String(m).replace(/^claude-/, "").replace(/-\d{8}$/, "");
+
+// Estimated USD cost. Standard Claude API list prices per 1M tokens (input, output), as of 2026-05-26.
+// Prompt-cache pricing is derived: a 5-minute cache WRITE bills 1.25x input, a cache READ bills 0.1x input.
+// Update these when list prices change. Unknown models are priced by family, else left out of the estimate.
+const PRICING = {
+  "claude-fable-5":    { in: 10, out: 50 },
+  "claude-opus-4-8":   { in: 5,  out: 25 },
+  "claude-opus-4-7":   { in: 5,  out: 25 },
+  "claude-opus-4-6":   { in: 5,  out: 25 },
+  "claude-opus-4-5":   { in: 5,  out: 25 },
+  "claude-sonnet-4-6": { in: 3,  out: 15 },
+  "claude-sonnet-4-5": { in: 3,  out: 15 },
+  "claude-haiku-4-5":  { in: 1,  out: 5 },
+};
+function priceFor(model) {
+  const id = String(model);
+  const p = PRICING[id] || PRICING[id.replace(/-\d{8}$/, "")];
+  if (p) return p;
+  const m = id.toLowerCase();
+  if (m.includes("opus")) return { in: 5, out: 25 };
+  if (m.includes("sonnet")) return { in: 3, out: 15 };
+  if (m.includes("haiku")) return { in: 1, out: 5 };
+  if (m.includes("fable")) return { in: 10, out: 50 };
+  return null;   // unknown model — excluded from the estimate
+}
+// USD cost of one model's usage row, or null when the model can't be priced.
+function modelCost(model, m) {
+  const p = priceFor(model);
+  if (!p) return null;
+  const inR = p.in / 1e6, outR = p.out / 1e6;
+  return (m.input_tokens || 0) * inR
+       + (m.output_tokens || 0) * outR
+       + (m.cache_creation_input_tokens || 0) * inR * 1.25   // 5-min cache write
+       + (m.cache_read_input_tokens || 0) * inR * 0.1;       // cache read
+}
+const fmtUsd = (n) => n < 0.01 ? "<$0.01" : "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // ---------- parsing ----------
 function parseClef(text) {
@@ -64,10 +102,30 @@ function index() {
 }
 
 // One-line human summary for the audit table / row.
+// The attribution an event carries (set via LogContext): the workflow operation and/or the toolkit operation
+// that issued the command. Surfaced as the audit log's "Source" column. shortOp drops the C# "Async" suffix.
+const shortOp = (s) => String(s || "").replace(/Async$/, "");
+function sourceParts(e) {
+  const wf = e.Workflow ? e.Workflow + (e.WorkflowOperation ? "." + shortOp(e.WorkflowOperation) : "") : "";
+  const tk = e.Toolkit ? e.Toolkit + (e.Operation ? "." + e.Operation : "") : "";
+  return { wf, tk };
+}
+const sourceText = (e) => { const { wf, tk } = sourceParts(e); return [wf, tk].filter(Boolean).join(" › "); };
+function sourceCell(e) {
+  const { wf, tk } = sourceParts(e);
+  if (!wf && !tk) return "";
+  const span = el("span", { class: "src-chain", title: sourceText(e) });
+  if (wf) span.append(el("span", { class: "wf" }, wf));
+  if (wf && tk) span.append(el("span", { class: "sep" }, " › "));
+  if (tk) span.append(el("span", { class: "tk" }, tk));
+  return span;
+}
+
 function summarize(e) {
   switch (e.EventType) {
     case "command":
-      return `${e.Toolkit ? e.Toolkit + "." : ""}${e.Operation || ""}  ${e.Command || ""} ${e.Arguments || ""}`.trim();
+      // Tool/workflow attribution now lives in its own "Source" column; keep the summary to the command line.
+      return `${e.Command || ""} ${e.Arguments || ""}`.trim();
     case "execution":
       return e.Phase === "started"
         ? `EXECUTION started`
@@ -197,7 +255,7 @@ function renderExecBlock(execId, recordingOnly) {
     for (const c of cmds) {
       const exitOk = c.ExitCode === 0 && c.Completed !== false;
       tb.append(el("tr", {},
-        el("td", {}, `${c.Toolkit ? c.Toolkit + "." : ""}${c.Operation || ""}`),
+        el("td", { title: c.Workflow ? sourceText(c) : null }, `${c.Toolkit ? c.Toolkit + "." : ""}${c.Operation || ""}`),
         el("td", { class: "cmd" }, `${c.Command || ""} ${c.Arguments || ""}`.trim()),
         el("td", { class: exitOk ? "exit-ok" : "exit-bad" }, c.ExitCode != null ? String(c.ExitCode) : (c.Completed === false ? "x" : "?")),
         el("td", {}, c.DurationMs != null ? c.DurationMs + "ms" : "")));
@@ -243,7 +301,7 @@ function renderLog() {
     if (activeTypes.size && !activeTypes.has(e.EventType)) return false;
     if (execQ && !String(e.ExecutionId || "").toLowerCase().includes(execQ)) return false;
     if (textQ) {
-      const hay = (summarize(e) + " " + (e.Interpretation || "") + " " + e.EventType).toLowerCase();
+      const hay = (summarize(e) + " " + sourceText(e) + " " + (e.Interpretation || "") + " " + e.EventType).toLowerCase();
       if (!hay.includes(textQ)) return false;
     }
     return true;
@@ -251,7 +309,7 @@ function renderLog() {
 
   $("#auditCount").textContent = `(${EVENTS.length})`;
   if (!rows.length) {
-    body.append(el("tr", {}, el("td", { colspan: "4", class: "empty" }, "No events match the current filters.")));
+    body.append(el("tr", {}, el("td", { colspan: "5", class: "empty" }, "No events match the current filters.")));
     return;
   }
   for (const e of rows) {
@@ -261,6 +319,7 @@ function renderLog() {
       el("td", {}, e.ExecutionId
         ? el("span", { class: "execid", onclick: (ev) => { ev.stopPropagation(); $("#execFilter").value = e.ExecutionId; renderLog(); } }, e.ExecutionId)
         : ""),
+      el("td", { class: "src" }, sourceCell(e)),
       el("td", { class: "summary" }, truncate(summarize(e), 220)));
     body.append(tr);
   }
@@ -271,7 +330,7 @@ function toggleRow(tr, e) {
   if (next && next.classList.contains("rowdetail")) { next.remove(); tr.classList.remove("exp"); return; }
   tr.classList.add("exp");
   const detail = el("tr", { class: "rowdetail" },
-    el("td", { colspan: "4" }, el("pre", {}, JSON.stringify(stripMeta(e), null, 2))));
+    el("td", { colspan: "5" }, el("pre", {}, JSON.stringify(stripMeta(e), null, 2))));
   tr.after(detail);
 }
 
@@ -432,9 +491,86 @@ function renderIocs() {
 // one of { k:"text"|"thinking", text } / { k:"tool_use", name, id, input, trunc } / { k:"tool_result", id, err,
 // text, trunc }. The generator already trimmed/capped it; this just renders. Tool results are paired to their
 // tool_use card by id so each call shows its own output.
+// window.__TOKEN_USAGE__ = { assistantTurns, totals:{ input_tokens, output_tokens, cache_creation_input_tokens,
+// cache_read_input_tokens, total_tokens }, breakdown:{ cached_tokens, new_tokens, new_input_tokens, output_tokens,
+// cache_read_fraction_of_input }, byModel:{ <model>:{ turns, input_tokens, output_tokens,
+// cache_creation_input_tokens, cache_read_input_tokens } } }. Cached = prompt-cache reads (reused, billed ~0.1x);
+// new = fresh input + the one-time cache write + output. Returns the panel node, or null when there's no usage data.
+function renderTokenPanel() {
+  const t = window.__TOKEN_USAGE__;
+  if (!t || !t.totals) return null;
+  const b = t.breakdown || {};
+  const cached = b.cached_tokens || 0;
+  const fresh = b.new_tokens || 0;
+  const denom = cached + fresh;
+  const pct = (x) => denom ? Math.round((x / denom) * 1000) / 10 : 0;
+  const total = t.totals.total_tokens || denom;
+
+  // Estimated cost across all models (sum of per-model costs); flag if any model couldn't be priced.
+  const models = t.byModel ? Object.entries(t.byModel) : [];
+  let estCost = 0, anyUnpriced = false, anyPriced = false;
+  for (const [name, m] of models) {
+    const c = modelCost(name, m);
+    if (c === null) anyUnpriced = true; else { estCost += c; anyPriced = true; }
+  }
+
+  const panel = el("div", { class: "token-panel" });
+  const head = el("div", { class: "tp-head" },
+    el("span", { class: "tp-title" }, "Token usage"),
+    el("span", { class: "tp-total" }, el("b", {}, fmtNum(total)), " total tokens"),
+    el("span", { class: "tp-sub" }, `over ${fmtNum(t.assistantTurns || 0)} assistant turns`));
+  if (anyPriced)
+    head.append(el("span", {
+      class: "tp-cost",
+      title: "Estimated at standard Claude API list prices (cache writes 1.25x input, reads 0.1x input)" +
+             (anyUnpriced ? ". Some models could not be priced and are excluded." : "."),
+    }, "~" + fmtUsd(estCost) + (anyUnpriced ? "+ est." : " est.")));
+  panel.append(head);
+
+  const bar = el("div", { class: "tp-bar", title: `New ${fmtNum(fresh)} / Cached ${fmtNum(cached)}` });
+  const segNew = el("span", { class: "seg-new" }); segNew.style.width = pct(fresh) + "%";
+  const segCached = el("span", { class: "seg-cached" }); segCached.style.width = pct(cached) + "%";
+  bar.append(segNew, segCached);
+  panel.append(bar);
+
+  const cacheHitPct = Math.round((b.cache_read_fraction_of_input || 0) * 100);
+  panel.append(el("div", { class: "tp-legend" },
+    tokenKey("sw-new", "New", fresh, pct(fresh), `incl. ${fmtNum(b.output_tokens || 0)} output`),
+    tokenKey("sw-cached", "Cached", cached, pct(cached), `${cacheHitPct}% of input reused from cache`)));
+
+  if (models.length) {
+    const tb = el("tbody", {});
+    for (const [name, m] of models) {
+      const c = modelCost(name, m);
+      tb.append(el("tr", {},
+        el("td", {}, shortModel(name)),
+        el("td", {}, fmtNum(m.turns)),
+        el("td", {}, fmtNum((m.input_tokens || 0) + (m.cache_creation_input_tokens || 0))),
+        el("td", {}, fmtNum(m.cache_read_input_tokens || 0)),
+        el("td", {}, fmtNum(m.output_tokens || 0)),
+        el("td", {}, c === null ? "-" : fmtUsd(c))));
+    }
+    panel.append(el("div", { class: "tp-models" }, el("table", {},
+      el("thead", {}, el("tr", {},
+        el("th", {}, "Model"), el("th", {}, "Turns"), el("th", {}, "New in"),
+        el("th", {}, "Cached in"), el("th", {}, "Output"), el("th", {}, "Est. cost"))),
+      tb)));
+  }
+  return panel;
+}
+
+function tokenKey(swClass, label, num, pct, note) {
+  return el("span", { class: "key" },
+    el("span", { class: "sw " + swClass }),
+    `${label} `, el("span", { class: "num" }, fmtNum(num)),
+    el("span", { class: "pct" }, ` (${pct}%)${note ? " - " + note : ""}`));
+}
+
 function renderChat() {
   const root = $("#chatLog");
   root.innerHTML = "";
+  const tokenPanel = renderTokenPanel();
+  if (tokenPanel) root.append(tokenPanel);
   const sessions = Array.isArray(window.__CHATLOG__) ? window.__CHATLOG__ : [];
   const total = sessions.reduce((n, s) => n + (s.turns ? s.turns.length : 0), 0);
   $("#chatCount").textContent = total ? `(${total})` : "";

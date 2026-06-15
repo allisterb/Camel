@@ -240,6 +240,55 @@ public class DiskAnalysisWorkflowTests : TestsRuntime
         Assert.False(sshenv.ExecuteCommand("mountpoint", $"-q {rawDir}", out _, true));
     }
 
+    [Fact]
+    public async Task InspectBitLockerVolumeFailsForUnencryptedVolume()
+    {
+        // The NIST image's NTFS partition is not BitLocker-encrypted, so the workflow must fail cleanly (not throw)
+        // and say so - exercising the full mount -> bdeinfo path against a real (non-BDE) volume.
+        const string rawDir = "/tmp/camel_wf_bde_raw";
+        sshenv.ExecuteCommand("umount", rawDir, out _, true);
+
+        var raw = await workflow.MountEwfImageAsync(Image, rawDir);
+        Assert.True(raw.IsSuccess, raw.Message);
+
+        var r = await workflow.InspectBitLockerVolumeAsync(raw.Result!, NtfsOffset);
+        Assert.False(r.IsSuccess);
+        Assert.Contains("No BitLocker volume", r.Message);
+
+        await workflow.UnmountImageAsync(raw.Result!);
+    }
+
+    [Fact]
+    public async Task UnlockBitLockerVolumeFailsWithoutCredential()
+    {
+        // Calling unlock with no credential is a usage error caught before any tool runs.
+        const string rawDir = "/tmp/camel_wf_bde_nocred";
+        sshenv.ExecuteCommand("umount", rawDir, out _, true);
+
+        var raw = await workflow.MountEwfImageAsync(Image, rawDir);
+        Assert.True(raw.IsSuccess, raw.Message);
+
+        var r = await workflow.UnlockBitLockerVolumeAsync(raw.Result!, NtfsOffset);
+        Assert.False(r.IsSuccess);
+        Assert.Contains("No BitLocker credential", r.Message);
+
+        await workflow.UnmountImageAsync(raw.Result!);
+    }
+
+    [Fact]
+    public async Task CanSearchBitLockerRecoveryKeysWorkflow()
+    {
+        const string f = "/tmp/camel_wf_bde_rk.txt";
+        const string key = "111111-222222-333333-444444-555555-666666-777777-888888";
+        sshenv.ExecuteCommand("bash", $"-c \"printf 'recovery key\\n{key}\\n' > {f}\"", out _, false);
+
+        var r = await workflow.SearchBitLockerRecoveryKeysAsync(f);
+        Assert.True(r.IsSuccess, r.Message);
+        Assert.Contains(key, r.Result!);
+
+        sshenv.ExecuteCommand("rm", $"-f {f}", out _, false);
+    }
+
     const string Image = "/mnt/artifacts/4Dell Latitude CPi.E01";
     const int NtfsOffset = 63;
 

@@ -174,10 +174,12 @@ internal class Program : Runtime
         }
 
         // .claude/settings.json — project-scoped code-mode policy (deny Bash, allow only the Camel MCP
-        // tools + scoped file writes) plus the SessionEnd hook that preserves the client chat log into the
-        // case. The hook runs THIS CLI's `preserve-chatlog` verb (`dotnet "<dll>" preserve-chatlog`) so it
-        // needs only the .NET runtime the case already requires — no python/node. Emitting per case keeps
-        // the case self-contained (nothing in ~/.claude). Existing file left untouched.
+        // tools + scoped file writes) plus the Stop and SessionEnd hooks that preserve the client chat log
+        // into the case and bake the report. Stop fires after every agent turn (so the report stays current
+        // throughout the session), SessionEnd is the final pass on clean exit. Both run THIS CLI's
+        // `preserve-chatlog` verb (`dotnet "<dll>" preserve-chatlog`) so they need only the .NET runtime the
+        // case already requires — no python/node. Emitting per case keeps the case self-contained (nothing in
+        // ~/.claude). Existing file left untouched.
         var dotClaude = Path.Combine(caseDir, ".claude");
         Directory.CreateDirectory(dotClaude);
 
@@ -189,8 +191,9 @@ internal class Program : Runtime
         else
         {
             var node = JsonNode.Parse(ReadEmbedded("Camel.CLI.CaseTemplate.settings.json"))!;
-            node["hooks"]!["SessionEnd"]![0]!["hooks"]![0]!["command"] =
-                $"dotnet \"{CliDllPath()}\" preserve-chatlog";
+            var hookCmd = $"dotnet \"{CliDllPath()}\" preserve-chatlog";
+            node["hooks"]!["Stop"]![0]!["hooks"]![0]!["command"] = hookCmd;
+            node["hooks"]!["SessionEnd"]![0]!["hooks"]![0]!["command"] = hookCmd;
             File.WriteAllText(settingsPath, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             Info($"Wrote {settingsPath}");
         }
@@ -292,6 +295,16 @@ internal class Program : Runtime
                 $"window.__CHATLOG__={chat};\n");
             dataFiles++;
         }
+
+        // token-usage-data.js — new-vs-cached token economics for the Conversation tab, aggregated across the
+        // same per-session transcripts the conversation is built from (so the figures match what's shown).
+        if (BuildTokenUsageData(logsDir) is JsonObject tokens)
+        {
+            File.WriteAllText(Path.Combine(reportsDir, "token-usage-data.js"),
+                "/* Token-usage summary (new vs cached) for the Conversation tab, aggregated from logs/chatlog-*.jsonl. */\n" +
+                $"window.__TOKEN_USAGE__={tokens.ToJsonString(JsDataOpts)};\n");
+            dataFiles++;
+        }
         return dataFiles;
     }
 
@@ -308,6 +321,30 @@ internal class Program : Runtime
     }
 
     /// <summary>
+    /// The set of preserved transcript files to reconstruct the case from: one per session id. preserve-chatlog
+    /// writes the FULL transcript on each run, so multiple snapshots for one session id are cumulative, overlapping
+    /// copies — keep only the latest (most complete) per session id. Accepts both the current stable name
+    /// (<c>chatlog-&lt;sid&gt;.jsonl</c>) and the legacy timestamped name
+    /// (<c>chatlog-&lt;sid&gt;-YYYYMMDDTHHMMSSZ.jsonl</c>), reducing both to the session id; distinct session ids are
+    /// distinct sessions. The lexicographic max prefers the stable name (<c>'.' &gt; '-'</c>) and, among legacy
+    /// names, the newest timestamp. Shared by the conversation and token-usage builders so both see the same data.
+    /// </summary>
+    static List<string> LatestChatlogFiles(string logsDir)
+    {
+        if (!Directory.Exists(logsDir)) return [];
+        var rx = new Regex(@"^chatlog-(?<sid>.+?)(?:-\d{8}T\d{6}Z)?\.jsonl$");
+        var latest = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var path in Directory.EnumerateFiles(logsDir, "chatlog-*.jsonl"))
+        {
+            var fn = Path.GetFileName(path);
+            var sid = rx.Match(fn) is { Success: true } m ? m.Groups["sid"].Value : fn;
+            if (!latest.TryGetValue(sid, out var cur) || string.CompareOrdinal(fn, Path.GetFileName(cur)) > 0)
+                latest[sid] = path;
+        }
+        return latest.Values.OrderBy(f => Path.GetFileName(f), StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>
     /// Reads every <c>logs/chatlog-*.jsonl</c> (the Claude Code transcripts the SessionEnd hook preserved) and
     /// builds the trimmed conversation the report's Conversation tab renders: per session, the user/assistant turns
     /// with their text / thinking / tool_use / tool_result blocks, capping tool input/output so the embed stays
@@ -315,20 +352,7 @@ internal class Program : Runtime
     /// </summary>
     static string? BuildChatlogData(string logsDir)
     {
-        if (!Directory.Exists(logsDir)) return null;
-        // preserve-chatlog writes the FULL transcript each SessionEnd, so several chatlog-<sessionId>-<ts>.jsonl
-        // files for one session id are cumulative, overlapping snapshots — keep only the latest (most complete) per
-        // session id so the conversation isn't shown several times. Distinct session ids are kept as distinct sessions.
-        var rx = new Regex(@"^chatlog-(.+)-\d{8}T\d{6}Z\.jsonl$");
-        var latest = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var path in Directory.EnumerateFiles(logsDir, "chatlog-*.jsonl"))
-        {
-            var fn = Path.GetFileName(path);
-            var sid = rx.Match(fn) is { Success: true } m ? m.Groups[1].Value : fn;
-            if (!latest.TryGetValue(sid, out var cur) || string.CompareOrdinal(fn, Path.GetFileName(cur)) > 0)
-                latest[sid] = path;
-        }
-        var files = latest.Values.OrderBy(f => Path.GetFileName(f), StringComparer.Ordinal).ToList();
+        var files = LatestChatlogFiles(logsDir);
         if (files.Count == 0) return null;
 
         static (string text, int trunc) Cap(string s, int n) => s.Length > n ? (s[..n], s.Length - n) : (s, 0);
@@ -420,8 +444,10 @@ internal class Program : Runtime
             Directory.CreateDirectory(logsDir);
 
             var sessionId = payload?["session_id"]?.GetValue<string>() ?? "session";
-            var ts = DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ");
-            var dst = Path.Combine(logsDir, $"chatlog-{sessionId}-{ts}.jsonl");
+            // Stable per-session filename, overwritten each run: the Stop hook fires after every agent turn, so a
+            // timestamped name would accumulate one full-transcript copy per turn. Distinct sessions still get
+            // distinct files, and BuildChatlogData dedups by session id (tolerating the legacy timestamped name).
+            var dst = Path.Combine(logsDir, $"chatlog-{sessionId}.jsonl");
             File.Copy(src, dst, overwrite: true);
             Console.Out.WriteLine($"[preserve-chatlog] Preserved client chat log -> {dst}");
 
@@ -455,11 +481,46 @@ internal class Program : Runtime
     {
         try
         {
-            long input = 0, output = 0, cacheCreate = 0, cacheRead = 0;
-            int turns = 0;
-            // model -> [turns, input, output, cacheCreate, cacheRead]
-            var byModel = new Dictionary<string, long[]>(StringComparer.Ordinal);
+            var acc = AccumulateTokens([transcriptPath]);
+            var summary = TokenSummaryObject(acc);
+            // Prepend the single-session provenance fields the logs/ artifact carries (the report's aggregate
+            // token-usage-data.js omits these).
+            summary["sessionId"] = sessionId;
+            summary["generatedUtc"] = DateTime.UtcNow.ToString("o");
+            summary["transcript"] = transcriptPath;
 
+            Directory.CreateDirectory(logsDir);
+            var path = Path.Combine(logsDir, "token-usage.json");
+            File.WriteAllText(path, summary.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            Console.Out.WriteLine($"[preserve-chatlog] Token usage -> {path} (total {acc.Total:N0} tokens over {acc.Turns} turns)");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[preserve-chatlog] Token-usage summary failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Accumulated token counts over one or more Claude Code transcripts, with a per-model breakdown.</summary>
+    sealed class TokenAcc
+    {
+        public long Input, Output, CacheCreate, CacheRead;
+        public int Turns;
+        // model -> [turns, input, output, cacheCreate, cacheRead]
+        public Dictionary<string, long[]> ByModel { get; } = new(StringComparer.Ordinal);
+        public long Total => Input + Output + CacheCreate + CacheRead;
+    }
+
+    /// <summary>
+    /// Sums the per-turn <c>usage</c> records of every <c>assistant</c> message across the given transcript(s) into
+    /// a <see cref="TokenAcc"/> (overall totals + per-model). Lines that don't parse, non-assistant messages, and
+    /// messages without a <c>usage</c> block are skipped. Tolerant of missing files.
+    /// </summary>
+    static TokenAcc AccumulateTokens(IEnumerable<string> transcriptPaths)
+    {
+        var a = new TokenAcc();
+        foreach (var transcriptPath in transcriptPaths)
+        {
+            if (!File.Exists(transcriptPath)) continue;
             foreach (var line in File.ReadLines(transcriptPath))
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
@@ -475,62 +536,65 @@ internal class Program : Runtime
                      cc = Get("cache_creation_input_tokens"), cr = Get("cache_read_input_tokens");
                 var model = msg?["model"]?.GetValue<string>() ?? "unknown";
 
-                input += i; output += o; cacheCreate += cc; cacheRead += cr; turns++;
-                if (!byModel.TryGetValue(model, out var m)) { m = new long[5]; byModel[model] = m; }
+                a.Input += i; a.Output += o; a.CacheCreate += cc; a.CacheRead += cr; a.Turns++;
+                if (!a.ByModel.TryGetValue(model, out var m)) { m = new long[5]; a.ByModel[model] = m; }
                 m[0]++; m[1] += i; m[2] += o; m[3] += cc; m[4] += cr;
             }
-
-            long total = input + output + cacheCreate + cacheRead;
-            long totalInput = input + cacheCreate + cacheRead;
-            // Cached (reused from the prompt cache, billed at the reduced cache-read rate) vs new (fresh
-            // tokens billed at standard/cache-write/output rates). cache_creation is a one-time write of
-            // new input into the cache, so it counts as new, not cached.
-            long cachedTokens = cacheRead;
-            long newTokens = input + cacheCreate + output;
-            var summary = new JsonObject
-            {
-                ["sessionId"] = sessionId,
-                ["generatedUtc"] = DateTime.UtcNow.ToString("o"),
-                ["transcript"] = transcriptPath,
-                ["assistantTurns"] = turns,
-                ["totals"] = new JsonObject
-                {
-                    ["input_tokens"] = input,
-                    ["output_tokens"] = output,
-                    ["cache_creation_input_tokens"] = cacheCreate,
-                    ["cache_read_input_tokens"] = cacheRead,
-                    ["total_tokens"] = total,
-                },
-                ["breakdown"] = new JsonObject
-                {
-                    ["cached_tokens"] = cachedTokens,                       // cache_read — reused, billed ~0.1x
-                    ["new_tokens"] = newTokens,                            // input + cache_creation + output
-                    ["new_input_tokens"] = input + cacheCreate,           // fresh input (full + cache-write premium)
-                    ["output_tokens"] = output,
-                    ["cache_read_fraction_of_input"] = totalInput > 0
-                        ? Math.Round((double)cacheRead / totalInput, 4)
-                        : 0.0,
-                },
-                ["byModel"] = new JsonObject(byModel.Select(kv =>
-                    new KeyValuePair<string, JsonNode?>(kv.Key, new JsonObject
-                    {
-                        ["turns"] = kv.Value[0],
-                        ["input_tokens"] = kv.Value[1],
-                        ["output_tokens"] = kv.Value[2],
-                        ["cache_creation_input_tokens"] = kv.Value[3],
-                        ["cache_read_input_tokens"] = kv.Value[4],
-                    }))),
-            };
-
-            Directory.CreateDirectory(logsDir);
-            var path = Path.Combine(logsDir, "token-usage.json");
-            File.WriteAllText(path, summary.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-            Console.Out.WriteLine($"[preserve-chatlog] Token usage -> {path} (total {total:N0} tokens over {turns} turns)");
         }
-        catch (Exception ex)
+        return a;
+    }
+
+    /// <summary>
+    /// Renders a <see cref="TokenAcc"/> into the JSON shape the report (and <c>token-usage.json</c>) consume:
+    /// <c>assistantTurns</c>, raw <c>totals</c>, the cached-vs-new <c>breakdown</c>, and a per-model table. Cached =
+    /// <c>cache_read</c> (reused from the prompt cache, billed ~0.1x); new = fresh input + the one-time cache-write
+    /// + output (billed at standard/output rates).
+    /// </summary>
+    static JsonObject TokenSummaryObject(TokenAcc a)
+    {
+        long totalInput = a.Input + a.CacheCreate + a.CacheRead;
+        return new JsonObject
         {
-            Console.Error.WriteLine($"[preserve-chatlog] Token-usage summary failed: {ex.Message}");
-        }
+            ["assistantTurns"] = a.Turns,
+            ["totals"] = new JsonObject
+            {
+                ["input_tokens"] = a.Input,
+                ["output_tokens"] = a.Output,
+                ["cache_creation_input_tokens"] = a.CacheCreate,
+                ["cache_read_input_tokens"] = a.CacheRead,
+                ["total_tokens"] = a.Total,
+            },
+            ["breakdown"] = new JsonObject
+            {
+                ["cached_tokens"] = a.CacheRead,                       // cache_read — reused, billed ~0.1x
+                ["new_tokens"] = a.Input + a.CacheCreate + a.Output,   // fresh input + cache-write + output
+                ["new_input_tokens"] = a.Input + a.CacheCreate,        // fresh input (full + cache-write premium)
+                ["output_tokens"] = a.Output,
+                ["cache_read_fraction_of_input"] = totalInput > 0
+                    ? Math.Round((double)a.CacheRead / totalInput, 4)
+                    : 0.0,
+            },
+            ["byModel"] = new JsonObject(a.ByModel.Select(kv =>
+                new KeyValuePair<string, JsonNode?>(kv.Key, new JsonObject
+                {
+                    ["turns"] = kv.Value[0],
+                    ["input_tokens"] = kv.Value[1],
+                    ["output_tokens"] = kv.Value[2],
+                    ["cache_creation_input_tokens"] = kv.Value[3],
+                    ["cache_read_input_tokens"] = kv.Value[4],
+                }))),
+        };
+    }
+
+    /// <summary>
+    /// Builds the aggregate token-usage summary for the report's Conversation tab by summing over the same
+    /// per-session transcripts the conversation is reconstructed from (so the numbers match what is shown). Returns
+    /// null when there is no usage data (no transcripts / no assistant turns).
+    /// </summary>
+    static JsonObject? BuildTokenUsageData(string logsDir)
+    {
+        var acc = AccumulateTokens(LatestChatlogFiles(logsDir));
+        return acc.Turns > 0 ? TokenSummaryObject(acc) : null;
     }
 
     /// <summary>Path to this running CLI assembly (empty for single-file publishes — fall back to the assembly dir).</summary>

@@ -11,6 +11,13 @@ public class DiskAnalysisToolkit : Toolkit
 {
     public DiskAnalysisToolkit(AuditEnvironment auditEnvironment, IConfigurationRoot? config = null) : base("DiskAnalysis", auditEnvironment, config) { }
 
+    /// <summary>
+    /// Ensures the libbde BitLocker tools (<c>bdeinfo</c>/<c>bdemount</c>) are present. SIFT ships them, so this
+    /// is a one-time <c>test -e</c> no-op on a normal workstation; on a stripped image it apt-installs
+    /// <c>libbde-tools</c>. Best-effort - a failure just means the BitLocker methods return null until present.
+    /// </summary>
+    protected override void InstallMissingTools() => InstallAptPackage("libbde-tools", "/usr/bin/bdemount");
+
     #region EWF tools
     public async Task<EwfInfo?> EwfInfoAsync(string image) =>
         await ExecuteToolTextAsync("EwfInfo", Q(image)) is { } o ? Models.EwfInfo.Parse(o) : null;
@@ -44,6 +51,74 @@ public class DiskAnalysisToolkit : Toolkit
     public async Task<bool> EwfMountNtfsAsync(string rawPartition, string mountDir, int? offset = null) =>
         await ExecuteToolTextAsync("EwfMountNtfs",
             $"-t ntfs-3g -o ro,force{(offset is not null ? $",offset={offset.Value * 512}" : "")} {Q(rawPartition)} {Q(mountDir)}") is not null;
+    #endregion
+
+    #region BitLocker (BDE) tools
+    /// <summary>
+    /// Reads BitLocker Drive Encryption (BDE) volume metadata from <paramref name="source"/> - a raw device such
+    /// as the <c>ewf1</c> exposed by <see cref="EwfMountRawAsync"/>, or a raw image - with <c>bdeinfo</c>: the
+    /// encryption method, volume identifier, creation time, and the key protectors present (TPM / recovery password
+    /// / password / startup key). <paramref name="offset"/> is the BitLocker partition start sector (converted to
+    /// the byte offset bdeinfo expects), or null for a single-volume image. Reading metadata needs no credential;
+    /// supply one only to also confirm it unlocks the volume. Runs unattended (<c>-u</c>) so it never blocks for
+    /// input. Returns null when there is no BDE volume at the offset (i.e. not a BitLocker volume) or the tool
+    /// failed - inspect the returned model's <see cref="Models.BitLockerInfo.IsBitLockerVolume"/> otherwise.
+    /// </summary>
+    public async Task<BitLockerInfo?> BdeInfoAsync(string source, int? offset = null,
+        string? recoveryPassword = null, string? password = null, string? bekFile = null, string? fullKey = null) =>
+        await ExecuteToolTextAsync("BdeInfo",
+            $"-u {BdeOffset(offset)}{BdeCredArgs(recoveryPassword, password, bekFile, fullKey)}{Q(source)}") is { } o
+            ? Models.BitLockerInfo.Parse(o) : null;
+
+    /// <summary>
+    /// Unlocks and mounts a BitLocker (BDE) volume from <paramref name="volume"/> (a raw device/image) read-only
+    /// with <c>bdemount</c>, exposing the decrypted volume as <c>&lt;mountDir&gt;/bde1</c> - a raw NTFS device the
+    /// Sleuth Kit tools and a loopback mount then operate on exactly like the <c>ewf1</c> from
+    /// <see cref="EwfMountRawAsync"/>. Supply exactly one credential: a 48-digit <paramref name="recoveryPassword"/>
+    /// (<c>NNNNNN-NNNNNN-...</c>), a <paramref name="password"/>, a startup-key <paramref name="bekFile"/> (.BEK),
+    /// or the raw <paramref name="fullKey"/> (FVEK:TWEAK base16). <paramref name="offset"/> is the partition start
+    /// sector. The mount directory must already exist. Returns true on success (false on a wrong credential or an
+    /// already-mounted target). The FUSE mount is root-owned; unmount with <see cref="UnmountAsync"/>.
+    /// </summary>
+    public async Task<bool> BdeMountAsync(string volume, string mountDir, string? recoveryPassword = null,
+        string? password = null, string? bekFile = null, string? fullKey = null, int? offset = null) =>
+        await ExecuteToolTextAsync("BdeMount",
+            $"-u {BdeOffset(offset)}{BdeCredArgs(recoveryPassword, password, bekFile, fullKey)}{Q(volume)} {Q(mountDir)}") is not null;
+
+    /// <summary>
+    /// Searches <paramref name="input"/> (a raw image/device, an unallocated-space extract, a memory dump, or any
+    /// blob) for BitLocker 48-digit recovery keys by string search - the FOR508 data-recovery technique:
+    /// <c>strings</c> piped to a regex for the <c>NNNNNN-NNNNNN-NNNNNN-NNNNNN-NNNNNN-NNNNNN-NNNNNN-NNNNNN</c> format
+    /// (eight groups of six decimal digits). Useful when no key is supplied - a recovery key saved to a file,
+    /// captured in a print spool, or recoverable from memory surfaces here. Runs under sudo (a raw <c>ewf1</c>/
+    /// <c>bde1</c> device is root-owned). When <paramref name="maxMatches"/> is set the result is capped. Returns
+    /// the distinct candidate keys (empty when none), or null when the input is unreadable.
+    /// </summary>
+    public async Task<string[]?> SearchBitLockerRecoveryKeysAsync(string input, int? maxMatches = null)
+    {
+        // Eight groups of six decimal digits, '-' separated (the 48-digit BitLocker recovery key format).
+        const string pattern = "[0-9]{6}-[0-9]{6}-[0-9]{6}-[0-9]{6}-[0-9]{6}-[0-9]{6}-[0-9]{6}-[0-9]{6}";
+        var cap = maxMatches is int n and > 0 ? $" | head -n {n}" : "";
+        // Ship the pipeline base64-encoded so the regex braces never reach the outer shell; -o prints just the key.
+        var script = $"strings {Q(input)} | grep -E -o {Q(pattern)} | sort -u{cap}";
+        var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(script));
+        var r = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"echo {b64} | base64 -d | bash\"", true);
+        return r.IsCompleted ? r.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : null;
+    }
+
+    // bdeinfo/bdemount take -o in BYTES (the rest of this toolkit's offsets are partition start sectors); convert.
+    private static string BdeOffset(int? offset) => offset is not null ? $"-o {(long)offset.Value * 512} " : "";
+
+    // Build the single credential flag for bdeinfo/bdemount from whichever credential was supplied ('' for none).
+    private static string BdeCredArgs(string? recoveryPassword, string? password, string? bekFile, string? fullKey)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(recoveryPassword)) parts.Add($"-r {Q(recoveryPassword)}");
+        if (!string.IsNullOrWhiteSpace(password)) parts.Add($"-p {Q(password)}");
+        if (!string.IsNullOrWhiteSpace(bekFile)) parts.Add($"-s {Q(bekFile)}");
+        if (!string.IsNullOrWhiteSpace(fullKey)) parts.Add($"-k {Q(fullKey)}");
+        return parts.Count > 0 ? string.Join(" ", parts) + " " : "";
+    }
     #endregion
 
     #region Image and partition tools
@@ -523,6 +598,6 @@ public class DiskAnalysisToolkit : Toolkit
         "EwfInfo", "EwfVerify", "EwfMountRaw", "EwfMountLoopback", "EwfMountNtfs", "ListPartitions",
         "DDMount", "MakeMountDir", "Unmount", "ImgStat", "Mmls", "FsStat", "Fls", "Icat", "Istat", "Ffind", "Ils",
         "Blkls", "TskRecover", "Mactime", "Blkcat", "BulkExtractor", "PhotoRec",
-        "Foremost", "Scalpel", "Sigfind", "Extundelete"
+        "Foremost", "Scalpel", "Sigfind", "Extundelete", "BdeInfo", "BdeMount"
     ];
 }

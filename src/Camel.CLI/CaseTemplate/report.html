@@ -145,6 +145,12 @@
   table.log tr.exp { background: var(--panel2); }
   table.log td.ts { font-family: var(--mono); color: var(--muted); white-space: nowrap; }
   table.log td.summary { line-height: 1.4; }
+  /* Source column: the workflow/toolkit attribution chain (workflow op -> toolkit op) for command events */
+  table.log td.src { line-height: 1.35; }
+  table.log td.src .src-chain { font-family: var(--mono); font-size: 11px; }
+  table.log td.src .wf { color: var(--muted); }
+  table.log td.src .tk { color: var(--accent2); }
+  table.log td.src .sep { color: var(--muted); }
   .rowdetail td { background: var(--code-bg); }
   .rowdetail pre { margin: 0; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
                    word-break: break-word; color: var(--code-fg); max-height: 360px; overflow: auto; }
@@ -203,6 +209,34 @@
   .tool > summary .tname { color: var(--t-command); font-family: var(--mono); }
   .tool .result-ok { color: var(--ok); } .tool .result-err { color: var(--bad); }
   .trunc { color: var(--muted); font-style: italic; }
+
+  /* Token-usage panel at the top of the Conversation tab (new vs cached economics) */
+  .token-panel { border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+                 padding: 12px 14px; margin: 4px 0 18px; }
+  .token-panel .tp-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .token-panel .tp-title { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); font-weight: 600; }
+  .token-panel .tp-total { font-size: 13px; } .token-panel .tp-total b { font-family: var(--mono); }
+  .token-panel .tp-sub { color: var(--muted); font-size: 11.5px; }
+  .token-panel .tp-cost { margin-left: auto; font-family: var(--mono); font-size: 13px; font-weight: 600;
+                          color: var(--accent2); cursor: help; }
+  /* stacked new-vs-cached bar */
+  .tp-bar { display: flex; height: 16px; border-radius: 5px; overflow: hidden; border: 1px solid var(--border); }
+  .tp-bar > span { display: block; height: 100%; }
+  .tp-bar .seg-new { background: var(--accent); }
+  .tp-bar .seg-cached { background: var(--accent2); }
+  .tp-legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 9px; font-size: 12px; }
+  .tp-legend .key { display: inline-flex; align-items: center; gap: 6px; }
+  .tp-legend .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  .tp-legend .sw-new { background: var(--accent); } .tp-legend .sw-cached { background: var(--accent2); }
+  .tp-legend .num { font-family: var(--mono); } .tp-legend .pct { color: var(--muted); }
+  /* per-model rows */
+  .tp-models { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 9px; font-size: 11.5px; }
+  .tp-models table { border-collapse: collapse; width: 100%; }
+  .tp-models th, .tp-models td { text-align: right; padding: 2px 8px; }
+  .tp-models th:first-child, .tp-models td:first-child { text-align: left; }
+  .tp-models th { color: var(--muted); font-weight: 600; }
+  .tp-models td { font-family: var(--mono); }
+  .tp-models td:first-child { font-family: var(--sans); }
 </style>
 </head>
 <body data-case-id="__CASE_ID__">
@@ -241,7 +275,7 @@
       </div>
       <div class="tablewrap">
         <table class="log">
-          <thead><tr><th style="width:180px">Time (UTC)</th><th style="width:150px">Type</th><th style="width:90px">Exec</th><th>Summary</th></tr></thead>
+          <thead><tr><th style="width:180px">Time (UTC)</th><th style="width:150px">Type</th><th style="width:90px">Exec</th><th style="width:210px">Source</th><th>Summary</th></tr></thead>
           <tbody id="logBody"></tbody>
         </table>
       </div>
@@ -289,6 +323,9 @@
        Kept a sibling file (not inline) because it is larger; absent in a fresh case (the Conversation tab is then
        empty). A 404 here when the file is absent is harmless. -->
   <script src="chatlog-data.js"></script>
+  <!-- Generated token-usage-data.js sets window.__TOKEN_USAGE__ (new-vs-cached token economics) for the panel at
+       the top of the Conversation tab. Absent in a fresh case; a 404 here is harmless. -->
+  <script src="token-usage-data.js"></script>
   <script src="report.js"></script>
 </body>
 </html>

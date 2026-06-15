@@ -25,6 +25,16 @@
   },
   "enableAllProjectMcpServers": true,
   "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "dotnet preserve-chatlog"
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [

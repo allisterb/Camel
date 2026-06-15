@@ -701,6 +701,31 @@ types are defined once (in the toolkit that owns them) and referenced by name el
   "MountDir": { "type": "string" }, "RawDevice": { "type": "string" }, "Offset": { "type": "integer" },
   "Info": { "$ref": "FsStat" } } }
 ```
+### BitLockerInfo Schema
+```json
+{ "type": "object", "properties": {
+  "IsBitLockerVolume": { "type": "boolean", "description": "True when a BDE volume was recognised at the offset." },
+  "EncryptionMethod": { "type": ["string","null"], "description": "e.g. 'AES-CBC 128-bit', 'AES-XTS 256-bit'." },
+  "VolumeIdentifier": { "type": ["string","null"] }, "CreationTime": { "type": ["string","null"], "description": "UTC." },
+  "Description": { "type": ["string","null"] },
+  "KeyProtectors": { "type": "array", "items": { "$ref": "BitLockerKeyProtector" } },
+  "RawText": { "type": "string", "description": "Full unparsed bdeinfo output (authoritative)." } } }
+```
+### BitLockerKeyProtector Schema
+```json
+{ "type": "object", "properties": {
+  "Index": { "type": "integer", "description": "Protector ordinal (0-based)." },
+  "Identifier": { "type": ["string","null"] },
+  "Type": { "type": "string", "description": "TPM | TPM and PIN | Recovery password | Password | Startup key | External key." } } }
+```
+### BitLockerVolumeMount Schema
+```json
+{ "type": "object", "properties": {
+  "BdeMountDir": { "type": "string", "description": "bdemount FUSE dir holding the decrypted bde1 device." },
+  "DecryptedDevice": { "type": "string", "description": "<BdeMountDir>/bde1 - pass to the TSK tools with no offset." },
+  "FilesystemMountDir": { "type": ["string","null"], "description": "Where the cleartext volume is loop-mounted, or null." },
+  "Info": { "$ref": "BitLockerInfo" }, "FilesystemInfo": { "anyOf": [ { "$ref": "FsStat" }, { "type": "null" } ] } } }
+```
 ### ImageVerification Schema
 ```json
 { "type": "object", "properties": {
