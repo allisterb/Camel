@@ -68,7 +68,7 @@ with upstream Protocol SIFT for comparison) is [**protocol-sift-camel**](https:/
 | **IR Accuracy** | Typed SDK fails fast on invented methods/fields; findings grounded in structured returns, each cited to an audited command; an enforced forensic discipline (corroboration, fact/inference separation, calibrated confidence) with rejected-lead / gap / hallucination events in the trail — [IRAccuracy.md](docs/IRAccuracy.md), [Architecture.md](docs/Architecture.md), [AuditTrail.md](docs/AuditTrail.md). |
 | **Breadth & Depth** | Codified multi-step DFIR **workflows** + cross-source correlation + a label-free **anomaly-detection** engine for timeline triage — [Architecture.md](docs/Architecture.md). |
 | **Constraint Implementation** | Architectural guardrails (no shell, sandboxed engine, read-only evidence, no network), not prompt rules — [Constraints.md](docs/Constraints.md). |
-| **Audit Trail Quality** | Per-case CLEF audit log; every finding traceable to its command; case reconstructable from logs alone — [AuditTrail.md](docs/AuditTrail.md), [demo/](demo/audit-sample/). |
+| **Audit Trail Quality** | Per-case CLEF audit log; every finding traceable to its command; case reconstructable from logs alone — [AuditTrail.md](docs/AuditTrail.md)|
 | **Usability & Documentation** | One dependency (.NET 9, cross-platform); one-command `create-case`; zero global footprint (nothing in `~/.claude`); self-contained cases; runs local or SSH-remote — no installer — [Usability.md](docs/Usability.md). |
 
 ---
