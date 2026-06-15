@@ -431,4 +431,7 @@ FodyWeavers.xsd
 **/*appsettings.json
 !src/Camel.CLI/appsettings.json
 reference/*
+
 cases/*
+!cases/README.md
+!cases/SRL-2018

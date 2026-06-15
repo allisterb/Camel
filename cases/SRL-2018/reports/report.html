@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Camel Report - SRL-2018</title>
+<script>
+  // Apply the saved theme before the body paints so there is no flash on load. Default (no saved choice) is light.
+  try { var t = localStorage.getItem("camel-report-theme"); if (t) document.documentElement.setAttribute("data-theme", t); } catch (e) {}
+</script>
+<style>
+  /* Light theme is the default; [data-theme="dark"] overrides the same vars. The colour badges (.b-*) keep their
+     vivid fills in both themes (they carry dark text); the per-event-type tag colours (--t-*) are tuned per theme
+     so they stay readable on each background. */
+  :root {
+    --bg: #ffffff; --panel: #f2f4f7; --panel2: #e8ecf1; --border: #d3d9e1;
+    --fg: #1b2330; --muted: #5b6573; --accent: #1668d6; --accent2: #0c8275;
+    --hi: #e23b3b; --med: #e0860a; --low: #c09b00; --spec: #8a93a1;
+    --ok: #2f9e44; --bad: #d63030; --chip: #e8ecf1;
+    --code-bg: #f5f6f8; --code-fg: #243044;
+    --t-finding: #b9700a; --t-command: #1668d6; --t-execution: #0c7e72; --t-human: #7c3aed;
+    --t-false: #2f9e44; --t-missing: #9a7b00; --t-hallucination: #d63030; --t-neutral: #5b6573;
+    --mono: ui-monospace, "Cascadia Code", "Consolas", "SF Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1116; --panel: #161b22; --panel2: #1c2230; --border: #2b333f;
+    --fg: #d7dde5; --muted: #8b97a6; --accent: #4ea1ff; --accent2: #6fd3c7;
+    --hi: #ff6b6b; --med: #ffb454; --low: #ffd866; --spec: #8b97a6;
+    --ok: #5ad17e; --bad: #ff6b6b; --chip: #232b38;
+    --code-bg: #0b0e13; --code-fg: #b8cce0;
+    --t-finding: #ffb454; --t-command: #4ea1ff; --t-execution: #6fd3c7; --t-human: #c792ea;
+    --t-false: #5ad17e; --t-missing: #ffd866; --t-hallucination: #ff6b6b; --t-neutral: #8b97a6;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg); font-family: var(--sans);
+    font-size: 14px; display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+  a { color: var(--accent); cursor: pointer; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, .mono { font-family: var(--mono); }
+
+  header {
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header h1 .case { color: var(--accent2); }
+  .meta { color: var(--muted); font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .meta b { color: var(--fg); font-weight: 600; }
+  .spacer { flex: 1; }
+  button, label.btn {
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer;
+  }
+  button:hover, label.btn:hover { border-color: var(--accent); }
+  input[type=file] { display: none; }
+
+  nav.tabs { display: flex; gap: 4px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  nav.tabs button {
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    border-radius: 0; padding: 10px 14px; color: var(--muted); font-size: 13px;
+  }
+  nav.tabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
+  nav.tabs .count { color: var(--muted); font-size: 11px; }
+
+  main { flex: 1; overflow: hidden; position: relative; }
+  .view { position: absolute; inset: 0; display: none; }
+  .view.active { display: flex; }
+
+  /* Findings master-detail */
+  #findingsList { width: 42%; min-width: 320px; overflow-y: auto; border-right: 1px solid var(--border); }
+  #findingDetail { flex: 1; overflow-y: auto; padding: 16px 20px; }
+  .fcard {
+    padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer;
+  }
+  .fcard:hover { background: var(--panel); }
+  .fcard.sel { background: var(--panel2); border-left: 3px solid var(--accent); padding-left: 13px; }
+  .fcard .obs { font-size: 13px; line-height: 1.4; margin: 4px 0 0; }
+  .frow { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10.5px;
+           font-weight: 700; letter-spacing: .3px; color: #0e1116; }
+  .b-HIGH { background: var(--hi); } .b-MEDIUM { background: var(--med); }
+  .b-LOW { background: var(--low); } .b-SPECULATIVE { background: var(--spec); }
+  .b-default { background: var(--muted); }
+
+  .etag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10.5px;
+          font-family: var(--mono); color: var(--fg);
+          border: 1px solid color-mix(in srgb, currentColor 40%, transparent); }
+  .et-finding { color: var(--t-finding); }
+  .et-command { color: var(--t-command); }
+  .et-execution { color: var(--t-execution); }
+  .et-human-judgement-recommended { color: var(--t-human); }
+  .et-false-positive { color: var(--t-false); }
+  .et-missing-evidence { color: var(--t-missing); }
+  .et-hallucination { color: var(--t-hallucination); }
+  .et-information, .et-error, .et-case, .et-evidence { color: var(--t-neutral); }
+
+  .execid { font-family: var(--mono); color: var(--accent); cursor: pointer; }
+  .execid:hover { text-decoration: underline; }
+
+  .detail-h { font-size: 18px; margin: 0 0 4px; }
+  .kv { margin: 14px 0; }
+  .kv .k { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 3px; }
+  .kv .v { line-height: 1.5; white-space: pre-wrap; }
+
+  .trace { margin-top: 8px; }
+  .exec-block { border: 1px solid var(--border); border-radius: 8px; margin: 10px 0; overflow: hidden; }
+  .exec-head { background: var(--panel2); padding: 8px 12px; display: flex; align-items: center; gap: 10px; font-size: 12px; }
+  .exec-head .status { font-family: var(--mono); }
+  .script { background: var(--code-bg); padding: 10px 12px; font-family: var(--mono); font-size: 11.5px;
+            white-space: pre; overflow-x: auto; max-height: 220px; overflow-y: auto; color: var(--code-fg); border-top: 1px solid var(--border); }
+  table.cmds { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  table.cmds th, table.cmds td { text-align: left; padding: 5px 10px; border-top: 1px solid var(--border); vertical-align: top; }
+  table.cmds th { color: var(--muted); font-weight: 600; font-size: 10.5px; text-transform: uppercase; }
+  table.cmds td.cmd { font-family: var(--mono); color: var(--fg); word-break: break-word; }
+  .exit-ok { color: var(--ok); } .exit-bad { color: var(--bad); }
+  .empty { color: var(--muted); font-style: italic; padding: 8px 12px; }
+
+  /* Audit log + IOC tables share the .log table styling */
+  #auditView, #iocsView { flex-direction: column; }
+  #iocsView td.ctx { line-height: 1.4; }
+  #iocsView td.val { font-family: var(--mono); word-break: break-word; }
+  .filterbar { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; gap: 10px;
+               align-items: center; flex-wrap: wrap; background: var(--panel); }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { padding: 3px 9px; border-radius: 12px; font-size: 11.5px; background: var(--chip);
+          border: 1px solid var(--border); cursor: pointer; user-select: none; color: var(--muted); }
+  .chip.on { color: var(--fg); border-color: var(--accent); background: var(--panel2); }
+  .chip .n { opacity: .7; margin-left: 4px; }
+  .filterbar input[type=text] {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--fg); padding: 6px 10px; font-size: 13px; font-family: var(--mono); min-width: 160px;
+  }
+  .tablewrap { flex: 1; overflow-y: auto; }
+  table.log { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.log thead th { position: sticky; top: 0; background: var(--panel); z-index: 1;
+    text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--muted);
+    font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  table.log td { padding: 7px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.log tbody tr:hover { background: var(--panel); }
+  table.log tr.exp { background: var(--panel2); }
+  table.log td.ts { font-family: var(--mono); color: var(--muted); white-space: nowrap; }
+  table.log td.summary { line-height: 1.4; }
+  /* Source column: the workflow/toolkit attribution chain (workflow op -> toolkit op) for command events */
+  table.log td.src { line-height: 1.35; }
+  table.log td.src .src-chain { font-family: var(--mono); font-size: 11px; }
+  table.log td.src .wf { color: var(--muted); }
+  table.log td.src .tk { color: var(--accent2); }
+  table.log td.src .sep { color: var(--muted); }
+  .rowdetail td { background: var(--code-bg); }
+  .rowdetail pre { margin: 0; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
+                   word-break: break-word; color: var(--code-fg); max-height: 360px; overflow: auto; }
+
+  .drop {
+    margin: auto; max-width: 560px; text-align: center; padding: 48px 32px; align-self: center;
+    border: 2px dashed var(--border); border-radius: 12px; color: var(--muted);
+  }
+  .drop.hot { border-color: var(--accent); color: var(--fg); }
+  .drop h2 { color: var(--fg); margin-top: 0; }
+  .hidden { display: none !important; }
+  .pill { font-size: 11px; color: var(--muted); }
+
+  /* Accuracy tab: rendered markdown of reports/accuracy.md */
+  #accuracyView.active { display: block; overflow-y: auto; }
+  .markdown { padding: 20px 28px; max-width: 920px; line-height: 1.55; }
+  .markdown h1 { font-size: 20px; margin: 0 0 10px; }
+  .markdown h2 { font-size: 16px; margin: 24px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+  .markdown h3 { font-size: 14px; margin: 16px 0 6px; }
+  .markdown p { margin: 8px 0; }
+  .markdown ul, .markdown ol { margin: 8px 0; padding-left: 24px; }
+  .markdown li { margin: 5px 0; }
+  .markdown code { background: var(--chip); padding: 1px 5px; border-radius: 4px;
+                   font-family: var(--mono); font-size: 12.5px; }
+  .markdown strong { color: var(--fg); font-weight: 700; }
+  .markdown a { color: var(--accent); }
+
+  /* Conversation tab: read-only reconstruction of the client chat log */
+  #chatView.active { display: block; overflow-y: auto; }
+  .chat { max-width: 1000px; margin: 0 auto; padding: 16px 20px 60px; }
+  .chat .session-sep { text-align: center; color: var(--muted); font-size: 11px; margin: 22px 0 10px;
+                       border-top: 1px solid var(--border); padding-top: 10px; }
+  .turn { margin: 14px 0; display: flex; flex-direction: column; }
+  .turn .who { font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+               margin-bottom: 4px; }
+  .turn .ts { font-family: var(--mono); opacity: .7; margin-left: 6px; }
+  .bubble { border-radius: 10px; padding: 10px 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+  .turn.user { align-items: flex-end; }
+  .turn.user .bubble { background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+                       border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+                       color: var(--fg); max-width: 80%; }
+  .turn.assistant .bubble { background: var(--panel); border: 1px solid var(--border); max-width: 92%; }
+  .turn.system .bubble { background: transparent; border: 1px dashed var(--border); color: var(--muted);
+                         font-size: 12px; max-width: 92%; }
+  /* collapsible thinking + tool blocks (use <details>) */
+  .turn details { max-width: 92%; margin: 5px 0; border: 1px solid var(--border); border-radius: 8px;
+                  background: var(--code-bg); overflow: hidden; }
+  .turn details > summary { cursor: pointer; padding: 6px 12px; font-size: 11.5px; color: var(--muted);
+                            user-select: none; list-style: none; }
+  .turn details > summary::-webkit-details-marker { display: none; }
+  .turn details > summary::before { content: "\25B8 "; color: var(--muted); }
+  .turn details[open] > summary::before { content: "\25BE "; }
+  .turn details .body { padding: 0 12px 10px; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
+                        word-break: break-word; color: var(--code-fg); max-height: 420px; overflow: auto; }
+  .think > summary { font-style: italic; }
+  .tool > summary .tname { color: var(--t-command); font-family: var(--mono); }
+  .tool .result-ok { color: var(--ok); } .tool .result-err { color: var(--bad); }
+  .trunc { color: var(--muted); font-style: italic; }
+
+  /* Token-usage panel at the top of the Conversation tab (new vs cached economics) */
+  .token-panel { border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+                 padding: 12px 14px; margin: 4px 0 18px; }
+  .token-panel .tp-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .token-panel .tp-title { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); font-weight: 600; }
+  .token-panel .tp-total { font-size: 13px; } .token-panel .tp-total b { font-family: var(--mono); }
+  .token-panel .tp-sub { color: var(--muted); font-size: 11.5px; }
+  .token-panel .tp-cost { margin-left: auto; font-family: var(--mono); font-size: 13px; font-weight: 600;
+                          color: var(--accent2); cursor: help; }
+  /* stacked new-vs-cached bar */
+  .tp-bar { display: flex; height: 16px; border-radius: 5px; overflow: hidden; border: 1px solid var(--border); }
+  .tp-bar > span { display: block; height: 100%; }
+  .tp-bar .seg-new { background: var(--accent); }
+  .tp-bar .seg-cached { background: var(--accent2); }
+  .tp-legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 9px; font-size: 12px; }
+  .tp-legend .key { display: inline-flex; align-items: center; gap: 6px; }
+  .tp-legend .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  .tp-legend .sw-new { background: var(--accent); } .tp-legend .sw-cached { background: var(--accent2); }
+  .tp-legend .num { font-family: var(--mono); } .tp-legend .pct { color: var(--muted); }
+  .tp-bar .seg-reason { background: var(--t-human); } .tp-bar .seg-tool { background: var(--med); }
+  .tp-legend .sw-reason { background: var(--t-human); } .tp-legend .sw-tool { background: var(--med); }
+  /* runtime breakdown sub-section */
+  .tp-runtime { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+  .tp-rt-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .tp-rt-label { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); font-weight: 600; }
+  .tp-rt-total { font-size: 13px; font-family: var(--mono); font-weight: 600; }
+  /* per-model rows */
+  .tp-models { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 9px; font-size: 11.5px; }
+  .tp-models table { border-collapse: collapse; width: 100%; }
+  .tp-models th, .tp-models td { text-align: right; padding: 2px 8px; }
+  .tp-models th:first-child, .tp-models td:first-child { text-align: left; }
+  .tp-models th { color: var(--muted); font-weight: 600; }
+  .tp-models td { font-family: var(--mono); }
+  .tp-models td:first-child { font-family: var(--sans); }
+</style>
+</head>
+<body data-case-id="SRL-2018">
+  <header>
+    <h1>Camel Report &mdash; <span class="case">SRL-2018</span></h1>
+    <div class="meta" id="meta"></div>
+    <div class="spacer"></div>
+    <button id="themeBtn" title="Toggle light/dark theme">Theme</button>
+    <label class="btn">Load .clef<input type="file" id="fileInput" accept=".clef,.json,.jsonl,.log,.txt" /></label>
+    <button id="reloadBtn" title="Reload the default audit log">Reload</button>
+  </header>
+
+  <nav class="tabs">
+    <button id="tabFindings" class="active" data-view="findingsView">Findings <span class="count" id="findCount"></span></button>
+    <button id="tabAudit" data-view="auditView">Audit Log <span class="count" id="auditCount"></span></button>
+    <button id="tabIocs" data-view="iocsView">IOCs <span class="count" id="iocCount"></span></button>
+    <button id="tabAccuracy" data-view="accuracyView">Accuracy</button>
+    <button id="tabChat" data-view="chatView">Conversation <span class="count" id="chatCount"></span></button>
+  </nav>
+
+  <main>
+    <!-- Findings master-detail -->
+    <section class="view active" id="findingsView">
+      <div id="findingsList"></div>
+      <div id="findingDetail"><p class="empty">Select a finding to trace it to its audit-log entries.</p></div>
+    </section>
+
+    <!-- Audit log -->
+    <section class="view" id="auditView">
+      <div class="filterbar">
+        <div class="chips" id="typeChips"></div>
+        <div class="spacer"></div>
+        <input type="text" id="execFilter" placeholder="execution id..." />
+        <input type="text" id="textFilter" placeholder="search text..." />
+        <button id="clearFilters">Clear</button>
+      </div>
+      <div class="tablewrap">
+        <table class="log">
+          <thead><tr><th style="width:180px">Time (UTC)</th><th style="width:150px">Type</th><th style="width:90px">Exec</th><th style="width:210px">Source</th><th>Summary</th></tr></thead>
+          <tbody id="logBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- IOCs (rendered from the embedded reports/iocs.csv) -->
+    <section class="view" id="iocsView">
+      <div class="tablewrap">
+        <table class="log" id="iocsTable">
+          <thead id="iocsHead"></thead>
+          <tbody id="iocsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Accuracy self-assessment (rendered from the embedded reports/accuracy.md) -->
+    <section class="view" id="accuracyView">
+      <div class="markdown" id="accuracyDoc"></div>
+    </section>
+
+    <!-- Conversation: read-only reconstruction of the client chat log(s) (chatlog-data.js) -->
+    <section class="view" id="chatView">
+      <div class="chat" id="chatLog"></div>
+    </section>
+
+    <!-- Empty / load state -->
+    <section class="view" id="loadView">
+      <div class="drop" id="dropZone">
+        <h2>No audit log loaded</h2>
+        <p>Drop <code>../logs/audit-SRL-2018.clef</code> here, or use <b>Load .clef</b> above.</p>
+        <p class="pill">Tip: serving the case folder over HTTP (e.g. a static file server) lets this page auto-load the log.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Optional: a generated audit-data.js (present once the case has run) embeds the .clef so the viewer opens
+       with data by double-click, no server. Absent in a fresh case - the viewer then auto-fetches the log over
+       HTTP or offers a file picker. A 404 here when the file is absent is harmless. -->
+  <script src="audit-data.js"></script>
+  <!-- reports/accuracy.md and reports/iocs.csv embedded as base64 at case-build time (small files, kept inline
+       rather than sibling .js). Empty in a fresh case - those tabs then show a placeholder. -->
+  <script>window.__ACCURACY_MD_B64__ = "IyBBY2N1cmFjeSBzZWxmLWFzc2Vzc21lbnQgLSBDYXNlIFNSTC0yMDE4CgpBIGNhbmRpZCByZXZpZXcgb2YgdGhlIGludmVzdGlnYXRpb24ncyBhY2N1cmFjeTogZmFsc2UgcG9zaXRpdmVzIGNsZWFyZWQsIGEgbWlzdGFrZSBJCmNhdWdodCBhbmQgY29ycmVjdGVkLCBhbmQgZXZpZGVuY2Ugbm90IG9idGFpbmVkLiBSZWNvcmRlZCBzbyBhIHJldmlld2VyIGNhbiB3ZWlnaHQgdGhlCmZpbmRpbmdzLgoKIyMgTWlzdGFrZXMgY2F1Z2h0IGFuZCBjb3JyZWN0ZWQgKGhhbGx1Y2luYXRpb24vZXJyb3IpCgoxLiBJbmNvcnJlY3QgIm5vIGluLXdpbmRvdyBsb2cgY2xlYXJpbmciIGNsYWltIChjb3JyZWN0ZWQpLiBJbiBleGVjIDYyMGYzNmRmIEkgd3JvdGUgdGhhdAogICBpbmNpZGVudC13aW5kb3cgU2VjdXJpdHkvU3lzdGVtIGxvZyBjbGVhcnMgd2VyZSBOT1QgZm91bmQgb24gYW55IGhvc3QuIFRoYXQgd2FzIHdyb25nOgogICBJIGhhZCBvbmx5IHF1ZXJpZWQgdGhlIERDIGF0IHRoYXQgcG9pbnQuIFRoZSBmaWxlIHNlcnZlcidzIFNlY3VyaXR5IGxvZyB3YXMgaW4gZmFjdAogICBjbGVhcmVkICgxMTAyKSBieSBgc2hpZWxkYmFzZVxzcHNxbGAgb24gMjAxOC0wOS0wNiAxNjozNyBVVEMuIEkgcmVjb3JkZWQgYW4KICAgYXVkaXRIYWxsdWNpbmF0aW9uIGFuZCBhIHN1cGVyc2VkaW5nIGZpbmRpbmcgaW4gZXhlYyA1NWYzZTEwMyAoRjEyKS4gVGhlIGVycm9yIHdhcwogICBjYXVnaHQgd2l0aGluIHRoZSBzYW1lIHNlc3Npb24gYmVjYXVzZSBJIHRoZW4gcmFuIERldGVjdExvZ0NsZWFyaW5nIG9uIHJkLTAyIGFuZCBmaWxlLgoKMi4gInAuZXhlIiBzdWJzdHJpbmcgdHJhcCAoYXZvaWRlZCkuIEEgcHJpb3IgY2FzZSBub3RlIHdhcm5lZCB0aGF0IGdyZXBwaW5nIGV2ZW50IHBheWxvYWRzCiAgIGZvciAicC5leGUiIGZhbHNlLW1hdGNoZXMgcmRwY2xpcC5leGUuIEkgY29uZmlybWVkIHAuZXhlIGV4ZWN1dGlvbiBmcm9tIHRoZQogICBXaW5kb3dzQ21kTGluZSBgY21kLmV4ZSAvQyBjOlx3aW5kb3dzXHRlbXBccGVyZm1vblxwLmV4ZWAgLT4gcC5leGUgcHJvY2VzcyAoZnVsbCBwYXRoLAogICBub3QgYSBzdWJzdHJpbmcpLCBhbmQgZnJvbSB0aGUgb24tZGlzayBmaWxlICsgU2hpbWNhY2hlLCBzbyB0aGUgcC5leGUgZmluZGluZyBpcyBub3QgYQogICBzdWJzdHJpbmcgYXJ0aWZhY3QuCgojIyBGYWxzZSBwb3NpdGl2ZXMgaWRlbnRpZmllZCBhbmQgY2xlYXJlZCAoYmVuaWduLXVudGlsLXByb3Zlbi1tYWxpY2lvdXMpCgotIEZvcmVuc2ljIGFjcXVpc2l0aW9uIGFjdGl2aXR5IHRyZWF0ZWQgYXMgbGVnaXRpbWF0ZSwgbm90IGF0dGFja2VyOiBleGFtaW5lciBhY2NvdW50CiAgYGNiYXJ0b24tYWAsIGZvcmVuc2ljIHN0YXRpb24gQkFTRS1IVU5UICgxNzIuMTYuNS4yNS81LjI4LzUuNTApLCBhbmQgdGhlIEYtUmVzcG9uc2UKICBgc3ViamVjdF9zcnYuZXhlYCBhZ2VudCAocG9ydHMgMzI2Mi81NjgyKS4gKGV4ZWMgMGQ3ZmNhOWEsIGU3MWI0NDg0KQotIHJkLTAxL3JkLTAyIGV2ZW50LWxvZyBjbGVhcnMgZGF0ZWQgMjAxOC0wNS0wNCBieSBXSU4xMC1URVNUXEFkbWluaXN0cmF0b3I6IGdvbGQtaW1hZ2UgLwogIHN5c3ByZXAgdGVtcGxhdGUgYnVpbGQsIE5PVCBpbmNpZGVudCBhbnRpLWZvcmVuc2ljcy4gKGV4ZWMgZTcxYjQ0ODQsIGVkMGI4ZTRlIC0+CiAgcmVjb3JkZWQgZmRhNDc2ZDYpCi0gREMgInN1c3BpY2lvdXMiIGV4ZWN1dGFibGVzIE1wU2lnU3R1Yi5leGUgLyBtcGFtLSouZXhlIGluIE5ldHdvcmtTZXJ2aWNlIFRlbXA6IFdpbmRvd3MKICBEZWZlbmRlciBzaWduYXR1cmUgdXBkYXRlcyAod2Vla2x5IGNhZGVuY2UpLiAoZXhlYyA1MTg5YzYyOCkKLSBQZXJzaXN0ZW5jZS1zY2FuIGZsYWdzIGZvciBidWlsdC1pbiBydW5kbGwzMiBzY2hlZHVsZWQgdGFza3MgKEFwcGxpY2F0aW9uIEV4cGVyaWVuY2UsCiAgQXV0b2NoayBQcm94eSwgRGlza0RpYWdub3N0aWMsIFN5c21haW4sIEJGRSwgUExBKSwgV2luZG93cyBEZWZlbmRlciBQcm9ncmFtRGF0YSB0YXNrcywKICBhbmQgcGVyLVNJRCBPbmVEcml2ZSB1cGRhdGVyIHRhc2tzOiBPUyBiYXNlbGluZSwgcHJlc2VudCBvbiBhbGwgaG9zdHMuIChleGVjIGJhYTBhOGMzKQotIFNlcnZpY2UgaW5zdGFsbHMgIk1pY3Jvc29mdCBBZHZhbmNlZCBBUEkgNjQiIChtc2FkdmFwaTJfNjQuZXhlKSwgIkxhcmlhdCIsIHBlci11c2VyCiAgc3ZjaG9zdCBzZXJ2aWNlcyAoQ0RQVXNlclN2Yy9PbmVTeW5jU3ZjKSwgbnBjYXAgKG5wZi5zeXMpOiBTQU5TIGxhYi9yYW5nZSBzaW11bGF0aW9uIGFuZAogIE9TIGJhc2VsaW5lLCBkYXRlZCBNYXkgMjAxOCwgMC8zMDMgZmxhZ2dlZCBieSB0aGUgd29ya2Zsb3cuIChleGVjIGZkYTQ3NmQ2KQotIEFOT05ZTU9VUyBMT0dPTiB0eXBlLTMgbG9nb25zIGZyb20gMTcyLjE2LjYueCBpbiBNYXkgMjAxODogbGFiL3ByaW50ZXIgYmFzZWxpbmUgbm9pc2UsCiAgbm90IGluIHRoZSBpbnRydXNpb24gd2luZG93LiAoZXhlYyBlNzFiNDQ4NCkKCiMjIEV2aWRlbmNlIG5vdCBvYnRhaW5lZCAvIG5vdCBleGFtaW5lZCAocG90ZW50aWFsIGJsaW5kIHNwb3RzKQoKLSBJbml0aWFsLWFjY2VzcyB2ZWN0b3IgYW5kIHBhdGllbnQtemVybyBhcmUgdW5jb25maXJtZWQ6IHRoZSBlYXJsaWVzdCBhdHRhY2tlciBzb3VyY2UKICBob3N0IEJBU0UtUkQtMDQgKDE3Mi4xNi42LjE0KSBhbmQgdGhlIGludGVybmFsIEMyIDE3Mi4xNi40LjEwIHdlcmUgbm90IGltYWdlZC4gVGhlCiAgU3lzdGVtIFplcm8gY29uY2x1c2lvbiAoQkFTRS1SRC0wNCkgaXMgdGhlcmVmb3JlIHRoZSBlYXJsaWVzdC12aXNpYmxlIGhvc3QsIG5vdCBhIHByb3ZlbgogIG9yaWdpbi4gKGZsYWdnZWQ6IGV4ZWMgZDVlY2NlNWMpCi0gTm8gcGhpc2hpbmcgZW1haWwgd2FzIGZvdW5kLCBidXQgbWFpbGJveCBjb3ZlcmFnZSB3YXMgbGltaXRlZCB0byByZC0wMgogIChrZWxsZWUuZXNwaW5vemEsIGpwYWxsZW4pLiBPdGhlciB1c2VycycgbWFpbGJveGVzIChlLmcuIG5yb21hbm9mZiwgdGR1bmdhbiwgb24gaG9zdHMKICBub3QgZnVsbHkgc2VhcmNoZWQpIHdlcmUgbm90IGV4aGF1c3RpdmVseSByZXZpZXdlZC4gKGV4ZWMgZWQwYjhlNGUpCi0gRXhmaWx0cmF0aW9uIGlzIGluZmVycmVkIGZyb20gdGhlIEMyIGNoYW5uZWwsIG5vdCBwcm92ZW4uIE5vIHBhY2tldCBjYXB0dXJlIHdhcwogIGF2YWlsYWJsZTsgdGhlIHN0YWdlZCBkYXRhIHNldCdzIGFjdHVhbCB0cmFuc2ZlciBvZmYtbmV0d29yayB3YXMgbm90IGRlbW9uc3RyYXRlZCwgYW5kCiAgdGhlIGV4dGVybmFsIElQcyA1Mi4xNi41NVsuXTExIC8gMTMuODkuMjIwWy5dNjUgd2VyZSBsZWZ0IHVuY29uZmlybWVkIHJhdGhlciB0aGFuCiAgYXNzZXJ0ZWQgYXMgZXhmaWwgZGVzdGluYXRpb25zLiAoZmxhZ2dlZDogZXhlYyA2NjBmNDYwZSkKLSBDb21tYW5kIGxpbmVzL2NvbnNvbGVzIHdlcmUgdW5yZWNvdmVyYWJsZSBmcm9tIHRoZSBTZXJ2ZXItYnVpbGQgbWVtb3J5IGltYWdlcyAoZmlsZSA9CiAgV2luMjAxMlIyLCByZC0wMiksIHNvIGluLW1lbW9yeSBjb21tYW5kIHJlY29uc3RydWN0aW9uIG9uIHRob3NlIGhvc3RzIGlzIGluY29tcGxldGU7IHRoZQogIHJ1bmRsbDMyLXNwYXduaW5nIHBhdHRlcm4gdGhlcmUgaXMgaW5mZXJyZWQgZnJvbSBwc3NjYW4gcGFyZW50YWdlLCBub3QgY21kbGluZS4gKGV4ZWMKICA3MmU3YjA4OSkKLSBEZWxldGVkIHBheWxvYWQgY29udGVudHMgbm90IHJlY292ZXJlZDogYDEuYmF0YCBhbmQgYG4ucHMxYCBib2RpZXMgd2VyZSBub3QgY2FydmVkLwogIHJlY29uc3RydWN0ZWQgKG9ubHkgdGhlaXIgcmVmZXJlbmNlcyBzdXJ2aXZlKTsgdGhlIGV4YWN0IG50ZHMuZGl0IGNvbnRlbnRzICh3aGljaCBoYXNoZXMvCiAga3JidGd0KSB3ZXJlIG5vdCBleHRyYWN0ZWQuCi0gS2VyYmVyb2FzdGluZyAodGhlIGxlYWRpbmcgaHlwb3RoZXNpcyBmb3IgaG93IHNwc3FsJ3MgcGFzc3dvcmQgd2FzIG9idGFpbmVkKSB3YXMgbm90CiAgY29uZmlybWVkOiA0NzY5IHNlcnZpY2UtdGlja2V0IGFuYWx5c2lzIG9uIHRoZSBEQyB3YXMgbm90IHBlcmZvcm1lZCAodGhlIDIzNCBNQiBEQwogIFNlY3VyaXR5LmV2dHggZm9yY2VkIHRhcmdldGVkLCByYXJlLUlELW9ubHkgcXVlcmllcyB0byBhdm9pZCBPT00pLgotIFRpbWVzdG9tcGluZyAoJFNJIHZzICRGTikgYW5kIFVTTi1qb3VybmFsIHRhbXBlcmluZyB3ZXJlIG5vdCBleGhhdXN0aXZlbHkgYW5hbHl6ZWQuIFRoZQogIG1hc3F1ZXJhZGluZyBjc3Jzcy5leGUgY2FycmllZCBhIGJhY2stZGF0ZWQgKDIwMTgtMDYtMjkpIFNoaW1jYWNoZSB0aW1lIHRoYXQgaXMKICBzdWdnZXN0aXZlIG9mIHRpbWVzdG9tcGluZywgYnV0IHRoaXMgd2FzIG5vdCBjb25maXJtZWQgYWdhaW5zdCAkTUZULgotIHdrc3RuLTAxIGNvdWxkIG5vdCBiZSBhc3Nlc3NlZCAoaXRzIG9ubHkgYXJ0aWZhY3QgaXMgYSAyMDIxIG1lbW9yeSBjYXB0dXJlKS4KLSBObyBmdWxsIHBsYXNvIHN1cGVyLXRpbWVsaW5lIC8gYW5vbWFseS1lbmdpbmUgcGFzcyB3YXMgcnVuOyBmaW5kaW5ncyByZXN0IG9uIHNpZ25hdHVyZS8KICBrZXl3b3JkL2FydGlmYWN0IGFuYWx5c2lzLiBUaGlzIGlzIGFkZXF1YXRlIGhlcmUgKHN0cm9uZyBzaWduYXR1cmVzIGV4aXN0ZWQpIGJ1dCBhCiAgc3VwZXItdGltZWxpbmUgY291bGQgc3VyZmFjZSBhZGRpdGlvbmFsIGxvdy1hbmQtc2xvdyBhY3Rpdml0eS4KCiMjIENvbmZpZGVuY2Ugc3VtbWFyeQoKLSBISUdIIGFuZCB3ZWxsLWNvcnJvYm9yYXRlZCAoPj0yIGluZGVwZW5kZW50IGFydGlmYWN0IGNsYXNzZXMpOiBzY29wZSBvZiBjb21wcm9taXNlLAogIENvYmFsdC1TdHJpa2Utc3R5bGUgaW1wbGFudCArIHRvb2xpbmcsIHBlcmZtb24gc3RhZ2luZyArIGxhdGVyYWwgcHVzaCwgTlREUy5kaXQgZHVtcCB2aWEKICBudGRzdXRpbCwgc3BzcWwgbGF0ZXJhbC1tb3ZlbWVudCBjaGFpbiwgZG9tYWluLWFjY291bnQgbWFuaXB1bGF0aW9uLCBzcXVpcnJlbGRpcmVjdG9yeQogIEMyL1Bvd2VyVmlldyByZWNvbiwgaW50ZXJuYWwgQzIgMTcyLjE2LjQuMTAsIENhcmJvbmFkaXVtIGRhdGEgc3RhZ2luZywgZmlsZS1zZXJ2ZXIgbG9nCiAgY2xlYXJpbmcuCi0gTUVESVVNOiBleGFjdCBtYWx3YXJlIGZhbWlseSAoQ29iYWx0IFN0cmlrZSB2cyBNZXRhc3Bsb2l0KSwgdGhlIGVhcmxpZXN0LXNvdXJjZS1ob3N0CiAgaWRlbnRpZmljYXRpb24gb2YgQkFTRS1SRC0wNC4KLSBMT1cgLyB1bnByb3ZlbjogaW5pdGlhbC1hY2Nlc3MgZGVsaXZlcnkgdmVjdG9yLCBvZmYtbmV0d29yayBleGZpbHRyYXRpb24sIEtlcmJlcm9hc3RpbmcKICBtZWNoYW5pc20uCg==";</script>
+  <script>window.__IOCS_CSV_B64__ = "aW5kaWNhdG9yX3R5cGUsdmFsdWUsY29udGV4dCxmaXJzdF9zZWVuX3V0YyxhdWRpdF9leGVjdXRpb24KZG9tYWluLHNxdWlycmVsZGlyZWN0b3J5Wy5dY29tLEV4dGVybmFsIEMyL3N0YWdpbmcgZG9tYWluOyBoeHhwIGRvd25sb2FkIG9mIG4ucHMxIHRvIEM6XFdpbmRvd3NcVGVtcFxwZXJmbW9uIChQb3dlclNoZWxsIGNyYWRsZSBvbiBmaWxlIHNlcnZlciksMjAxOC0wOC0zMVQyMjoxNjoxMVosZTY0NDE3ZmYKdXJsLGh4eHA6Ly9zcXVpcnJlbGRpcmVjdG9yeVsuXWNvbS9kb3dubG9hZC9uLnBzMSxQb3dlclNoZWxsIERvd25sb2FkRmlsZSBjcmFkbGUgKENvYmFsdCBTdHJpa2UvRW1waXJlIHN0YWdlciksMjAxOC0wOC0zMVQyMjoxNjoxMVosZTY0NDE3ZmYKaXAsMTcyLjE2LjQuMTBbOjgwODBdLEludGVybmFsIEMyIGVuZHBvaW50OyBiZWFjb25lZCB0byBieSByZC0wMS9yZC0wMi9maWxlL3drc3RuLTA1IChob3N0IG5vdCBpbWFnZWQpLDIwMTgtMDktMDZUMTg6NTc6MDBaLDBkN2ZjYTlhCmlwLDUyLjE2LjU1Wy5dMTFbOjQ0M10sT3V0Ym91bmQgZnJvbSByZC0wMTsgdW5jb25maXJtZWQgZXh0ZXJuYWwgZWdyZXNzIGNhbmRpZGF0ZSAocG9zc2libGUgY2xvdWQgc2VydmljZSksMjAxOC0wOS0wNlQxODo1NzowMFosMGQ3ZmNhOWEKaXAsMTMuODkuMjIwWy5dNjVbOjQ0M10sT3V0Ym91bmQgZnJvbSByZC0wMTsgdW5jb25maXJtZWQgZXh0ZXJuYWwgZWdyZXNzIGNhbmRpZGF0ZSAocG9zc2libGUgTWljcm9zb2Z0IGNsb3VkKSwyMDE4LTA5LTA2VDE4OjU3OjAwWiwwZDdmY2E5YQpoYXNoLDdmYTRmNmNjNGUxYmIyN2RhN2Q5YWY3YTJhNTMzZTcyNzUxYjAyNWIwNjNlMWRmNDM1OWViZTEyN2ZkMjg5MmMsU0hBMjU2IG9mIHJkLTAxIEM6XFdpbmRvd3NcVGVtcFxQZXJmbW9uXHAuZXhlIChVUFgtcGFja2VkIENvYmFsdCBTdHJpa2UgYmVhY29uOyBNU1NFLTxuPi0gbmFtZWQgcGlwZSksMjAxOC0wOC0zMFQyMjoxNDowMlosOTNmNGIyZmIKaGFzaCxlNzIyZGQ0Mjk1MTBjODM0ODViYjI3NmM1NTkwMTVkZjliZDQ5MzFlN2U0MzM5ZWI5MDY4M2NjM2VmZDliZWFhLFNIQTI1NiBvZiBmaWxlLXNlcnZlciBDOlxXaW5kb3dzXFRlbXBccGVyZm1vblxQZXJmU3ZjLmV4ZSAoQ29iYWx0IFN0cmlrZSBTTUItYmVhY29uIHNlcnZpY2Ugc3R1YjsgTVNTRS08bj4tc2VydmVyIHBpcGUpLDIwMTgtMDktMDZUMTk6Mjg6MDBaLDkzZjRiMmZiCm90aGVyLFxcLlxwaXBlXE1TU0UtPG4+LXNlcnZlcixOYW1lZC1waXBlIElPQyBpbiBwLmV4ZSBhbmQgUGVyZlN2Yy5leGUgKENvYmFsdCBTdHJpa2UvTWV0YXNwbG9pdCBTTUIgYmVhY29uKSwyMDE4LTA4LTMxVDAwOjAwOjAwWiw0MjEyOTRhOApmaWxlX3BhdGgsQzpcV2luZG93c1xUZW1wXHBlcmZtb25cLEF0dGFja2VyIHRvb2wtc3RhZ2luZyBkaXJlY3RvcnkgYWNyb3NzIGhvc3RzIChwLmV4ZSBwYS5leGUgcGIuZXhlIHJpLmV4ZSBzZC5leGUgY3Nyc3MuZXhlIFBlcmZWaWV3LmV4ZSB2b2xyZXN0LmV4ZSBuLnBzMSksMjAxOC0wOC0zMFQyMTozOTowMFosNDU1ZjJjYTUKZmlsZV9wYXRoLEM6XFdpbmRvd3NcVGVtcFxwZXJmbW9uXGNzcnNzLmV4ZSxNYXNxdWVyYWRpbmcgQ29iYWx0IFN0cmlrZSBiZWFjb24gKHN5c3RlbS1wcm9jZXNzIG5hbWUpOyBwdXNoZWQgdG8gXFwxNzIuMTYuNy4xNVxjJCBhbmQgXFwxNzIuMTYuNi4xNFxjJCwyMDE4LTA4LTMxVDE5OjU5OjM0Wiw0NTVmMmNhNQpmaWxlX3BhdGgsQzpcV2luZG93c1xUZW1wXDEuYmF0LERlbGV0ZWQgcGF5bG9hZCBsYXVuY2hlZCBieSBzY2hlZHVsZWQgdGFzayAnQ29sbGVjdCBCYWNrZ3JvdW5kIFN0YXRpc3RpY3MnIG9uIHJkLTAxLDIwMTgtMDgtMjRUMDA6MDA6MDBaLDUzODU2YWU4CmZpbGVfcGF0aCxDOlxXaW5kb3dzXFRlbXBcQnJvd3NpbmdIaXN0b3J5Vmlldy5leGUsUmVjb24vZGF0YS1jb2xsZWN0aW9uIHRvb2wgb24gcmQtMDEgKGFuZCByZC0wMiksMjAxOC0wOC0yNFQxNTozNTo0N1osNDU1ZjJjYTUKZmlsZV9wYXRoLEM6XHRlbXBcQWN0aXZlIERpcmVjdG9yeVxudGRzLmRpdCxOVERTLmRpdCBJRk0gZHVtcCBvbiBEQyAoZnVsbCBBRCBkYXRhYmFzZSksMjAxOC0wOS0wNVQxMjoxNDo1MFosYWI4N2IwMjEKZmlsZV9wYXRoLEM6XHRlbXBccmVnaXN0cnlcU1lTVEVNLFNZU1RFTSBoaXZlIGR1bXBlZCBhbG9uZ3NpZGUgbnRkcy5kaXQgKG50ZHN1dGlsIElGTSkgb24gREMsMjAxOC0wOS0wNVQxMjoxNDo1MFosYWI4N2IwMjEKZmlsZV9wYXRoLEM6XHRlbXBccmVnaXN0cnlcU0VDVVJJVFksU0VDVVJJVFkgaGl2ZSBkdW1wZWQgYWxvbmdzaWRlIG50ZHMuZGl0IChudGRzdXRpbCBJRk0pIG9uIERDLDIwMTgtMDktMDVUMTI6MTQ6NTBaLGFiODdiMDIxCnBlcnNpc3RlbmNlLFNjaGVkdWxlZCBUYXNrOiBcQ29sbGVjdCBCYWNrZ3JvdW5kIFN0YXRpc3RpY3MscmQtMDE7IGF1dGhvciBzaGllbGRiYXNlXHNwc3FsOyBydW5zIEM6XFdpbmRvd3NcVGVtcFwxLmJhdCwyMDE4LTA4LTI0VDAwOjAwOjAwWiw1Mzg1NmFlOApwZXJzaXN0ZW5jZSxXaW5kb3dzIFNlcnZpY2U6IFBlcmZTdmMuZXhlLGZpbGUgc2VydmVyOyBDb2JhbHQgU3RyaWtlIFNNQi1iZWFjb24gc2VydmljZSBzdHViLDIwMTgtMDktMDZUMTk6Mjg6MDBaLDkzZjRiMmZiCm90aGVyLG50ZHN1dGlsLmV4ZSBJRk0sTE9MQklOIHVzZWQgb24gREMgdG8gZHVtcCBOVERTLmRpdCArIFNZU1RFTS9TRUNVUklUWSAocnVuIGJ5IHNwc3FsKSwyMDE4LTA5LTA1VDEyOjE0OjUwWiw5YjM1NTI5ZApvdGhlcixQb3dlclNwbG9pdC9Qb3dlclZpZXcucHMxLEFEIHJlY29ubmFpc3NhbmNlIHRvb2xraXQgbG9hZGVkIGluIG1lbW9yeSBvbiBmaWxlIHNlcnZlciwyMDE4LTA4LTMxVDIyOjE2OjEyWixlNjQ0MTdmZgphY2NvdW50LHNoaWVsZGJhc2Vcc3BzcWwsQ29tcHJvbWlzZWQgU1FMIHNlcnZpY2UgYWNjb3VudDsgcHJpbWFyeSBhdHRhY2tlciBwaXZvdCBjcmVkZW50aWFsIChpbnRlcmFjdGl2ZSBSRFApOyByYW4gbnRkc3V0aWw7IGNsZWFyZWQgZmlsZS1zZXJ2ZXIgbG9nLDIwMTgtMDgtMjRUMTg6Mjc6MjBaLGI0MzFjMDBiCmFjY291bnQsc2hpZWxkYmFzZVxyc3lkb3ctYSxDb21wcm9taXNlZCBEb21haW4tQWRtaW4tbGV2ZWwgYWNjb3VudDsgcmVzZXQgdHlsZXIub3NsdW5kIHBhc3N3b3JkIG9uIERDLDIwMTgtMDktMDZUMDE6Mzc6MjNaLGM5YmNmNjQzCmFjY291bnQsc2hpZWxkYmFzZVxucm9tYW5vZmYsQWNjb3VudCB1c2VkIGluIGVhcmxpZXN0IGF0dGFja2VyIGxvZ29ucyBmcm9tIDE3Mi4xNi42LjE0IChCQVNFLVJELTA0KSwyMDE4LTA4LTIzVDIxOjM2OjI1WixiNDMxYzAwYgphY2NvdW50LHNoaWVsZGJhc2VcdGR1bmdhbixBY2NvdW50IHdob3NlIGNyZWRlbnRpYWxzIHdlcmUgdXNlZCAoZXhwbGljaXQtY3JlZCBsb2dvbnMpIGFuZCB3aG9zZSByZXNlYXJjaCBkb2NzIHdlcmUgYWNjZXNzZWQsMjAxOC0wOC0zMFQyMToyOToyOFosYjQzMWMwMGIKYWNjb3VudCxzaGllbGRiYXNlXHR5bGVyLm9zbHVuZCxEb21haW4gYWNjb3VudCB3aG9zZSBwYXNzd29yZCB3YXMgcmVzZXQgYnkgdGhlIGF0dGFja2VyIChyc3lkb3ctYSkgb24gdGhlIERDLDIwMTgtMDktMDZUMDE6Mzc6MjNaLGM5YmNmNjQzCmlwLDE3Mi4xNi42LjE0LEJBU0UtUkQtMDQgLSBlYXJsaWVzdCBhdHRhY2tlciBzb3VyY2UgaG9zdCAoUkRQL25ldHdvcmsgbG9nb25zKTsgbm90IGltYWdlZCwyMDE4LTA4LTIzVDIxOjM2OjI1WixiNDMxYzAwYgppcCwxNzIuMTYuNy4xNSx3a3N0bi0wNSAtIGNvbXByb21pc2VkIHdvcmtzdGF0aW9uIChjc3Jzcy5leGUgYmVhY29uIHRvIEMyKSwyMDE4LTA4LTMxVDE5OjU5OjM0WixkMmMzNzFjMwo=";</script>
+  <!-- Generated chatlog-data.js sets window.__CHATLOG__ to the trimmed client conversation(s) for this case.
+       Kept a sibling file (not inline) because it is larger; absent in a fresh case (the Conversation tab is then
+       empty). A 404 here when the file is absent is harmless. -->
+  <script src="chatlog-data.js"></script>
+  <!-- Generated token-usage-data.js sets window.__TOKEN_USAGE__ (new-vs-cached token economics) for the panel at
+       the top of the Conversation tab. Absent in a fresh case; a 404 here is harmless. -->
+  <script src="token-usage-data.js"></script>
+  <script src="report.js"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+indicator_type,value,context,first_seen_utc,audit_execution
+domain,squirreldirectory[.]com,External C2/staging domain; hxxp download of n.ps1 to C:\Windows\Temp\perfmon (PowerShell cradle on file server),2018-08-31T22:16:11Z,e64417ff
+url,hxxp://squirreldirectory[.]com/download/n.ps1,PowerShell DownloadFile cradle (Cobalt Strike/Empire stager),2018-08-31T22:16:11Z,e64417ff
+ip,172.16.4.10[:8080],Internal C2 endpoint; beaconed to by rd-01/rd-02/file/wkstn-05 (host not imaged),2018-09-06T18:57:00Z,0d7fca9a
+ip,52.16.55[.]11[:443],Outbound from rd-01; unconfirmed external egress candidate (possible cloud service),2018-09-06T18:57:00Z,0d7fca9a
+ip,13.89.220[.]65[:443],Outbound from rd-01; unconfirmed external egress candidate (possible Microsoft cloud),2018-09-06T18:57:00Z,0d7fca9a
+hash,7fa4f6cc4e1bb27da7d9af7a2a533e72751b025b063e1df4359ebe127fd2892c,SHA256 of rd-01 C:\Windows\Temp\Perfmon\p.exe (UPX-packed Cobalt Strike beacon; MSSE-<n>- named pipe),2018-08-30T22:14:02Z,93f4b2fb
+hash,e722dd429510c83485bb276c559015df9bd4931e7e4339eb90683cc3efd9beaa,SHA256 of file-server C:\Windows\Temp\perfmon\PerfSvc.exe (Cobalt Strike SMB-beacon service stub; MSSE-<n>-server pipe),2018-09-06T19:28:00Z,93f4b2fb
+other,\\.\pipe\MSSE-<n>-server,Named-pipe IOC in p.exe and PerfSvc.exe (Cobalt Strike/Metasploit SMB beacon),2018-08-31T00:00:00Z,421294a8
+file_path,C:\Windows\Temp\perfmon\,Attacker tool-staging directory across hosts (p.exe pa.exe pb.exe ri.exe sd.exe csrss.exe PerfView.exe volrest.exe n.ps1),2018-08-30T21:39:00Z,455f2ca5
+file_path,C:\Windows\Temp\perfmon\csrss.exe,Masquerading Cobalt Strike beacon (system-process name); pushed to \\172.16.7.15\c$ and \\172.16.6.14\c$,2018-08-31T19:59:34Z,455f2ca5
+file_path,C:\Windows\Temp\1.bat,Deleted payload launched by scheduled task 'Collect Background Statistics' on rd-01,2018-08-24T00:00:00Z,53856ae8
+file_path,C:\Windows\Temp\BrowsingHistoryView.exe,Recon/data-collection tool on rd-01 (and rd-02),2018-08-24T15:35:47Z,455f2ca5
+file_path,C:\temp\Active Directory\ntds.dit,NTDS.dit IFM dump on DC (full AD database),2018-09-05T12:14:50Z,ab87b021
+file_path,C:\temp\registry\SYSTEM,SYSTEM hive dumped alongside ntds.dit (ntdsutil IFM) on DC,2018-09-05T12:14:50Z,ab87b021
+file_path,C:\temp\registry\SECURITY,SECURITY hive dumped alongside ntds.dit (ntdsutil IFM) on DC,2018-09-05T12:14:50Z,ab87b021
+persistence,Scheduled Task: \Collect Background Statistics,rd-01; author shieldbase\spsql; runs C:\Windows\Temp\1.bat,2018-08-24T00:00:00Z,53856ae8
+persistence,Windows Service: PerfSvc.exe,file server; Cobalt Strike SMB-beacon service stub,2018-09-06T19:28:00Z,93f4b2fb
+other,ntdsutil.exe IFM,LOLBIN used on DC to dump NTDS.dit + SYSTEM/SECURITY (run by spsql),2018-09-05T12:14:50Z,9b35529d
+other,PowerSploit/PowerView.ps1,AD reconnaissance toolkit loaded in memory on file server,2018-08-31T22:16:12Z,e64417ff
+account,shieldbase\spsql,Compromised SQL service account; primary attacker pivot credential (interactive RDP); ran ntdsutil; cleared file-server log,2018-08-24T18:27:20Z,b431c00b
+account,shieldbase\rsydow-a,Compromised Domain-Admin-level account; reset tyler.oslund password on DC,2018-09-06T01:37:23Z,c9bcf643
+account,shieldbase\nromanoff,Account used in earliest attacker logons from 172.16.6.14 (BASE-RD-04),2018-08-23T21:36:25Z,b431c00b
+account,shieldbase\tdungan,Account whose credentials were used (explicit-cred logons) and whose research docs were accessed,2018-08-30T21:29:28Z,b431c00b
+account,shieldbase\tyler.oslund,Domain account whose password was reset by the attacker (rsydow-a) on the DC,2018-09-06T01:37:23Z,c9bcf643
+ip,172.16.6.14,BASE-RD-04 - earliest attacker source host (RDP/network logons); not imaged,2018-08-23T21:36:25Z,b431c00b
+ip,172.16.7.15,wkstn-05 - compromised workstation (csrss.exe beacon to C2),2018-08-31T19:59:34Z,d2c371c3

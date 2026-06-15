@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "camel": {
+      "type": "stdio",
+      "command": "dotnet",
+      "args": [
+        "c:\\Projects\\Camel\\src\\Camel.CLI\\bin\\Debug\\net9.0\\Camel.CLI.dll",
+        "server",
+        "--case-dir",
+        "c:\\Projects\\Camel\\cases\\SRL-2018"
+      ],
+      "env": {}
+    }
+  }
+}

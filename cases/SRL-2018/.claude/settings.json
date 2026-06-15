@@ -1,0 +1,48 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__camel__SetCaseId",
+      "mcp__camel__SetEvidence",
+      "mcp__camel__VerifyEvidence",
+      "mcp__camel__Execute",
+      "Read",
+      "Write(./reports/*)",
+      "Write(./exports/*)",
+      "Edit(./reports/*)",
+      "Edit(./exports/*)"
+    ],
+    "defaultMode": "acceptEdits",
+    "ask": [],
+    "deny": [
+      "Bash",
+      "WebFetch",
+      "WebSearch",
+      "Read(./secrets/**)",
+      "Read(./**/*.key)",
+      "Read(./**/*.pem)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "dotnet \u0022c:\\Projects\\Camel\\src\\Camel.CLI\\bin\\Debug\\net9.0\\Camel.CLI.dll\u0022 preserve-chatlog"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "dotnet \u0022c:\\Projects\\Camel\\src\\Camel.CLI\\bin\\Debug\\net9.0\\Camel.CLI.dll\u0022 preserve-chatlog"
+          }
+        ]
+      }
+    ]
+  }
+}
