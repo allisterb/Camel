@@ -1,5 +1,11 @@
 # Camel
 
+## About
+The Camel project is a code-mode MCP server that allows LLMs to safely generate and execute JavaScript code that calls command-line forensic tools, performs analysis, and employs traditional machine learning algorithms and probabilistic reasoning using [SIFT workstation](https://www.sans.org/tools/sift-workstation), for autonomous DFIR investigations. 
+
+## Example case data
+Full reports and audit logs for cases investigated using Claude + Camel can be downloaded from: https://drive.google.com/drive/folders/1whw7GwrZUxADTsy1f-LCV2jN-Q-fpVNp?usp=sharing
+
 ## Getting started
 1. Download the latest Windows or *nix release to your computer.
 
