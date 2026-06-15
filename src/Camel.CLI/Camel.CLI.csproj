@@ -37,6 +37,11 @@
     <EmbeddedResource Include="CaseTemplate\report.html" LogicalName="Camel.CLI.CaseTemplate.report.html" />
     <EmbeddedResource Include="CaseTemplate\report.js" LogicalName="Camel.CLI.CaseTemplate.report.js" />
   </ItemGroup>
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 
 
 </Project>

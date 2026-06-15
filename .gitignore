@@ -429,5 +429,6 @@ FodyWeavers.xsd
 *.msp
 
 **/*appsettings.json
+!src/Camel.CLI/appsettings.json
 reference/*
 cases/*
