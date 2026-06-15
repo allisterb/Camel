@@ -68,6 +68,9 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Architecture", "Architectur
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Cases", "Cases", "{408AD412-FC95-452B-8E33-F35F28ECE18A}"
+	ProjectSection(SolutionItems) = preProject
+		..\cases\README.md = ..\cases\README.md
+	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Scripts", "Scripts", "{B38E4F57-8A69-4D0F-B38C-91AD4E879873}"
 	ProjectSection(SolutionItems) = preProject

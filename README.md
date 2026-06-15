@@ -4,7 +4,7 @@
 The Camel project is a code-mode MCP server that allows LLMs to safely generate and execute JavaScript code that calls command-line forensic tools, performs analysis, and employs traditional machine learning algorithms and probabilistic reasoning using [SIFT workstation](https://www.sans.org/tools/sift-workstation), for autonomous DFIR investigations. 
 
 ## Demo video
-[![](https://markdown-videos-api.jorgenkh.no/youtube/PkPXGt_iNX8)](https://youtu.be/PkPXGt_iNX8)
+https://youtu.be/PkPXGt_iNX8
 
 ## Requirements
 * A SIFT workstation instance either locally installed or remotely accessible over SSH

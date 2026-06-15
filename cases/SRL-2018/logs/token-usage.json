@@ -1,0 +1,29 @@
+{
+  "assistantTurns": 273,
+  "totals": {
+    "input_tokens": 32323,
+    "output_tokens": 319772,
+    "cache_creation_input_tokens": 874612,
+    "cache_read_input_tokens": 43812809,
+    "total_tokens": 45039516
+  },
+  "breakdown": {
+    "cached_tokens": 43812809,
+    "new_tokens": 1226707,
+    "new_input_tokens": 906935,
+    "output_tokens": 319772,
+    "cache_read_fraction_of_input": 0.9797
+  },
+  "byModel": {
+    "claude-opus-4-8": {
+      "turns": 273,
+      "input_tokens": 32323,
+      "output_tokens": 319772,
+      "cache_creation_input_tokens": 874612,
+      "cache_read_input_tokens": 43812809
+    }
+  },
+  "sessionId": "2eff630b-9bb0-4644-8709-f65821eb1c83",
+  "generatedUtc": "2026-06-15T15:23:17.4984163Z",
+  "transcript": "C:\\Users\\Allister\\.claude\\projects\\C--Projects-Camel-cases-SRL-2018\\2eff630b-9bb0-4644-8709-f65821eb1c83.jsonl"
+}
