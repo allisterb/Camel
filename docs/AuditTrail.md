@@ -139,12 +139,8 @@ the bridge: report → execution id → the audit events (the agent step and eve
 
 ## Tracing a finding (the three-claim test)
 
-To verify a finding, take its cited `execution` id and pull every event under it. A helper ships with
-the demo:
+To verify a finding, take its cited `execution` id and pull every event under it.
 
-```bash
-./trace.sh 7f3a9c21            # prints the execution + every command that ran under it
-```
 
 Worked example — the agent reports:
 
@@ -178,8 +174,6 @@ Because the `started` execution events also carry the exact program the agent ra
 **which** commands ran, **what code** drove them, and **how long** each took — enough to replay the
 investigation independently.
 
-A complete worked example over the SANS FOR508 **SRL-2018 rd-01** host — three findings traced to their
-commands — is in [`demo/audit-sample/`](../demo/audit-sample/) (see `THREE_CLAIM_TRACE.md`).
 
 ---
 

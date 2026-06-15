@@ -34,11 +34,6 @@ read-only evidence, no network) rather than prompt-based requests.
 | [docs/Camel.core.md](docs/Camel.core.md) | The agent-facing SDK reference: every object and method (also served live as `camel://sdk/core`). |
 | [docs/Camel.schema.md](docs/Camel.schema.md) | The exact shape of every value the SDK returns (also `camel://sdk/schema`). |
 
-### Worked example
-
-[demo/audit-sample/](demo/audit-sample/) — a real audit trail from running Camel against the SANS
-FOR508 **SRL-2018 rd-01** host, with a [three-claim trace](demo/audit-sample/THREE_CLAIM_TRACE.md)
-showing three findings tracked back to the commands that produced them.
 
 ---
 
@@ -90,4 +85,4 @@ with upstream Protocol SIFT for comparison) is [**protocol-sift-camel**](https:/
 | `src/Camel.Environments` | Local / SSH execution against the SIFT workstation, with command auditing. |
 | `src/Camel.Runtime` | Shared base types, logging, and the per-case audit log. |
 | `docs/` | The documentation above. |
-| `demo/audit-sample/` | A real audit trail + three-claim trace walkthrough. |
+
