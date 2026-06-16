@@ -27,7 +27,7 @@ the same code works locally or remotely over SSH.
 - Define higher-level workflows to be implemented in Camel.Workflows.
 - Implement anomaly detection techniques in Camel.Inference.
 - Implement the code-mode MCP server and robust audit logs.
-- Fork protocol-sift and modify it to use Camel (in progress)
+- Run Claude/Camel on the given cases
 
 ## Project implementation
 
