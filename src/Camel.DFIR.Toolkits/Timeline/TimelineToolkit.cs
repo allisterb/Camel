@@ -9,6 +9,7 @@ using Microsoft.Extensions.Configuration;
 
 using Camel.Environments;
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 
 public class TimelineToolkit : Toolkit
 {

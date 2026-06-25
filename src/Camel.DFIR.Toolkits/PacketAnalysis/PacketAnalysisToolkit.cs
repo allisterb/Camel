@@ -13,6 +13,7 @@ using Microsoft.Extensions.Configuration;
 
 using Camel.Environments;
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 
 /// <summary>
 /// Typed wrappers for the SIFT network/packet-analysis CLI tools, operating on a capture file (pcap/pcapng).

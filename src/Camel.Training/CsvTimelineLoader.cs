@@ -11,6 +11,7 @@ using System.Text;
 using Camel.Toolkits;
 using Camel.DFIR.Toolkits;
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 
 /// <summary>
 /// Loads a Plaso <c>l2tcsv</c> timeline export (the format of the Studiawan/Breitinger/Scanlon Windows 11

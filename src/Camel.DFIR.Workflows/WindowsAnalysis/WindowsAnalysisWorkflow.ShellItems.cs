@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 using Camel.Workflows.Models;
 
 // FOR500.3 — Shell Item analysis. Reconstructs a user's file- and folder-access history (and the external

@@ -19,7 +19,7 @@ public partial class WindowsAnalysisWorkflow
     /// methodology. It locates every <c>.pst</c> (Personal Folders) and <c>.ost</c> (cached Exchange) store under
     /// <paramref name="volumeRoot"/> (or analyses the single store given by <paramref name="singleArchive"/>),
     /// reads each store's metadata with <c>pffinfo</c> (format, encryption), and exports its messages with
-    /// <c>readpst</c>, parsing each to a <see cref="Camel.Toolkits.Models.EmailMessage"/> (From/To/Cc/Subject/Date,
+    /// <c>readpst</c>, parsing each to a <see cref="Camel.DFIR.Toolkits.Models.EmailMessage"/> (From/To/Cc/Subject/Date,
     /// X-Originating-IP, and attachment filenames). The per-archive summary surfaces the message count, folders,
     /// date span, and attachment-bearing messages — the leads for an insider/exfiltration timeline. Bodies are not
     /// extracted (triage altitude); orphan OSTs are handled the same as PSTs.

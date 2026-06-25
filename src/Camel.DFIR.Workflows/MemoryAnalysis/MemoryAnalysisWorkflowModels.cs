@@ -3,6 +3,7 @@ namespace Camel.Workflows.Models;
 using System.Linq;
 
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 
 /// <summary>
 /// The result of comparing a pool-tag process scan (<c>windows.psscan</c>) against the active-process
@@ -354,7 +355,7 @@ public record MalwareSuspect
     // Step-6 extraction (when a dump directory was requested).
     public string[] DumpedFiles { get; init; } = [];
     /// <summary>Classic-YARA rule hits on this suspect's dumped executable image (adds the <c>yara-detection</c> category).</summary>
-    public Camel.Toolkits.Models.YaraMatch[] YaraMatches { get; init; } = [];
+    public Camel.DFIR.Toolkits.Models.YaraMatch[] YaraMatches { get; init; } = [];
 }
 
 /// <summary>
@@ -387,7 +388,7 @@ public record FindMalwareReport
     /// Classic-YARA rule hits across all dumped executables (the bundled malware pack, scanned via the classic
     /// <c>yara</c> file scanner — vol3's YARA-X cannot load that pack). Empty when nothing was dumped.
     /// </summary>
-    public Camel.Toolkits.Models.YaraMatch[] DumpYaraMatches { get; init; } = [];
+    public Camel.DFIR.Toolkits.Models.YaraMatch[] DumpYaraMatches { get; init; } = [];
     /// <summary>Optional VAD-region YARA scan of the live image (YARA-X), present only when caller-supplied rules were given.</summary>
     public MemoryYaraReport? YaraScan { get; init; }
 

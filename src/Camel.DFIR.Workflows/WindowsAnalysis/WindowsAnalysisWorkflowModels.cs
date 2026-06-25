@@ -8,6 +8,7 @@ using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 /// <summary>
 /// One of the forensic registry artifacts from the Windows-artifacts methodology: a human-readable
 /// <see cref="Name"/> and the <see cref="RegistryEntry"/> rows the RECmd batch produced whose key path

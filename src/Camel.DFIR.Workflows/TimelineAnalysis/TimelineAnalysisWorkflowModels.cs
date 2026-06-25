@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 
 /// <summary>
 /// A built Plaso super timeline: the persistent <see cref="StorageFile"/> (.plaso) plus the sorted, optionally

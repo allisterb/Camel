@@ -4,6 +4,7 @@ using Camel.DFIR.Toolkits;
 using System;
 
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 using Camel.Workflows.Models;
 
 public partial class DiskAnalysisWorkflow : Workflow

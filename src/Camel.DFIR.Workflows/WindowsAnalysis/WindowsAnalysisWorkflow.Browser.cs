@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.Json;
 
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 using Camel.Workflows.Models;
 
 // FOR500.4 — Browser forensics. Reconstructs a user's web activity from the host-based browser databases: the

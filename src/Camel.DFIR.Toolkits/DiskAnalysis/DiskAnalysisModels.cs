@@ -1,4 +1,4 @@
-namespace Camel.Toolkits.Models;
+namespace Camel.DFIR.Toolkits.Models;
 
 using System;
 using System.Collections.Generic;

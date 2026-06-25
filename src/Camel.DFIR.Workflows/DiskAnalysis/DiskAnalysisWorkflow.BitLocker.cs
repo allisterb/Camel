@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 using Camel.Workflows.Models;
 
 public partial class DiskAnalysisWorkflow
@@ -21,7 +22,7 @@ public partial class DiskAnalysisWorkflow
     /// encrypted before trying to mount it.
     /// </summary>
     /// <param name="imageMount">A raw image mount from <see cref="MountEwfImageAsync"/>.</param>
-    /// <param name="offset">Partition start sector (e.g. an <see cref="Camel.Toolkits.Models.MmlsEntry.Start"/>).</param>
+    /// <param name="offset">Partition start sector (e.g. an <see cref="Camel.DFIR.Toolkits.Models.MmlsEntry.Start"/>).</param>
     public async Task<WorkflowResult<BitLockerInfo>> InspectBitLockerVolumeAsync(EwfImageMount imageMount, int offset)
     {
         using var _audit = AuditScope();

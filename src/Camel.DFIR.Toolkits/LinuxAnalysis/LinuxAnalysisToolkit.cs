@@ -13,6 +13,7 @@ using Microsoft.Extensions.Configuration;
 
 using Camel.Environments;
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 
 /// <summary>
 /// Typed extractors for Linux host artifacts on a <em>mounted root filesystem</em> (a forensic image mounted

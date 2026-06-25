@@ -4,6 +4,7 @@ using Jint;
 using Jint.Runtime.Interop;
 
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 using Camel.Inference;
 
 namespace Camel.Tests.Training;

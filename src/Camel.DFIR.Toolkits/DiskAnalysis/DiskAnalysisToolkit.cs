@@ -6,10 +6,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 
 using Camel.Environments;
-using Camel.Toolkits.Models;
-// The model DTOs live in the neutral Camel.Toolkits.Models namespace, no longer a child of this
-// (Camel.DFIR.Toolkits) namespace, so the unqualified 'Models.' prefix this file uses is aliased here.
-using Models = Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 
 public class DiskAnalysisToolkit : Toolkit
 {

@@ -3,6 +3,7 @@ namespace Camel.Workflows.Models;
 using System.Linq;
 
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 
 /// <summary>
 /// The result of triaging a web-server access log for intrusion indicators. The log is matched server-side

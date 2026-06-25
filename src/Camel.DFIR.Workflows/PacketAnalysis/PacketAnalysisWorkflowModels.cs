@@ -3,6 +3,7 @@ namespace Camel.Workflows.Models;
 using System;
 
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 
 // =====================================================================================================
 // Report models for PacketAnalysisWorkflow. Each report carries the parsed network artifacts plus the items

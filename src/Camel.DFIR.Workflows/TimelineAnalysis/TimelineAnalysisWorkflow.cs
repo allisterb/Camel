@@ -10,6 +10,7 @@ using SerilogTimings;
 
 using Camel.Toolkits;
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 using Camel.Workflows.Models;
 using Camel.Inference;
 

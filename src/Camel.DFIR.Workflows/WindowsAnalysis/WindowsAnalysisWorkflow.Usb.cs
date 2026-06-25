@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 using Camel.Workflows.Models;
 
 // FOR500.3 — USB device analysis. Implements the course's registry-correlation methodology: profile each USB

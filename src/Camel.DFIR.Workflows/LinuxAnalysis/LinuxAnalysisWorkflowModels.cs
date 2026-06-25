@@ -3,6 +3,7 @@ namespace Camel.Workflows.Models;
 using System;
 
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 
 // =====================================================================================================
 // Report models for LinuxAnalysisWorkflow. Each workflow returns a typed report carrying the raw artifacts it

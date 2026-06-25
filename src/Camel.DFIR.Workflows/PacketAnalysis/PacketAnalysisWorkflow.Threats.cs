@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 using Camel.Workflows.Models;
 
 public partial class PacketAnalysisWorkflow

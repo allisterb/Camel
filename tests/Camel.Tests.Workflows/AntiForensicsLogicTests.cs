@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 
 using Camel.Toolkits.Models;
+using Camel.DFIR.Toolkits.Models;
 using Camel.Workflows;
 using Camel.DFIR.Workflows;
 using Camel.Inference;

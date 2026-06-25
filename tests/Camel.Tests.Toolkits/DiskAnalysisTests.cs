@@ -380,7 +380,7 @@ public class DiskAnalysisTests : TestsRuntime
             "\tIdentifier:\t\t8e3cb232-aaaa-bbbb-cccc-ddddeeeeffff\n" +
             "\tType:\t\t\tRecovery password\n";
 
-        var info = Camel.Toolkits.Models.BitLockerInfo.Parse(sample);
+        var info = Camel.DFIR.Toolkits.Models.BitLockerInfo.Parse(sample);
         Assert.True(info.IsBitLockerVolume);
         Assert.Equal("AES-CBC 256-bit", info.EncryptionMethod);
         Assert.Equal("f9778cc8-6e4d-4f3a-9b1e-2a7c0d5e6f10", info.VolumeIdentifier);
