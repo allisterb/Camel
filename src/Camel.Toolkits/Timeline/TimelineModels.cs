@@ -22,7 +22,7 @@ public class TimelineEvent
 
     /// <summary>
     /// The event's tagging-plugin tag, present only when the timeline was tagged (see
-    /// <see cref="Camel.Toolkits.TimelineToolkit.PsortTagAsync"/>) and the event matched a rule. Use
+    /// <see cref="Camel.DFIR.Toolkits.TimelineToolkit.PsortTagAsync"/>) and the event matched a rule. Use
     /// <see cref="Labels"/> for the category names.
     /// </summary>
     public EventTag? Tag { get; set; }

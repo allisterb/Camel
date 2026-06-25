@@ -10,15 +10,15 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
   </ItemGroup>
 
+  <!-- The DFIR toolkit logic classes moved to Camel.DFIR.Toolkits but still use internal model
+       helpers (e.g. WebCacheParse) that were same-assembly before the split. Restore that access. -->
   <ItemGroup>
-    <ProjectReference Include="..\Camel.Environments\Camel.Environments.csproj" />
-    <ProjectReference Include="..\Camel.Runtime\Camel.Runtime.csproj" />
+    <InternalsVisibleTo Include="Camel.DFIR.Toolkits" />
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="Timeline\" />
-    <Folder Include="Yara\" />
-    <Folder Include="WindowsAnalysis\" />
+    <ProjectReference Include="..\Camel.Environments\Camel.Environments.csproj" />
+    <ProjectReference Include="..\Camel.Runtime\Camel.Runtime.csproj" />
   </ItemGroup>
 
 </Project>

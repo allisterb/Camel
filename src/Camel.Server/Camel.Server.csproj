@@ -30,8 +30,9 @@
     <ProjectReference Include="..\Camel.Environments\Camel.Environments.csproj" />
     <ProjectReference Include="..\Camel.Runtime\Camel.Runtime.csproj" />
     <ProjectReference Include="..\Camel.Toolkits\Camel.Toolkits.csproj" />
+    <ProjectReference Include="..\Camel.DFIR.Toolkits\Camel.DFIR.Toolkits.csproj" />
     <ProjectReference Include="..\Camel.Inference\Camel.Inference.csproj" />
-    <ProjectReference Include="..\Camel.Workflows\Camel.Workflows.csproj" />
+    <ProjectReference Include="..\Camel.DFIR.Workflows\Camel.DFIR.Workflows.csproj" />
   </ItemGroup>
 
 </Project>

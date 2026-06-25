@@ -3,6 +3,7 @@ using System.Linq;
 
 using Camel.Toolkits.Models;
 using Camel.Workflows;
+using Camel.DFIR.Workflows;
 using Camel.Inference;
 
 namespace Camel.Tests.Workflows;

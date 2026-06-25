@@ -3,6 +3,7 @@ using System.Text;
 
 using Camel.Environments;
 using Camel.Toolkits;
+using Camel.DFIR.Toolkits;
 
 namespace Camel.Tests.Toolkits;
 

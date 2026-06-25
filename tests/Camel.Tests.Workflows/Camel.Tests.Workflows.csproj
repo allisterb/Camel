@@ -15,7 +15,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Camel.Workflows\Camel.Workflows.csproj" />
+    <ProjectReference Include="..\..\src\Camel.Toolkits\Camel.Toolkits.csproj" />
+    <ProjectReference Include="..\..\src\Camel.DFIR.Toolkits\Camel.DFIR.Toolkits.csproj" />
+    <ProjectReference Include="..\..\src\Camel.DFIR.Workflows\Camel.DFIR.Workflows.csproj" />
   </ItemGroup>
 
   <ItemGroup>

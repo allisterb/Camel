@@ -1,0 +1,29 @@
+﻿namespace Camel;
+
+using Camel.DFIR.Workflows;
+
+public class CamelWorkflowsApi : Runtime
+{
+    public CamelWorkflowsApi(CamelToolkitsApi toolkitsApi)
+    {
+        DiskAnalysis = new DiskAnalysisWorkflow(toolkitsApi);
+        MemoryAnalysis = new MemoryAnalysisWorkflow(toolkitsApi);
+        WindowsAnalysis = new WindowsAnalysisWorkflow(toolkitsApi);
+        TimelineAnalysis = new TimelineAnalysisWorkflow(toolkitsApi);
+        AntiForensicsAnalysis = new AntiForensicsAnalysisWorkflow(toolkitsApi);
+        WebServer = new WebServerWorkflow(toolkitsApi);
+        LinuxAnalysis = new LinuxAnalysisWorkflow(toolkitsApi);
+        PacketAnalysis = new PacketAnalysisWorkflow(toolkitsApi);
+    }
+
+    #region Properties
+    public readonly DiskAnalysisWorkflow DiskAnalysis;
+    public readonly MemoryAnalysisWorkflow MemoryAnalysis;
+    public readonly WindowsAnalysisWorkflow WindowsAnalysis;
+    public readonly TimelineAnalysisWorkflow TimelineAnalysis;
+    public readonly AntiForensicsAnalysisWorkflow AntiForensicsAnalysis;
+    public readonly WebServerWorkflow WebServer;
+    public readonly LinuxAnalysisWorkflow LinuxAnalysis;
+    public readonly PacketAnalysisWorkflow PacketAnalysis;
+    #endregion
+}

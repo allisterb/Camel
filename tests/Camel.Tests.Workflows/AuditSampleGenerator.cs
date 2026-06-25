@@ -5,6 +5,7 @@ using System.Linq;
 using Camel;
 using Camel.Environments;
 using Camel.Workflows;
+using Camel.DFIR.Workflows;
 
 namespace Camel.Tests.Workflows;
 

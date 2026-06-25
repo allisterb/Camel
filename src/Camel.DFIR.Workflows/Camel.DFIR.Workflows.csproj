@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Camel.Tests.Workflows" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="WindowsAnalysis\Data\process_expectations.yaml" LogicalName="Camel.Workflows.process_expectations.yaml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" Version="16.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Camel.Environments\Camel.Environments.csproj" />
+    <ProjectReference Include="..\Camel.Runtime\Camel.Runtime.csproj" />
+    <ProjectReference Include="..\Camel.Toolkits\Camel.Toolkits.csproj" />
+    <ProjectReference Include="..\Camel.DFIR.Toolkits\Camel.DFIR.Toolkits.csproj" />
+    <ProjectReference Include="..\Camel.Inference\Camel.Inference.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -2,8 +2,10 @@ using System.Linq;
 
 using Camel.Environments;
 using Camel.Toolkits;
+using Camel.DFIR.Toolkits;
 using Camel.Toolkits.Models;
 using Camel.Workflows;
+using Camel.DFIR.Workflows;
 using Camel.Workflows.Models;
 
 namespace Camel.Tests.Workflows;
