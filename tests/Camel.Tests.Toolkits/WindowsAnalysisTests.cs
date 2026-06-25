@@ -12,6 +12,51 @@ public class WindowsAnalysisTests : TestsRuntime
         localenv = new LocalEnvironment();
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         toolkit = new WindowsAnalysisToolkit(sshenv, sshconfig);
+
+        // The disk-backed tests read from per-case NTFS mounts (/mnt/ewf, /mnt/dlpc, /mnt/windows_mount2)
+        // layered on the E01 images in /mnt/artifacts. A reset SIFT VM loses those mounts (the raw images
+        // survive), so ensure them once per test run before the disk tests fail with "file not found".
+        if (!mountsEnsured)
+        {
+            mountsEnsured = true;   // attempt once even if it throws; the guards below make it idempotent
+            try { EnsureImageMounts(); } catch { /* best-effort: disk-backed tests surface their own errors */ }
+        }
+    }
+
+    /// <summary>
+    /// Best-effort: ensure the three NTFS evidence mounts the disk-backed tests rely on are present,
+    /// mounting them READ-ONLY from the E01 images in <c>/mnt/artifacts</c> if missing. Idempotent — each
+    /// ewfmount/partition mount is skipped when already mounted. Offsets/filenames are hardcoded to the
+    /// known images on the project SIFT workstation.
+    /// </summary>
+    void EnsureImageMounts()
+    {
+        // ROCBA Surface C: drive (rocba-cdrive.e01): a single-volume image (no partition table) that is
+        // hibernated, so mount the whole device (offset 0) read-only via ntfs-3g with force — the kernel
+        // NTFS driver refuses a hibernated/dirty volume.
+        EnsureEwfMount(Modern, "/mnt/rocba_ewf", "rocba-cdrive.e01",
+            "-t ntfs-3g -o ro,force,streams_interface=windows,show_sys_files");
+
+        // CFREDS "Data Leakage" PC (cfreds_2015_data_leakage_pc.E01): the main NTFS partition starts at
+        // sector 206848 = byte offset 105906176 (sector 2048 is the 100MB System Reserved volume).
+        EnsureEwfMount(Dlpc, "/mnt/dlpc_ewf", "cfreds_2015_data_leakage_pc.E01",
+            "-o ro,loop,offset=105906176,show_sys_files,streams_interface=windows");
+
+        // Greg Schardt XP (4Dell Latitude CPi.E01): single NTFS partition at sector 63 = byte offset 32256.
+        EnsureEwfMount(GregSchardt, "/mnt/ewf_mount2", "4Dell Latitude CPi.E01",
+            "-o ro,loop,offset=32256,show_sys_files,streams_interface=windows");
+    }
+
+    // Expose <image> (an E01 under /mnt/artifacts) as a raw device via ewfmount under <rawDir>, then mount
+    // its NTFS volume read-only at <target> with <mountOpts>. Each step is skipped when already done, so this
+    // is safe to call on an already-mounted box. Runs as one shell line (SSH executes it via the login shell).
+    void EnsureEwfMount(string target, string rawDir, string image, string mountOpts)
+    {
+        var script =
+            $"sudo mkdir -p {rawDir} {target}; " +
+            $"mountpoint -q {rawDir} || sudo ewfmount '{Artifacts}/{image}' {rawDir}; " +
+            $"mountpoint -q {target} || sudo mount {mountOpts} {rawDir}/ewf1 {target}";
+        sshenv.ExecuteCommand("sudo", script, out _, false);
     }
 
     [Fact]
@@ -407,6 +452,7 @@ public class WindowsAnalysisTests : TestsRuntime
         Assert.NotNull(r);   // an empty Recent folder yields [] (not null); a parse failure yields null
     }
 
+    const string Artifacts = "/mnt/artifacts";        // raw E01 images (auto-mounted disk); EnsureImageMounts layers NTFS on top
     const string Modern = "/mnt/ewf";
     const string GregSchardt = "/mnt/windows_mount2"; // 'Greg Schardt' XP image (4Dell Latitude CPi.E01)
     const string DfirBatch = "/opt/zimmermantools/RECmd/DFIRBatch.reb";
@@ -419,6 +465,10 @@ public class WindowsAnalysisTests : TestsRuntime
     const string DlpcOst = "/mnt/dlpc/Users/informant/AppData/Local/Microsoft/Outlook/iaman.informant@nist.gov.ost";
     const string DlpcWebCache = "/mnt/dlpc/Users/admin11/AppData/Local/Microsoft/Windows/WebCache/WebCacheV01.dat";
     const string DlpcChromeHistory = "/mnt/dlpc/Users/admin11/AppData/Local/Google/Chrome/User Data/Default/History";
+
+    // Set once the first test instance has attempted the mounts, so EnsureImageMounts runs a single time
+    // per test-run process rather than on every test's construction (the mount checks are idempotent anyway).
+    static bool mountsEnsured;
 
     LocalEnvironment localenv;
     AuditEnvironment sshenv;
