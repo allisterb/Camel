@@ -15,6 +15,7 @@ public class WebServerWorkflowTests : TestsRuntime
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         api = new CamelToolkitsApi(sshenv, sshconfig);
         workflow = new WebServerWorkflow(api);
+        EvidenceMounts.EnsureAll(sshenv);   // self-heal the /mnt/c4 (Ali Hadi web server) evidence mount on a reset VM
     }
 
     [Fact]

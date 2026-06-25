@@ -4,10 +4,11 @@ using Camel.Environments;
 
 /// <summary>
 /// Best-effort setup of the read-only NTFS evidence mounts the disk-backed integration tests depend on
-/// (<c>/mnt/ewf</c>, <c>/mnt/dlpc</c>, <c>/mnt/windows_mount2</c>), layered on the E01 images in
-/// <c>/mnt/artifacts</c>. A reset SIFT workstation keeps the raw images but loses these mounts, so the
-/// disk-backed suites would otherwise fail with "file not found"; <see cref="EnsureAll"/> re-establishes
-/// them. Shared (linked) into each disk-backed test project because the test base <c>TestsRuntime</c> lives
+/// (<c>/mnt/ewf</c>, <c>/mnt/dlpc</c>, <c>/mnt/windows_mount2</c>, <c>/mnt/dc</c>, <c>/mnt/srl</c>,
+/// <c>/mnt/c4</c>), layered on the disk images in <c>/mnt/artifacts</c>. A reset SIFT workstation keeps the
+/// raw images but loses these mounts, so the disk-backed suites would otherwise fail with "file not found";
+/// <see cref="EnsureAll"/> re-establishes them. Shared (linked) into each disk-backed test project because
+/// the test base <c>TestsRuntime</c> lives
 /// in Camel.Runtime, which cannot reference Camel.Environments. Paths/offsets are hardcoded to the project
 /// SIFT workstation for now.
 /// </summary>
@@ -47,6 +48,19 @@ public static class EvidenceMounts
                 // Greg Schardt XP (4Dell Latitude CPi.E01): single NTFS partition at sector 63 = byte offset 32256.
                 EnsureEwfMount(env, "/mnt/windows_mount2", "/mnt/ewf_mount2", "4Dell Latitude CPi.E01",
                     "-o ro,loop,offset=32256,show_sys_files,streams_interface=windows");
+
+                // SRL-2018 SHIELDBASE domain controller (base-dc-cdrive.E01): single-volume NTFS, ntfs-3g ro at offset 0.
+                EnsureEwfMount(env, "/mnt/dc", "/mnt/dc_ewf", "srl-2018/base-dc-cdrive.E01",
+                    "-t ntfs-3g -o ro,force,streams_interface=windows,show_sys_files");
+
+                // SRL-2018 rd-01 workstation (base-rd-01-cdrive.E01): single-volume NTFS, ntfs-3g ro at offset 0.
+                EnsureEwfMount(env, "/mnt/srl", "/mnt/srl_ewf", "srl-2018/base-rd-01-cdrive.E01",
+                    "-t ntfs-3g -o ro,force,streams_interface=windows,show_sys_files");
+
+                // Ali Hadi "Web Server Case" (s4a-challenge4): a RAW dd image (not E01, so no ewfmount) — mount the
+                // image directly by loopback. Single NTFS partition at sector 2048 = byte offset 1048576.
+                EnsureRawMount(env, "/mnt/c4", "s4a-challenge4",
+                    "-o ro,loop,offset=1048576,show_sys_files,streams_interface=windows");
             }
             catch { /* best-effort: disk-backed tests surface their own errors */ }
         }
@@ -61,6 +75,17 @@ public static class EvidenceMounts
             $"sudo mkdir -p {rawDir} {target}; " +
             $"mountpoint -q {rawDir} || sudo ewfmount '{Artifacts}/{image}' {rawDir}; " +
             $"mountpoint -q {target} || sudo mount {mountOpts} {rawDir}/ewf1 {target}";
+        env.ExecuteCommand("sudo", script, out _, false);
+    }
+
+    // Mount a RAW (dd) image <image> from /mnt/artifacts read-only at <target> with <mountOpts> (which must carry
+    // loop + the partition byte offset). No ewfmount step — the loopback mount reads the raw image directly.
+    // Skipped when <target> is already mounted.
+    static void EnsureRawMount(AuditEnvironment env, string target, string image, string mountOpts)
+    {
+        var script =
+            $"sudo mkdir -p {target}; " +
+            $"mountpoint -q {target} || sudo mount {mountOpts} '{Artifacts}/{image}' {target}";
         env.ExecuteCommand("sudo", script, out _, false);
     }
 }
