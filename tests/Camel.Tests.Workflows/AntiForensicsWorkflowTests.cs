@@ -16,6 +16,7 @@ public class AntiForensicsWorkflowTests : TestsRuntime
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         api = new CamelToolkitsApi(sshenv, sshconfig);
         workflow = new AntiForensicsAnalysisWorkflow(api);
+        EvidenceMounts.EnsureAll(sshenv);   // self-heal the /mnt/dlpc evidence mount on a reset SIFT VM
     }
 
     [Fact]

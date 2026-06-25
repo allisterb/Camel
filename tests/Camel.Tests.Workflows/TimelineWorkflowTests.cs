@@ -16,6 +16,7 @@ public class TimelineWorkflowTests : TestsRuntime
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         api = new CamelToolkitsApi(sshenv, sshconfig);
         workflow = new TimelineAnalysisWorkflow(api);
+        EvidenceMounts.EnsureAll(sshenv);   // self-heal the /mnt/dlpc evidence mount on a reset SIFT VM
 
         // A one-entry mactime bodyfile (all four MACB times = 2010-01-01 00:00:00 UTC). Used as a tiny, fast,
         // deterministic source for the orchestration tests and as the $MFT-append fixture for the triage test —

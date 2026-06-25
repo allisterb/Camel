@@ -17,8 +17,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Camel.Training\Camel.Training.csproj" />
-    <ProjectReference Include="..\..\src\Camel.Workflows\Camel.Workflows.csproj" />
     <ProjectReference Include="..\..\src\Camel.Inference\Camel.Inference.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Shared\EvidenceMounts.cs" Link="EvidenceMounts.cs" />
   </ItemGroup>
 
   <ItemGroup>

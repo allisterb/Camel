@@ -14,6 +14,7 @@ public class TimelineTests : TestsRuntime
         localenv = new LocalEnvironment();
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         toolkit = new TimelineToolkit(sshenv, sshconfig);
+        EvidenceMounts.EnsureAll(sshenv);   // ensure /mnt/windows_mount2 etc. before the shared .plaso build reads the hive
 
         // Build a small shared .plaso once (winreg over the SYSTEM hive) for the pinfo/psort tests.
         // Sync-over-async is fine here: test host has no SynchronizationContext, and this is one-time setup.

@@ -15,6 +15,7 @@ public class CanonicalizerTests : TestsRuntime
         var sshconfig = LoadConfigFile("sshtestappsettings.json");
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         api = new CamelToolkitsApi(sshenv, sshconfig);
+        EvidenceMounts.EnsureAll(sshenv);   // self-heal the /mnt/dlpc evidence mount (one file-reading test) on a reset VM
     }
 
     // --- pure logic tests (no workstation) ---

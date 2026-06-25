@@ -14,6 +14,7 @@ public class AnomalySpineTests : TestsRuntime
         var sshconfig = LoadConfigFile("sshtestappsettings.json");
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         api = new CamelToolkitsApi(sshenv, sshconfig);
+        EvidenceMounts.EnsureAll(sshenv);   // self-heal the /mnt/dlpc evidence mount on a reset SIFT VM
     }
 
     // --- Windower ---

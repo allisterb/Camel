@@ -16,6 +16,7 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         api = new CamelToolkitsApi(sshenv, sshconfig);
         workflow = new WindowsAnalysisWorkflow(api);
+        EvidenceMounts.EnsureAll(sshenv);   // self-heal /mnt/ewf, /mnt/dlpc, /mnt/windows_mount2 on a reset SIFT VM
     }
 
     [Fact]
