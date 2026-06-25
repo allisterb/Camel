@@ -1526,9 +1526,10 @@ public partial class WindowsAnalysisWorkflow : Workflow
     };
 
     // Paths that legitimately hold process-named copies (component store, servicing payloads, the driver store,
-    // and a previous-OS backup) — these are excluded from the masquerade check to keep it high-precision.
+    // a previous-OS backup, and the push-button "Reset this PC" scratch area) — these are excluded from the
+    // masquerade check to keep it high-precision. Matched case-insensitively against '/'-normalized paths.
     private static readonly string[] MasqueradeExcludedPaths =
-        ["/winsxs/", "/servicing/", "/driverstore/", "/windows.old/"];
+        ["/winsxs/", "/servicing/", "/driverstore/", "/windows.old/", "/$sysreset/"];
 
     // Executable extensions worth flagging when found in a transient/world-writable location.
     private static readonly string[] SuspiciousExecExtensions = ["*.exe", "*.scr", "*.com", "*.pif"];
