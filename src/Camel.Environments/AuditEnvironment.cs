@@ -1148,9 +1148,12 @@ public abstract class AuditEnvironment : Runtime, IDisposable
 
     public static AuditEnvironment CreateFromConfig(IConfigurationRoot config)
     {
-        var environmentType = Enum.Parse<EnvironmentType>(GetRequiredValue(config, "SIFT:Environment"));
+        // The active platform names the config profile holding this box's connection details (SIFT / Kali /
+        // PTF / …); it defaults to SIFT so existing single-distro configs read exactly as before.
+        var platform = config["Platform"] ?? "SIFT";
+        var environmentType = Enum.Parse<EnvironmentType>(GetRequiredValue(config, $"{platform}:Environment"));
         // Optional cap on concurrent async executions (0/absent = unlimited).
-        int maxConcurrent = int.TryParse(config["SIFT:MaxConcurrentExecutions"], out var n) ? n : 0;
+        int maxConcurrent = int.TryParse(config[$"{platform}:MaxConcurrentExecutions"], out var n) ? n : 0;
         AuditEnvironment env;
         if (environmentType == EnvironmentType.Local)
         {
@@ -1158,10 +1161,10 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         }
         else if (environmentType == EnvironmentType.Ssh)
         {
-            var host = GetRequiredValue(config, "SIFT:Host");
-            var port = Int32.Parse(GetRequiredValue(config, "SIFT:Port"));
-            var user = GetRequiredValue(config, "SIFT:User");
-            var password = GetRequiredValue(config, "SIFT:Password");
+            var host = GetRequiredValue(config, $"{platform}:Host");
+            var port = Int32.Parse(GetRequiredValue(config, $"{platform}:Port"));
+            var user = GetRequiredValue(config, $"{platform}:User");
+            var password = GetRequiredValue(config, $"{platform}:Password");
             env = new SshAuditEnvironment("camel", host, port, user, password, new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), new LocalEnvironment());
         }
         else throw new Exception($"Invalid environment type specified in configuration: {environmentType.ToString()}");

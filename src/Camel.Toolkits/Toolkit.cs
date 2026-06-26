@@ -9,11 +9,18 @@ using Microsoft.Extensions.Configuration;
 namespace Camel.Toolkits;
 
 public record Tool
-{     
+{
     public string Name { get; init; }
     public string Descriptioon { get; init; }
     public string Command { get; init; }
     public bool Sudo { get; init; } = false;
+
+    /// <summary>
+    /// False when the active platform's config supplied no Command for this logical tool — i.e. the tool is
+    /// not present on this distro. Methods that need it degrade (see <see cref="Toolkit.IsToolAvailable"/> and
+    /// the <c>ExecuteTool*</c> guards) instead of running a command with an empty path.
+    /// </summary>
+    public bool Available => !string.IsNullOrWhiteSpace(Command);
 
     public Tool(string name, string description, string command, bool sudo = false)
     {
@@ -21,8 +28,8 @@ public record Tool
         this.Descriptioon = description;
         this.Command = command;
         this.Sudo = sudo;
-    }   
-}   
+    }
+}
 
 public abstract class Toolkit : Runtime
 {
@@ -36,7 +43,14 @@ public abstract class Toolkit : Runtime
         {
             throw new Exception("Configuration file not loaded");
         }
-        toolConfig = config.GetRequiredSection($"Tools:{name}");
+        // The active platform (SIFT / Kali / PTF / …) names the config profile holding this distro's tool
+        // definitions; it defaults to SIFT. Tools live under {platform}:Tools:{name}, falling back to the
+        // legacy top-level Tools:{name} so existing single-distro configs keep working unchanged. GetSection
+        // never throws, so a platform that has no tools for this toolkit yields an empty section — the toolkit
+        // constructs inert (every tool unavailable) rather than crashing the session.
+        this.platform = config["Platform"] ?? "SIFT";
+        toolConfig = config.GetSection($"{platform}:Tools:{name}");
+        if (!toolConfig.Exists()) toolConfig = config.GetSection($"Tools:{name}");
         foreach (string toolName in ToolList)
         {
             Tools[toolName] = GetTool(toolName);
@@ -51,7 +65,33 @@ public abstract class Toolkit : Runtime
     #endregion
 
     #region Methods
-    public Tool GetTool(string name) => new Tool(name, GetRequiredValue(toolConfig, $"{name}:Description"), GetRequiredValue(toolConfig, $"{name}:Command"), bool.Parse(toolConfig[$"{name}:Sudo"] ?? "false"));
+    // Builds a Tool from the active platform's config. A tool with no Command on this platform is returned as
+    // *unavailable* (empty Command) rather than throwing, so the toolkit tolerates a distro that lacks it.
+    public Tool GetTool(string name)
+    {
+        var command = toolConfig[$"{name}:Command"];
+        return string.IsNullOrWhiteSpace(command)
+            ? new Tool(name, toolConfig[$"{name}:Description"] ?? "", "", false)
+            : new Tool(name, toolConfig[$"{name}:Description"] ?? "", command, bool.Parse(toolConfig[$"{name}:Sudo"] ?? "false"));
+    }
+
+    /// <summary>
+    /// True when <paramref name="name"/> has a runnable command on the active platform. A toolkit method or
+    /// workflow can branch on this to skip a step the current distro can't perform, instead of emitting a
+    /// guaranteed failure. Unknown names (not in <see cref="ToolList"/>) report unavailable.
+    /// </summary>
+    public bool IsToolAvailable(string name) => Tools.TryGetValue(name, out var t) && t.Available;
+
+    // Records a capability gap (a tool absent on the active platform) to the per-case audit trail and logs it;
+    // the ExecuteTool* guards then return null instead of running a command with an empty path. This turns a
+    // distro that lacks a tool into a clean, traceable degrade rather than a confusing execution failure.
+    private void ReportToolUnavailable(string name)
+    {
+        using var _tk = PushAuditProperty("Toolkit", this.name);
+        AuditEvent("capability-unavailable",
+            "Tool '{Tool}' is not available on platform '{Platform}' (toolkit {Toolkit}).", name, platform, this.name);
+        Error($"Tool '{name}' is not available on platform '{platform}'.");
+    }
 
     /// <summary>
     /// Called at the end of the base constructor. Override in a derived toolkit to download/install any
@@ -191,6 +231,7 @@ public abstract class Toolkit : Runtime
 
     public T? ExecuteTool<T>(string name, string args) where T : class
     {
+        if (!Tools[name].Available) { ReportToolUnavailable(name); return null; }
         if (auditEnvironment.ExecuteCommand(Tools[name].Command, args, out string output, Tools[name].Sudo))
         {
             return System.Text.Json.JsonSerializer.Deserialize<T>(output);
@@ -209,6 +250,7 @@ public abstract class Toolkit : Runtime
     /// </summary>
     public string? ExecuteToolText(string name, string args)
     {
+        if (!Tools[name].Available) { ReportToolUnavailable(name); return null; }
         using var _tk = PushAuditProperty("Toolkit", this.name);
         using var _op = PushAuditProperty("Operation", name);
         if (auditEnvironment.ExecuteCommand(Tools[name].Command, args, out string output, Tools[name].Sudo))
@@ -313,6 +355,7 @@ public abstract class Toolkit : Runtime
 
     public async Task<T?> ExecuteToolAsync<T>(string name, string args) where T : class
     {
+        if (!Tools[name].Available) { ReportToolUnavailable(name); return null; }
         var r = await auditEnvironment.ExecuteCommandAsync(Tools[name].Command, args, Tools[name].Sudo);
         if (r.IsCompleted)
         {
@@ -332,6 +375,7 @@ public abstract class Toolkit : Runtime
     /// </summary>
     public async Task<string?> ExecuteToolTextAsync(string name, string args)
     {
+        if (!Tools[name].Available) { ReportToolUnavailable(name); return null; }
         // Attribute the command(s) this runs to this toolkit and tool in the audit trail. The scopes bracket the
         // awaited execution so the properties flow onto the command-execution event emitted in the environment.
         using var _tk = PushAuditProperty("Toolkit", this.name);
@@ -519,7 +563,8 @@ public abstract class Toolkit : Runtime
 
     #region Fields
     public readonly string name;
+    public readonly string platform;
     public readonly IConfigurationSection toolConfig;
-    public readonly AuditEnvironment auditEnvironment;   
+    public readonly AuditEnvironment auditEnvironment;
     #endregion
 }

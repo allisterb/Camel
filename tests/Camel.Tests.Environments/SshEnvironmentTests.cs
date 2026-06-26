@@ -1,34 +1,44 @@
-﻿namespace Camel.Tests.Environments;
+namespace Camel.Tests.Environments;
 
 using System.Diagnostics;
 
 using Camel.Environments;
 
 public class SshEnvironmentTests : TestsRuntime
-{        
+{
     public SshEnvironmentTests()
     {
         if (config is null)
         {
             throw new Exception("Configuration not loaded");
         }
-        host = GetRequiredValue(config, "Sift:Host");
-        port = Int32.Parse(GetRequiredValue(config, "Sift:Port"));
-        user = GetRequiredValue(config, "Sift:User");
-        password = GetRequiredValue(config, "Sift:Password");
-        le = new LocalEnvironment(EnvironmentMessageHandler);
     }
+
+    // Build the environment the way Camel does at runtime: CreateFromConfig honours the active "Platform"
+    // profile (Kali / SIFT / …), so these tests exercise the platform-aware connection path end to end rather
+    // than reaching past it to a hardcoded section.
+    SshAuditEnvironment NewEnv() => (SshAuditEnvironment)AuditEnvironment.CreateFromConfig(config!);
+
+    [Fact]
+    public void CreateFromConfigConnectsToActivePlatformHost()
+    {
+        var platform = config!["Platform"] ?? "SIFT";
+        var env = NewEnv();
+        Assert.True(env.IsConnected);
+        // Proves CreateFromConfig selected the *active* platform's profile (its Host), not a hardcoded one.
+        Assert.Equal(GetRequiredValue(config, $"{platform}:Host"), env.HostName);
+    }
+
     [Fact]
     public void CanConnect()
     {
-        SshAuditEnvironment env = new SshAuditEnvironment(EnvironmentMessageHandler, "camel", host, port, user, password, new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), le);
-        Assert.True(env.IsConnected);
+        Assert.True(NewEnv().IsConnected);
     }
 
     [Fact]
     public void CanExecuteCommand()
     {
-        SshAuditEnvironment env = new SshAuditEnvironment(EnvironmentMessageHandler, "camel", host, port, user, password, new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), le);
+        var env = NewEnv();
         var result = env.ExecuteCommand("echo", "hello", out string output);
         Assert.True(result);
         Assert.Equal("hello", output.Trim());
@@ -39,10 +49,9 @@ public class SshEnvironmentTests : TestsRuntime
     [Fact]
     public async Task CanExecuteAsync()
     {
-        SshAuditEnvironment env = new SshAuditEnvironment(EnvironmentMessageHandler, "camel", host, port, user, password, new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), le);
-        var r = await env.ExecuteAsync("echo", "hello");        
+        var r = await NewEnv().ExecuteAsync("echo", "hello");
         Assert.True(r.ExitCode == 0);
-        Assert.Equal("hello", r.StdOut);        
+        Assert.Equal("hello", r.StdOut);
     }
 
     [Fact]
@@ -96,12 +105,4 @@ public class SshEnvironmentTests : TestsRuntime
         Assert.True(r.IsCompleted);
         Assert.Equal("again", r.Output.Trim());
     }
-
-    SshAuditEnvironment NewEnv() =>
-        new SshAuditEnvironment(EnvironmentMessageHandler, "camel", host, port, user, password,
-            new OperatingSystem(PlatformID.Unix, new Version("24.04.4")), le);
-
-    LocalEnvironment le;
-    string host, user, password;
-    int port;
 }
