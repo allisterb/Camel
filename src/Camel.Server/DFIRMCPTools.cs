@@ -21,6 +21,12 @@ public class DFIRMCPTools : CamelMCPTools
 {
     public DFIRMCPTools(SessionRegistry registry) : base(registry) { }
 
+    public override string InvestigationName => "DFIR";
+
+    // The DFIR toolkit config-section names, for the launch-time platform capability check.
+    protected override IReadOnlyList<string> PlatformToolkitSections =>
+        ["DiskAnalysis", "MemoryAnalysis", "WindowsAnalysis", "Timeline", "Yara", "UnixTools", "LinuxAnalysis", "PacketAnalysis"];
+
     [McpServerTool(Name = "SetEvidence"), Description(
         "Register the ORIGINAL evidence files for this session so the server can architecturally prevent their " +
         "spoliation: any subsequent tool execution that would write over, extract into, or otherwise modify a " +

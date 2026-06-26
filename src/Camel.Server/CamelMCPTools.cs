@@ -251,6 +251,22 @@ public abstract class CamelMCPTools : Runtime
     /// </summary>
     protected abstract void BindDomainGlobals(Engine jsinterp, SessionContext session, string script);
 
+    /// <summary>The config-section names of the toolkits this server binds (e.g. "Scanning", "DiskAnalysis").
+    /// Used by the launch-time capability check to report which toolkits have runnable tools on the active
+    /// platform — without constructing any toolkit (so the check never triggers tool provisioning).</summary>
+    protected abstract IReadOnlyList<string> PlatformToolkitSections { get; }
+
+    /// <summary>Human label for this investigation ("DFIR" / "PenTest"), used in capability-check messages.</summary>
+    public abstract string InvestigationName { get; }
+
+    /// <summary>
+    /// Launch-time platform capability report for this server's toolkits, computed from config (see
+    /// <see cref="Camel.Toolkits.PlatformCapability"/>). The host uses it to refuse startup when no toolkit has
+    /// any tool on the active platform, and to warn on a partial (degraded) combo.
+    /// </summary>
+    public Camel.Toolkits.PlatformCapabilityReport CheckCapabilities(IConfigurationRoot config) =>
+        Camel.Toolkits.PlatformCapability.Check(config, PlatformToolkitSections);
+
     // Pass the agent's text as a {Message} parameter, never as the template itself: script output can contain
     // '{' (e.g. JSON.stringify), which Serilog would otherwise try to parse as a property token.
     protected void AuditInfo(string text, StringBuilder output)

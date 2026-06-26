@@ -229,8 +229,17 @@ public abstract class Toolkit : Runtime
         finally { auditEnvironment.ExecuteCommand("rm", $"-f {zip}", out _, false); }
     }
 
+    /// <summary>
+    /// Called at the top of every <c>ExecuteTool*</c> entry point, before the availability check or any
+    /// command runs. The base implementation does nothing; <see cref="OffensiveToolkit"/> overrides it to
+    /// enforce the fail-closed engagement gate, so an offensive toolkit cannot run a tool with no authorization
+    /// registered even if a method forgot its per-target check. <paramref name="toolName"/> is the logical tool.
+    /// </summary>
+    protected virtual void OnBeforeExecute(string toolName) { }
+
     public T? ExecuteTool<T>(string name, string args) where T : class
     {
+        OnBeforeExecute(name);
         if (!Tools[name].Available) { ReportToolUnavailable(name); return null; }
         if (auditEnvironment.ExecuteCommand(Tools[name].Command, args, out string output, Tools[name].Sudo))
         {
@@ -250,6 +259,7 @@ public abstract class Toolkit : Runtime
     /// </summary>
     public string? ExecuteToolText(string name, string args)
     {
+        OnBeforeExecute(name);
         if (!Tools[name].Available) { ReportToolUnavailable(name); return null; }
         using var _tk = PushAuditProperty("Toolkit", this.name);
         using var _op = PushAuditProperty("Operation", name);
@@ -355,6 +365,7 @@ public abstract class Toolkit : Runtime
 
     public async Task<T?> ExecuteToolAsync<T>(string name, string args) where T : class
     {
+        OnBeforeExecute(name);
         if (!Tools[name].Available) { ReportToolUnavailable(name); return null; }
         var r = await auditEnvironment.ExecuteCommandAsync(Tools[name].Command, args, Tools[name].Sudo);
         if (r.IsCompleted)
@@ -375,6 +386,7 @@ public abstract class Toolkit : Runtime
     /// </summary>
     public async Task<string?> ExecuteToolTextAsync(string name, string args)
     {
+        OnBeforeExecute(name);
         if (!Tools[name].Available) { ReportToolUnavailable(name); return null; }
         // Attribute the command(s) this runs to this toolkit and tool in the audit trail. The scopes bracket the
         // awaited execution so the properties flow onto the command-execution event emitted in the environment.

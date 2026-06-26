@@ -41,12 +41,16 @@ internal class Program : Runtime
             with.CaseInsensitiveEnumValues = true;
             with.HelpWriter = null;
         });
-        var result = parser.ParseArguments<ServerOptions, CreateCaseOptions, PreserveChatlogOptions, BakeReportOptions>(args);
+        var result = parser.ParseArguments<ServerOptions, DfirServerOptions, PenTestServerOptions, CreateCaseOptions, PreserveChatlogOptions, BakeReportOptions>(args);
         try
         {
             await result.MapResult(
 
-                async (ServerOptions opts) => await HandleServerArgs(opts),
+                // The PenTest and DFIR verbs subclass ServerOptions; MapResult dispatches on the concrete parsed
+                // type, so the more-derived handlers must precede the ServerOptions ('server' alias = DFIR) one.
+                async (PenTestServerOptions opts) => await HandleServerArgs(opts, InvestigationType.PenTest),
+                async (DfirServerOptions opts) => await HandleServerArgs(opts, InvestigationType.DFIR),
+                async (ServerOptions opts) => await HandleServerArgs(opts, InvestigationType.DFIR),
                 async (CreateCaseOptions opts) => await HandleCreateCaseArgs(opts),
                 async (PreserveChatlogOptions opts) => await HandlePreserveChatlog(opts),
                 async (BakeReportOptions opts) => await HandleBakeReportArgs(opts),
@@ -59,7 +63,7 @@ internal class Program : Runtime
         }
     }
 
-    static async Task HandleServerArgs(ServerOptions opts)
+    static async Task HandleServerArgs(ServerOptions opts, InvestigationType investigation)
     {
         if (config is null) throw new Exception("Configuration not loaded.");
 
@@ -72,58 +76,70 @@ internal class Program : Runtime
             : Path.Combine(opts.CaseDir, "logs");
         Runtime.WithAuditLog(logDir);
 
+        // Resolve the active platform profile (the config section holding this box's connection details + tool
+        // paths): explicit --platform wins, else the config 'Platform' key, else the investigation default
+        // (DFIR→SIFT, PenTest→Kali). Connection overrides below target THIS profile, so --host/--user/... point
+        // the chosen platform at a remote box without editing appsettings.json. AuditEnvironment.CreateFromConfig
+        // and the toolkits both read {platform}:..., so setting Platform here is what selects the box end-to-end.
+        var platform = !string.IsNullOrWhiteSpace(opts.Platform) ? opts.Platform
+                     : !string.IsNullOrWhiteSpace(config["Platform"]) ? config["Platform"]!
+                     : (investigation == InvestigationType.PenTest ? "Kali" : "SIFT");
+        config["Platform"] = platform;
+
         if (opts.Ssh)
         {
-            config["SIFT:Environment"] = "Ssh";
+            config[$"{platform}:Environment"] = "Ssh";
         }
         else if (opts.Local)
         {
-            config["SIFT:Environment"] = "Local";
+            config[$"{platform}:Environment"] = "Local";
         }
 
-        // SSH connection overrides from the command line, so the user can point Camel at a remote SIFT
-        // workstation without editing appsettings.json (e.g. running protocol-sift-camel on Windows against a
-        // remote Linux SIFT box). Any supplied detail implies SSH mode unless the user explicitly forced --local.
-        if (!string.IsNullOrWhiteSpace(opts.Host)) config["SIFT:Host"] = opts.Host;
-        if (!string.IsNullOrWhiteSpace(opts.User)) config["SIFT:User"] = opts.User;
-        if (!string.IsNullOrWhiteSpace(opts.Password)) config["SIFT:Password"] = opts.Password;
-        if (opts.Port.HasValue) config["SIFT:Port"] = opts.Port.Value.ToString();
+        // SSH connection overrides from the command line, so the user can point Camel at a remote box without
+        // editing appsettings.json (e.g. running against a remote SIFT or Kali host). Any supplied detail implies
+        // SSH mode unless the user explicitly forced --local.
+        if (!string.IsNullOrWhiteSpace(opts.Host)) config[$"{platform}:Host"] = opts.Host;
+        if (!string.IsNullOrWhiteSpace(opts.User)) config[$"{platform}:User"] = opts.User;
+        if (!string.IsNullOrWhiteSpace(opts.Password)) config[$"{platform}:Password"] = opts.Password;
+        if (opts.Port.HasValue) config[$"{platform}:Port"] = opts.Port.Value.ToString();
         if (!opts.Local && (!string.IsNullOrWhiteSpace(opts.Host) || !string.IsNullOrWhiteSpace(opts.User)
                             || !string.IsNullOrWhiteSpace(opts.Password) || opts.Port.HasValue))
         {
-            config["SIFT:Environment"] = "Ssh";
+            config[$"{platform}:Environment"] = "Ssh";
         }
         // Default the SSH port when connection details were supplied on the command line but no port was set
-        // anywhere, so SSH mode doesn't fail on a missing SIFT:Port.
-        if (Enum.Parse<EnvironmentType>(GetRequiredValue(config, "SIFT:Environment")) == EnvironmentType.Ssh
-            && string.IsNullOrWhiteSpace(config["SIFT:Port"]))
+        // anywhere, so SSH mode doesn't fail on a missing {platform}:Port.
+        if (Enum.Parse<EnvironmentType>(GetRequiredValue(config, $"{platform}:Environment")) == EnvironmentType.Ssh
+            && string.IsNullOrWhiteSpace(config[$"{platform}:Port"]))
         {
-            config["SIFT:Port"] = "22";
+            config[$"{platform}:Port"] = "22";
         }
 
-        if (Enum.Parse<EnvironmentType>(GetRequiredValue(config, "SIFT:Environment")) == EnvironmentType.Ssh)
+        if (Enum.Parse<EnvironmentType>(GetRequiredValue(config, $"{platform}:Environment")) == EnvironmentType.Ssh)
         {
             // Fail fast: verify SSH connectivity once at startup (sessions then connect lazily on first use).
-            host = GetRequiredValue(config, "SIFT:Host");
+            host = GetRequiredValue(config, $"{platform}:Host");
             if (AuditEnvironment.CreateFromConfig(config) is SshAuditEnvironment se && !se.IsConnected)
             {
                 Error($"Could not connect to SSH environment on host {host}.");
                 Environment.Exit(1);
-            }           
+            }
         }
         else
         {
             Info($"Using local environment on host {Environment.MachineName}");
         }
+
+        var mode = investigation == InvestigationType.PenTest ? "PenTest (red-team)" : "DFIR (blue-team)";
         if (opts.Http)
         {
-            Info("Starting Camel MCP Server in HTTP mode.");
-            await CamelMCPServer.RunHttpAsync(config);
+            Info("Starting Camel {Mode} MCP Server in HTTP mode on platform '{Platform}'.", mode, platform);
+            await CamelMCPServer.RunHttpAsync(config, investigation);
         }
         else
         {
-            Info("Starting Camel MCP Server in stdio mode.");
-            await CamelMCPServer.RunStdioAsync(config);
+            Info("Starting Camel {Mode} MCP Server in stdio mode on platform '{Platform}'.", mode, platform);
+            await CamelMCPServer.RunStdioAsync(config, investigation);
         }
     }
 
@@ -151,7 +167,12 @@ internal class Program : Runtime
         }
         else
         {
-            var claude = ReadEmbedded("Camel.CLI.CaseTemplate.CLAUDE.md").Replace("__CASE_ID__", opts.CaseId);
+            // Pick the brief for the investigation type: the DFIR (blue) analyst brief or the PenTest (red)
+            // operator brief. Both are embedded templates with __CASE_ID__ substituted.
+            var template = opts.Type == InvestigationType.PenTest
+                ? "Camel.CLI.CaseTemplate.CLAUDE.pentest.md"
+                : "Camel.CLI.CaseTemplate.CLAUDE.md";
+            var claude = ReadEmbedded(template).Replace("__CASE_ID__", opts.CaseId);
             File.WriteAllText(claudePath, claude);
             Info($"Wrote {claudePath}");
         }
@@ -715,13 +736,15 @@ internal class Program : Runtime
     }
 
     /// <summary>
-    /// Builds the args array for the generated <c>.mcp.json</c>: launches this CLI assembly's <c>server</c>
-    /// verb, carrying through the connection flags passed to <c>create-case</c> (any of --host/--user/--pass/
-    /// --port implies --ssh unless --local was given), so Claude Code starts Camel in the requested mode.
+    /// Builds the args array for the generated <c>.mcp.json</c>: launches this CLI assembly's investigation
+    /// server verb (<c>dfir-server</c> or <c>pentest-server</c> per <c>--type</c>), carrying through the
+    /// connection flags passed to <c>create-case</c> (any of --host/--user/--pass/--port implies --ssh unless
+    /// --local was given) and the platform profile, so Claude Code starts Camel in the requested mode.
     /// </summary>
     static List<string> BuildServerArgs(CreateCaseOptions opts)
     {
-        var args = new List<string> { CliDllPath(), "server" };
+        var verb = opts.Type == InvestigationType.PenTest ? "pentest-server" : "dfir-server";
+        var args = new List<string> { CliDllPath(), verb };
         bool conn = !string.IsNullOrWhiteSpace(opts.Host) || !string.IsNullOrWhiteSpace(opts.User)
                     || !string.IsNullOrWhiteSpace(opts.Password) || opts.Port.HasValue;
         if (opts.Local) args.Add("--local");
@@ -730,6 +753,7 @@ internal class Program : Runtime
         if (!string.IsNullOrWhiteSpace(opts.User)) { args.Add("--user"); args.Add(opts.User); }
         if (!string.IsNullOrWhiteSpace(opts.Password)) { args.Add("--pass"); args.Add(opts.Password); }
         if (opts.Port.HasValue) { args.Add("--port"); args.Add(opts.Port.Value.ToString()); }
+        if (!string.IsNullOrWhiteSpace(opts.Platform)) { args.Add("--platform"); args.Add(opts.Platform); }
         // Bake the absolute case dir so the server writes its audit log into the case (not next to the dll).
         args.Add("--case-dir");
         args.Add(Path.GetFullPath(Path.Combine(opts.CaseDir, opts.CaseId)));

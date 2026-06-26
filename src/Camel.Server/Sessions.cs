@@ -21,6 +21,12 @@ public sealed class SessionContext : IDisposable
     public readonly AuditEnvironment Environment;
     public readonly CamelToolkitsApi ToolkitsApi;
     public readonly CamelWorkflowsApi WorkflowsApi;
+
+    /// <summary>The pen-test (red-team) toolkits bound to this session. Constructed alongside the DFIR api but
+    /// only bound into the JS engine by the PenTest server; its toolkits are fail-closed on the engagement gate,
+    /// so they do nothing until <c>SetEngagement</c> is called regardless of which server is running.</summary>
+    public readonly CamelPenTestToolkitsApi PenTestToolkitsApi;
+
     public DateTimeOffset LastAccess = DateTimeOffset.UtcNow;
 
     /// <summary>The MCP session id (set when the context is created); the default audit case id.</summary>
@@ -73,6 +79,7 @@ public sealed class SessionContext : IDisposable
         Environment = AuditEnvironment.CreateFromConfig(config);
         ToolkitsApi = new CamelToolkitsApi(Environment, config);
         WorkflowsApi = new CamelWorkflowsApi(ToolkitsApi);
+        PenTestToolkitsApi = new CamelPenTestToolkitsApi(Environment, config);
     }
 
     public void Dispose()

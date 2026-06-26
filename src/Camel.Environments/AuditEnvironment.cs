@@ -7,6 +7,8 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using System.Security;
 using System.Security.AccessControl;
 using System.Text;
@@ -391,6 +393,161 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(l => l.Replace(" ", ""))
             .FirstOrDefault(l => l.Length >= 32 && l.All(Uri.IsHexDigit))?.ToLowerInvariant() ?? "";
+    #endregion
+
+    #region Engagement scope
+    /// <summary>The authorization under which offensive tools may act on this environment. Null until an
+    /// engagement is registered; while null the gate is fail-closed and <see cref="FailIfOutOfScope"/>
+    /// refuses everything. Mirrors <see cref="CaseEvidence"/> on the blue side.</summary>
+    protected EngagementInfo? Engagement { get; private set; }
+
+    // Set once TrySetEngagement succeeds. The engagement is write-once per environment (i.e. per session), so
+    // the scope gate can't be silently widened mid-engagement — exactly like the evidence guard.
+    private bool engagementRegistered;
+
+    /// <summary>True once an engagement has been registered for this environment/session.</summary>
+    public bool EngagementRegistered => engagementRegistered;
+
+    /// <summary>The registered engagement authorization, or null when none is set. Read-only — register via
+    /// <see cref="TrySetEngagement"/>. Lets the <c>EngagementStatus</c> tool report the active scope/window.</summary>
+    public EngagementInfo? RegisteredEngagement => Engagement;
+
+    /// <summary>
+    /// Registers the engagement authorization for this environment — once. Returns true if accepted; false if
+    /// an engagement was already registered (write-once per session, exactly like evidence, so the scope gate
+    /// can't be silently widened mid-engagement). The caller (the <c>SetEngagement</c> tool) audits a refused
+    /// second attempt as a scope-violation event.
+    /// </summary>
+    public bool TrySetEngagement(EngagementInfo engagement)
+    {
+        if (engagementRegistered || engagement is null) return false;
+        Engagement = engagement;
+        engagementRegistered = true;
+        return true;
+    }
+
+    /// <summary>
+    /// Decides whether <paramref name="target"/> (an IP, hostname, CIDR, or URL a tool is about to act on)
+    /// is authorized: an inclusion must match, no exclusion may match, and the current time must be inside
+    /// the validity window. Returns a <see cref="ScopeDecision"/> carrying the reason either way.
+    /// </summary>
+    public ScopeDecision EvaluateScope(string target)
+    {
+        if (Engagement is null)
+            return new ScopeDecision(target, false, "No engagement registered (fail-closed).");
+        if (!Engagement.IsWithinWindow(DateTime.UtcNow))
+            return new ScopeDecision(target, false,
+                $"Outside the authorized window ({Engagement.ValidFromUtc:u} – {Engagement.ValidUntilUtc:u}).");
+        var excl = Engagement.Excluded.FirstOrDefault(t => Matches(t, target));
+        if (excl is not null)
+            return new ScopeDecision(target, false, $"Matched an explicit exclusion: {excl.Kind} {excl.Value}.");
+        var incl = Engagement.Included.FirstOrDefault(t => Matches(t, target));
+        return incl is not null
+            ? new ScopeDecision(target, true, $"Authorized by {incl.Kind} {incl.Value} (RoE {Engagement.RulesOfEngagementRef}).")
+            : new ScopeDecision(target, false, "No authorized scope entry matches this target.");
+    }
+
+    /// <summary>
+    /// Refuses an offensive operation that targets an unauthorized host/range/URL by throwing
+    /// <see cref="OutOfScopeException"/> (or <see cref="EngagementRequiredException"/> when nothing is
+    /// registered). Call this from any offensive toolkit/workflow path BEFORE it acts on a target — the
+    /// red-side counterpart of <see cref="FailIfEvidenceSpoliationRisk"/>.
+    /// </summary>
+    public void FailIfOutOfScope(string target)
+    {
+        if (!engagementRegistered) throw new EngagementRequiredException();
+        var decision = EvaluateScope(target);
+        if (!decision.InScope) throw new OutOfScopeException(decision);
+    }
+
+    /// <summary>
+    /// Preflight a proposed engagement before registering it: every scope entry must parse and the window must
+    /// be non-empty and not already in the past. The <c>SetEngagement</c> tool refuses registration when this is
+    /// not <see cref="EngagementSummary.Valid"/>, so the gate is never armed with an unparseable or already-expired
+    /// authorization.
+    /// </summary>
+    public EngagementSummary ValidateEngagement(EngagementInfo e)
+    {
+        var problems = new List<string>();
+        if (e is null) return new EngagementSummary(false, ["No engagement supplied."]);
+        if (e.ValidUntilUtc <= e.ValidFromUtc) problems.Add("Validity window is empty or inverted.");
+        if (e.ValidUntilUtc < DateTime.UtcNow)  problems.Add("Validity window is already in the past.");
+        if (!e.Included.Any())                  problems.Add("No in-scope targets — nothing would be authorized.");
+        foreach (var t in e.Scope ?? Array.Empty<ScopeTarget>())
+            if (!ScopeEntryParses(t)) problems.Add($"Unparseable scope entry: {t.Kind} '{t.Value}'.");
+        return new EngagementSummary(problems.Count == 0, problems.ToArray());
+    }
+
+    // host == exact (case-insensitive); cidr == IP containment; domain == suffix match incl. subdomains;
+    // url == host-of-url containment against the rule. Kept private so inclusion/exclusion use identical rules.
+    private static bool Matches(ScopeTarget rule, string target) => rule.Kind switch
+    {
+        ScopeKind.Host   => string.Equals(HostOf(rule.Value), HostOf(target), StringComparison.OrdinalIgnoreCase),
+        ScopeKind.Cidr   => IpInCidr(HostOf(target), rule.Value),
+        ScopeKind.Domain => DomainMatches(rule.Value, HostOf(target)),
+        ScopeKind.Url    => string.Equals(HostOf(target), HostOf(rule.Value), StringComparison.OrdinalIgnoreCase),
+        _ => false
+    };
+
+    // A domain rule matches the host itself and any subdomain of it (lab.local matches lab.local and a.lab.local,
+    // but not evillab.local) — anchored on a dot boundary so a suffix can't straddle a label.
+    private static bool DomainMatches(string domain, string host)
+    {
+        domain = domain.Trim('.').ToLowerInvariant();
+        host = host.Trim('.').ToLowerInvariant();
+        return host == domain || host.EndsWith("." + domain, StringComparison.Ordinal);
+    }
+
+    // Strips scheme/userinfo/port/path from a URL or bare host, leaving just the host (or the literal IP). Falls
+    // back to the trimmed input when it is not a parseable URL (e.g. a bare hostname or IP).
+    private static string HostOf(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "";
+        value = value.Trim();
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Host))
+            return uri.Host;
+        // No scheme: drop any path and any :port so "host:8080/x" → "host". Leave bracketed IPv6 literals intact.
+        var slash = value.IndexOf('/');
+        if (slash >= 0) value = value[..slash];
+        var colon = value.LastIndexOf(':');
+        if (colon > 0 && !value.Contains(']') && value.IndexOf(':') == colon) value = value[..colon];
+        return value;
+    }
+
+    // True when IP address <paramref name="target"/> falls inside CIDR <paramref name="cidr"/> (IPv4 or IPv6).
+    // A non-IP target (a hostname not yet resolved) or a malformed CIDR yields false rather than throwing — the
+    // caller treats "no match" as out-of-scope, which is the safe (fail-closed) direction.
+    private static bool IpInCidr(string target, string cidr)
+    {
+        var parts = cidr.Split('/', 2);
+        if (parts.Length != 2 || !IPAddress.TryParse(parts[0], out var network)
+            || !IPAddress.TryParse(target, out var ip) || !int.TryParse(parts[1], out var prefix))
+            return false;
+        if (network.AddressFamily != ip.AddressFamily) return false;
+
+        var netBytes = network.GetAddressBytes();
+        var ipBytes = ip.GetAddressBytes();
+        if (prefix < 0 || prefix > netBytes.Length * 8) return false;
+
+        int fullBytes = prefix / 8, remBits = prefix % 8;
+        for (int i = 0; i < fullBytes; i++)
+            if (netBytes[i] != ipBytes[i]) return false;
+        if (remBits == 0) return true;
+        int mask = (byte)(0xFF << (8 - remBits));
+        return (netBytes[fullBytes] & mask) == (ipBytes[fullBytes] & mask);
+    }
+
+    // A scope entry parses when its Value is well-formed for its Kind: a CIDR splits into a valid address +
+    // prefix; a Url is an absolute URL; Host/Domain just need a non-empty value.
+    private static bool ScopeEntryParses(ScopeTarget t) => t.Kind switch
+    {
+        _ when string.IsNullOrWhiteSpace(t.Value) => false,
+        ScopeKind.Cidr => t.Value.Split('/', 2) is [var addr, var pfx]
+                          && IPAddress.TryParse(addr, out var a) && int.TryParse(pfx, out var p)
+                          && p >= 0 && p <= a.GetAddressBytes().Length * 8,
+        ScopeKind.Url  => Uri.TryCreate(t.Value, UriKind.Absolute, out _),
+        _ => true
+    };
     #endregion
 
     #region Methods

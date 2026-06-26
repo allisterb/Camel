@@ -64,10 +64,13 @@ public class ConnectionOptions : Options
 
     [Option("port", Required = false, HelpText = "SSH port, overriding the configuration file (defaults to 22 when SSH connection details are supplied on the command line).")]
     public int? Port { get; set; }
+
+    [Option("platform", Required = false, HelpText = "Tool/connection platform profile to use (e.g. SIFT, Kali, PTF, Slingshot), overriding the config 'Platform' key. Defaults to SIFT for DFIR and Kali for PenTest. Connection overrides (--host/--user/...) apply to this profile.")]
+    public string Platform { get; set; } = String.Empty;
 }
 
 
-[Verb("server", HelpText = "Start the Camel MCP server.")]
+[Verb("server", HelpText = "Start the Camel MCP server (DFIR/blue-team; alias of dfir-server).")]
 public class ServerOptions : ConnectionOptions
 {
     [Option("http", Required = false, HelpText = "Enable the MCP server HTTP transport.")]
@@ -76,6 +79,18 @@ public class ServerOptions : ConnectionOptions
     [Option("case-dir", Required = false, HelpText = "The case directory to write the per-case audit log into (as <case-dir>/audit/). `create-case` bakes this into the generated .mcp.json so the audit trail lands in the case. Defaults to <assembly-dir>/audit when omitted.")]
     public string CaseDir { get; set; } = String.Empty;
 }
+
+
+/// <summary>The DFIR (blue-team) MCP server verb. Same options as <see cref="ServerOptions"/>; selects the
+/// DFIR tool surface (SIFT toolkits + workflows + anomaly engine + evidence guard).</summary>
+[Verb("dfir-server", HelpText = "Start the Camel DFIR (blue-team) MCP server: SIFT toolkits/workflows, the anomaly engine, and the evidence-spoliation guard (SetEvidence).")]
+public class DfirServerOptions : ServerOptions { }
+
+
+/// <summary>The PenTest (red-team) MCP server verb. Same options as <see cref="ServerOptions"/>; selects the
+/// offensive tool surface and the engagement gate (SetEngagement). Defaults the platform to Kali.</summary>
+[Verb("pentest-server", HelpText = "Start the Camel PenTest (red-team) MCP server: offensive toolkits confined by the engagement authorization+scope gate (SetEngagement). Defaults --platform to Kali.")]
+public class PenTestServerOptions : ServerOptions { }
 
 
 [Verb("preserve-chatlog", Hidden = true, HelpText = "Internal Claude Code SessionEnd hook: read the hook payload from stdin and copy the client chat transcript into the case (analysis/chatlogs/). Wired into each case's .claude/settings.json by create-case.")]
@@ -100,4 +115,7 @@ public class CreateCaseOptions : ConnectionOptions
 
     [Value(1, MetaName = "case-id", Required = true, HelpText = "Case id — used as the subdirectory name, the SetCaseId value, and the audit log name (letters, digits, dot, underscore, dash).")]
     public string CaseId { get; set; } = String.Empty;
+
+    [Option("type", Required = false, HelpText = "Investigation type: DFIR (blue-team; default) or PenTest (red-team). Selects the case's CLAUDE.md brief and the MCP server verb baked into .mcp.json (dfir-server vs pentest-server).")]
+    public InvestigationType Type { get; set; } = InvestigationType.DFIR;
 }

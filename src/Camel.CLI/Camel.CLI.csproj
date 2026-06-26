@@ -32,6 +32,7 @@
        assembly regardless of the working directory. LogicalName is the manifest resource name. -->
   <ItemGroup>
     <EmbeddedResource Include="CaseTemplate\CLAUDE.md" LogicalName="Camel.CLI.CaseTemplate.CLAUDE.md" />
+    <EmbeddedResource Include="CaseTemplate\CLAUDE.pentest.md" LogicalName="Camel.CLI.CaseTemplate.CLAUDE.pentest.md" />
     <EmbeddedResource Include="CaseTemplate\mcp.json" LogicalName="Camel.CLI.CaseTemplate.mcp.json" />
     <EmbeddedResource Include="CaseTemplate\settings.json" LogicalName="Camel.CLI.CaseTemplate.settings.json" />
     <EmbeddedResource Include="CaseTemplate\report.html" LogicalName="Camel.CLI.CaseTemplate.report.html" />

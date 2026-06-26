@@ -17,6 +17,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Camel.Toolkits\Camel.Toolkits.csproj" />
     <ProjectReference Include="..\..\src\Camel.DFIR.Toolkits\Camel.DFIR.Toolkits.csproj" />
+    <ProjectReference Include="..\..\src\Camel.PenTest.Toolkits\Camel.PenTest.Toolkits.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -12,11 +12,47 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 
 using ModelContextProtocol.Server;
 
+/// <summary>Which investigation a server launch composes: the blue (DFIR) or red (PenTest) tool surface.
+/// Selected by the launching CLI verb (dfir-server / pentest-server), not per session.</summary>
+public enum InvestigationType
+{
+    DFIR = 0,
+    PenTest = 1,
+}
+
 public class CamelMCPServer : Runtime
 {
     const string CorsPolicyName = "CamelMcpCors";
-   
-    public static async Task RunStdioAsync(IConfigurationRoot config)
+
+    // Registers the investigation's MCP tool surface and enforces its platform capability before serving.
+    // WithTools<T> discovers [McpServerTool] methods from typeof(T), so the *concrete* type must be passed
+    // (an abstract CamelMCPTools-typed argument would miss the subclass tools, e.g. SetEvidence/SetEngagement).
+    // The generic param keeps the static type concrete through this helper.
+    static void RegisterAndEnforce<T>(IMcpServerBuilder mcp, T tools, IConfigurationRoot config)
+        where T : CamelMCPTools
+    {
+        EnforceCapabilities(tools, config);   // refuse a zero-tool platform/investigation combo before serving
+        mcp.WithTools(tools);
+    }
+
+    /// <summary>
+    /// Runs the launch-time platform capability check for the selected investigation and logs the per-toolkit
+    /// summary. Refuses to start (throws) when no toolkit has any tool on the active platform — e.g. a PenTest
+    /// server pointed at a SIFT profile — with a directive message; warns and continues on a partial (degraded)
+    /// combo so legitimate cases (DFIR on Kali) still run. See docs/PenTestEnvironments.md part 1.
+    /// </summary>
+    static void EnforceCapabilities(CamelMCPTools tools, IConfigurationRoot config)
+    {
+        var report = tools.CheckCapabilities(config);
+        Info("Platform '{Platform}' capability check for {Investigation}:{NewLine}{Summary}",
+            report.Platform, tools.InvestigationName, Environment.NewLine, report.Summary());
+        if (!report.AnyAvailable)
+            throw new InvalidOperationException(report.RefusalMessage(tools.InvestigationName));
+        foreach (var u in report.Unavailable)
+            Warn("Toolkit '{Toolkit}' has no tools on platform '{Platform}' and will be inert.", u.Toolkit, report.Platform);
+    }
+
+    public static async Task RunStdioAsync(IConfigurationRoot config, InvestigationType investigation = InvestigationType.DFIR)
     {
         var builder = Host.CreateEmptyApplicationBuilder(null);
         // One environment per MCP session, created lazily and swept when idle.
@@ -27,12 +63,12 @@ public class CamelMCPServer : Runtime
             .Logging.AddProvider(loggerProvider)
             .SetMinimumLevel(LogLevel.Trace);
 
-        var mcpServices = builder
-            .Services
-            .AddMcpServer()
-            .WithTools(new DFIRMCPTools(registry))
-            .WithResources<CamelResources>()
-            .WithStdioServerTransport();
+        var mcp = builder.Services.AddMcpServer();
+        if (investigation == InvestigationType.PenTest)
+            RegisterAndEnforce(mcp, new PenTestMCPTools(registry), config);
+        else
+            RegisterAndEnforce(mcp, new DFIRMCPTools(registry), config);
+        mcp.WithResources<CamelResources>().WithStdioServerTransport();
 
         var app = builder.Build();
         app.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(() =>
@@ -44,14 +80,15 @@ public class CamelMCPServer : Runtime
         await app.RunAsync();
     }
 
-    public static async Task RunHttpAsync(IConfigurationRoot config) => await BuildHttpApp(config).RunAsync();
+    public static async Task RunHttpAsync(IConfigurationRoot config, InvestigationType investigation = InvestigationType.DFIR)
+        => await BuildHttpApp(config, investigation).RunAsync();
 
     /// <summary>
     /// Builds the fully-configured HTTP MCP <see cref="WebApplication"/> (DI, CORS, transport, endpoints,
     /// lifecycle) without starting it. <see cref="RunHttpAsync"/> just runs the result; integration tests
     /// host it themselves (e.g. on an ephemeral port) and connect a real MCP client.
     /// </summary>
-    public static WebApplication BuildHttpApp(IConfigurationRoot config)
+    public static WebApplication BuildHttpApp(IConfigurationRoot config, InvestigationType investigation = InvestigationType.DFIR)
     {
         var builder = WebApplication.CreateBuilder();
         // One environment per MCP session, created lazily and swept when idle.
@@ -80,10 +117,12 @@ public class CamelMCPServer : Runtime
             });
         });
 
-        var mcpServices = builder
-            .Services
-            .AddMcpServer()
-            .WithTools(new DFIRMCPTools(registry))
+        var mcp = builder.Services.AddMcpServer();
+        if (investigation == InvestigationType.PenTest)
+            RegisterAndEnforce(mcp, new PenTestMCPTools(registry), config);
+        else
+            RegisterAndEnforce(mcp, new DFIRMCPTools(registry), config);
+        var mcpServices = mcp
             .WithResources<CamelResources>()
             .WithHttpTransport(options =>
             {
