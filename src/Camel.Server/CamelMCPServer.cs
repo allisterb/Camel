@@ -35,6 +35,20 @@ public class CamelMCPServer : Runtime
         mcp.WithTools(tools);
     }
 
+    // Registers the investigation's SDK reference resources (blue DFIRResources / red PenTestResources) under the
+    // shared camel://sdk/* URIs, so the agent reads the reference for the toolkits THIS server actually binds.
+    static void RegisterResources(IMcpServerBuilder mcp, InvestigationType investigation)
+    {
+        if (investigation == InvestigationType.PenTest)
+        {
+            mcp.WithResources<PenTestResources>();
+        }
+        else
+        {
+            mcp.WithResources<DFIRResources>();
+        }
+    }
+
     /// <summary>
     /// Runs the launch-time platform capability check for the selected investigation and logs the per-toolkit
     /// summary. Refuses to start (throws) when no toolkit has any tool on the active platform — e.g. a PenTest
@@ -68,7 +82,8 @@ public class CamelMCPServer : Runtime
             RegisterAndEnforce(mcp, new PenTestMCPTools(registry), config);
         else
             RegisterAndEnforce(mcp, new DFIRMCPTools(registry), config);
-        mcp.WithResources<CamelResources>().WithStdioServerTransport();
+        RegisterResources(mcp, investigation);
+        mcp.WithStdioServerTransport();
 
         var app = builder.Build();
         app.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(() =>
@@ -122,8 +137,8 @@ public class CamelMCPServer : Runtime
             RegisterAndEnforce(mcp, new PenTestMCPTools(registry), config);
         else
             RegisterAndEnforce(mcp, new DFIRMCPTools(registry), config);
+        RegisterResources(mcp, investigation);
         var mcpServices = mcp
-            .WithResources<CamelResources>()
             .WithHttpTransport(options =>
             {
                 // Use stateful sessions so the Streamable HTTP transport can

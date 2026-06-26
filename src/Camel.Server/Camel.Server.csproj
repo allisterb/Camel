@@ -19,6 +19,9 @@
     <EmbeddedResource Include="..\..\docs\Camel.core.md" LogicalName="Camel.core.md" />
     <EmbeddedResource Include="..\..\docs\Camel.schema.md" LogicalName="Camel.schema.md" />
     <EmbeddedResource Include="..\..\docs\Camel.discipline.md" LogicalName="Camel.discipline.md" />
+    <EmbeddedResource Include="..\..\docs\Camel.pentest.core.md" LogicalName="Camel.pentest.core.md" />
+    <EmbeddedResource Include="..\..\docs\Camel.pentest.schema.md" LogicalName="Camel.pentest.schema.md" />
+    <EmbeddedResource Include="..\..\docs\Camel.pentest.discipline.md" LogicalName="Camel.pentest.discipline.md" />
   </ItemGroup>
 
   <!-- Expose internal helpers (e.g. RunWithHeartbeatAsync) to the server test project. -->
