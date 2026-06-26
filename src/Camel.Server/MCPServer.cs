@@ -273,7 +273,7 @@ public class CamelMCPTools : Runtime
           .SetValue("WindowsAnalysisWorkflow", session.WorkflowsApi.WindowsAnalysis)
           .SetValue("TimelineAnalysisWorkflow", session.WorkflowsApi.TimelineAnalysis)
           .SetValue("AntiForensicsAnalysisWorkflow", session.WorkflowsApi.AntiForensicsAnalysis)
-          .SetValue("WebServerWorkflow", session.WorkflowsApi.WebServer)
+          .SetValue("WebServerAnalysisWorkflow", session.WorkflowsApi.WebServer)
           .SetValue("LinuxAnalysisWorkflow", session.WorkflowsApi.LinuxAnalysis)
           .SetValue("PacketAnalysisWorkflow", session.WorkflowsApi.PacketAnalysis);
 

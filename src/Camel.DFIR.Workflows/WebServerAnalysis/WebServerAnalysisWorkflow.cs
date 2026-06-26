@@ -22,9 +22,9 @@ using Camel.Workflows.Models;
 /// <item><see cref="ScanWebRootForWebshellsAsync"/> — YARA-scans the web root with the bundled web-shell pack.</item>
 /// </list>
 /// </summary>
-public class WebServerWorkflow : Workflow
+public class WebServerAnalysisWorkflow : Workflow
 {
-    public WebServerWorkflow(CamelToolkitsApi api) : base(api) { }
+    public WebServerAnalysisWorkflow(CamelToolkitsApi api) : base(api) { }
 
     // The bundled Yara-Rules community pack ships a web-shell aggregator index alongside the master index.
     private const string WebshellRulesIndex = YaraToolkit.RulesRepoPath + "/webshells_index.yar";

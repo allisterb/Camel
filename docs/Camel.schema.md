@@ -1313,7 +1313,7 @@ types are defined once (in the toolkit that owns them) and referenced by name el
 
 ---
 
-## WebServerWorkflow
+## WebServerAnalysisWorkflow
 
 ### WebServerLogReport Schema
 ```json

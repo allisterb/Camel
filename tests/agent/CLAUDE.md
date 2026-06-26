@@ -155,7 +155,7 @@ via known signatures, keywords, and "evidence of…" categories), and anti-foren
 - PowerShell: `AnalyzePowerShellAsync` (4104 script blocks, decodes encoded payloads).
 - Disk handling, recovery, filesystem timeline: `DiskAnalysisWorkflow.*` (mount/verify/recover/timeline) and the
   `DiskAnalysisToolkit` / `WindowsAnalysisToolkit` for lower-level access.
-- Web-server intrusion (SQLi → webshell): `WebServerWorkflow.AnalyzeWebServerLogsAsync`,
+- Web-server intrusion (SQLi → webshell): `WebServerAnalysisWorkflow.AnalyzeWebServerLogsAsync`,
   `ScanWebRootForWebshellsAsync`.
 
 ---

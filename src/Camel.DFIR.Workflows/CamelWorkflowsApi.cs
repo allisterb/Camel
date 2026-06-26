@@ -11,7 +11,7 @@ public class CamelWorkflowsApi : Runtime
         WindowsAnalysis = new WindowsAnalysisWorkflow(toolkitsApi);
         TimelineAnalysis = new TimelineAnalysisWorkflow(toolkitsApi);
         AntiForensicsAnalysis = new AntiForensicsAnalysisWorkflow(toolkitsApi);
-        WebServer = new WebServerWorkflow(toolkitsApi);
+        WebServer = new WebServerAnalysisWorkflow(toolkitsApi);
         LinuxAnalysis = new LinuxAnalysisWorkflow(toolkitsApi);
         PacketAnalysis = new PacketAnalysisWorkflow(toolkitsApi);
     }
@@ -22,7 +22,7 @@ public class CamelWorkflowsApi : Runtime
     public readonly WindowsAnalysisWorkflow WindowsAnalysis;
     public readonly TimelineAnalysisWorkflow TimelineAnalysis;
     public readonly AntiForensicsAnalysisWorkflow AntiForensicsAnalysis;
-    public readonly WebServerWorkflow WebServer;
+    public readonly WebServerAnalysisWorkflow WebServer;
     public readonly LinuxAnalysisWorkflow LinuxAnalysis;
     public readonly PacketAnalysisWorkflow PacketAnalysis;
     #endregion

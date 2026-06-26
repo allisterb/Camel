@@ -41,7 +41,7 @@ Count of public instance methods returning `Task<WorkflowResult<T>>`, grouped by
 | LinuxAnalysisWorkflow | 10 |
 | PacketAnalysisWorkflow | 8 |
 | AntiForensicsAnalysisWorkflow | 2 |
-| WebServerWorkflow | 2 |
+| WebServerAnalysisWorkflow | 2 |
 | **Total** | **82** |
 
 Notes:

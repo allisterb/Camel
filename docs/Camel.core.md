@@ -528,7 +528,7 @@ log(AnomalyDetectionToolkit.Summarize(report, 25));
 Workflows codify multi-step DFIR procedures over the toolkits. **Every workflow method is async and returns
 `WorkflowResult<T>`** (access the payload via `result.Result`). The workflow objects are `DiskAnalysisWorkflow`,
 `MemoryAnalysisWorkflow`, `WindowsAnalysisWorkflow`, `TimelineAnalysisWorkflow`, `AntiForensicsAnalysisWorkflow`,
-`WebServerWorkflow`, `LinuxAnalysisWorkflow`, and `PacketAnalysisWorkflow`. The JSON schema for each payload type
+`WebServerAnalysisWorkflow`, `LinuxAnalysisWorkflow`, and `PacketAnalysisWorkflow`. The JSON schema for each payload type
 named below is in the `camel-sdk-schema` resource.
 
 ---
@@ -672,7 +672,7 @@ NTFS-metadata anti-forensics detection (FOR508.5).
 
 ---
 
-## WebServerWorkflow
+## WebServerAnalysisWorkflow
 
 Triage a web server compromised through its application (SQLi → webshell → foothold). Operates on log files and
 the web root on a mounted volume.

@@ -213,7 +213,7 @@ via known signatures, keywords, and "evidence of…" categories), and anti-foren
 - File carving & deleted-file recovery (FOR508.5): `DiskAnalysisWorkflow.CarveUnallocatedSpaceAsync` (blkls→foremost),
   `CarveFilesAsync`, `ExtractForensicFeaturesAsync` (bulk_extractor emails/URLs/CCNs), `ListDeletedFilesAsync` +
   `RecoverDeletedFileAsync(image, inode, out)`. Toolkit primitives: `Blkls`/`Foremost`/`PhotoRec`/`BulkExtractor`/`Extundelete`.
-- Web-server intrusion (SQLi → webshell): `WebServerWorkflow.AnalyzeWebServerLogsAsync`,
+- Web-server intrusion (SQLi → webshell): `WebServerAnalysisWorkflow.AnalyzeWebServerLogsAsync`,
   `ScanWebRootForWebshellsAsync`.
 
 ### C. Linux host analysis (mounted Linux root)

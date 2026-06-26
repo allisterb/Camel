@@ -14,7 +14,7 @@ public class WebServerWorkflowTests : TestsRuntime
         var sshconfig = LoadConfigFile("sshtestappsettings.json");
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         api = new CamelToolkitsApi(sshenv, sshconfig);
-        workflow = new WebServerWorkflow(api);
+        workflow = new WebServerAnalysisWorkflow(api);
         EvidenceMounts.EnsureAll(sshenv);   // self-heal the /mnt/c4 (Ali Hadi web server) evidence mount on a reset VM
     }
 
@@ -35,8 +35,8 @@ public class WebServerWorkflowTests : TestsRuntime
 
         // Both the injection itself and the resulting command-execution stub are categorised.
         var cats = r.Result.CategoryBreakdown.Select(c => c.Category).ToHashSet();
-        Assert.Contains(WebServerWorkflow.CatSqli, cats);
-        Assert.Contains(WebServerWorkflow.CatWebshellRce, cats);
+        Assert.Contains(WebServerAnalysisWorkflow.CatSqli, cats);
+        Assert.Contains(WebServerAnalysisWorkflow.CatWebshellRce, cats);
 
         // The decisive result: the hex-smuggled INTO OUTFILE payload decodes to the injected PHP backdoor — the
         // "shellcode" recovered straight out of the log, never present on disk as a standalone file.
@@ -44,8 +44,8 @@ public class WebServerWorkflowTests : TestsRuntime
         Assert.Contains(r.Result.DecodedPayloads, d => d.Decoded.Contains("<?php", StringComparison.OrdinalIgnoreCase));
 
         // Every detailed finding is internally consistent: at least one category, and each is a known one.
-        string[] valid = [WebServerWorkflow.CatScanner, WebServerWorkflow.CatSqli, WebServerWorkflow.CatWebshellRce,
-                          WebServerWorkflow.CatFileInclusion, WebServerWorkflow.CatXss];
+        string[] valid = [WebServerAnalysisWorkflow.CatScanner, WebServerAnalysisWorkflow.CatSqli, WebServerAnalysisWorkflow.CatWebshellRce,
+                          WebServerAnalysisWorkflow.CatFileInclusion, WebServerAnalysisWorkflow.CatXss];
         Assert.All(r.Result.Findings, f =>
         {
             Assert.NotEmpty(f.Categories);
@@ -97,5 +97,5 @@ public class WebServerWorkflowTests : TestsRuntime
 
     AuditEnvironment sshenv;
     CamelToolkitsApi api;
-    WebServerWorkflow workflow;
+    WebServerAnalysisWorkflow workflow;
 }
