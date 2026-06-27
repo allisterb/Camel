@@ -497,6 +497,23 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         if (!decision.InScope) throw new OutOfScopeException(decision);
     }
 
+    /// <summary>True when an engagement is registered AND it permits disclosing client targets to external
+    /// services (see <see cref="EngagementInfo.AllowExternalTargetDisclosure"/>). Target-keyed knowledge-base
+    /// facades consult this before sending a client asset to a third party.</summary>
+    public bool ExternalDisclosureAllowed => engagementRegistered && Engagement is { AllowExternalTargetDisclosure: true };
+
+    /// <summary>
+    /// Refuses a target-keyed external query (one that would send a client asset to a third-party intelligence
+    /// service) unless the registered engagement permits external disclosure — throwing
+    /// <see cref="ExternalDisclosureForbiddenException"/> (or <see cref="EngagementRequiredException"/> when nothing
+    /// is registered). Call it from a target-keyed KB facade (e.g. Shodan) alongside <see cref="FailIfOutOfScope"/>.
+    /// </summary>
+    public void FailIfExternalDisclosureForbidden()
+    {
+        if (!engagementRegistered) throw new EngagementRequiredException();
+        if (!ExternalDisclosureAllowed) throw new ExternalDisclosureForbiddenException();
+    }
+
     /// <summary>
     /// Preflight a proposed engagement before registering it: every scope entry must parse and the window must
     /// be non-empty and not already in the past. The <c>SetEngagement</c> tool refuses registration when this is

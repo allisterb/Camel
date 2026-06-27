@@ -291,13 +291,29 @@ const sh = await Shodan.HostAsync("203.0.113.5");
 
 ---
 
-## Local CLI vs remote HTTP
+## Transports: HTTP, CLI, and file (raw data) — same provenance
 
-Some "knowledge" lives in **local tools**, not HTTP APIs: `searchsploit` (offline Exploit-DB) and `msfconsole
-search` run on the platform through the `AuditEnvironment`. Those stay in the `VulnScan`/`Exploitation` toolkits;
-the KB subsystem is for genuine **remote** intelligence. The *capability* ("find exploits for X") may be served by
-either, and the workflow layer can prefer whichever is available/configured — but the two paths keep their natural
-homes (CLI → toolkit + `command` audit; HTTP → KB facade + `kb-query` audit).
+A knowledge base is an *intelligence source you query*, grouped by **function**, not by how the bytes arrive. The
+provenance/cache/audit/map pipeline is transport-agnostic; only the **fetch** differs. So a KB declares a
+`Transport`:
+
+- **`Http`** (default) — a GET against `BaseUrl`, with auth injection. (NVD, KEV, EPSS, Shodan.)
+- **`Cli`** — run `Command` on the platform (local/SSH) via the `AuditEnvironment` and capture stdout. This is how
+  free, offline, no-cloud sources like **`searchsploit`** (Exploit-DB) join the KB layer rather than a toolkit. A
+  CLI lookup is **doubly recorded** — the `kb-query` provenance envelope *and* the environment's own `command`
+  audit event — so it gets richer provenance than HTTP, not less. `searchsploit --json` gives clean structured
+  output; a text-only tool (e.g. `msfconsole search`) uses a raw-text map instead.
+- **`File`** — read a data file (path in `Command`) on the platform, e.g. a local CSV index. (A *remote* CSV is
+  just `Http` with a raw-text/CSV map.)
+
+This is the answer to "users may not have cloud API access": the CLI/file transports are free and offline, and
+they carry the exact same `KbResult<T>` provenance + `kb-query` audit as the HTTP sources, so a finding cites them
+identically. The client gains an optional `AuditEnvironment` (already on the session) for the CLI/File fetch; the
+core stays env-agnostic for HTTP-only use.
+
+> CLI sources are *local* (searchsploit, a CSV) and disclose nothing to a third party, so they are knowledge-class
+> with no scope/disclosure gate. A CLI that itself reaches out to a remote service would set `DisclosesTarget` and
+> be gated like any target-keyed source.
 
 ---
 

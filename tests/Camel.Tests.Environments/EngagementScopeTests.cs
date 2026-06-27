@@ -160,4 +160,31 @@ public class EngagementScopeTests
     {
         Assert.Throws<EngagementRequiredException>(() => new LocalEnvironment().FailIfRangeOutOfScope("10.0.5.0/24"));
     }
+
+    // ---- External-disclosure gate (target-keyed KB queries, e.g. Shodan) ----
+
+    [Fact]
+    public void Disclosure_Forbidden_ByDefault()
+    {
+        var env = Armed(new ScopeTarget(ScopeKind.Host, "10.0.0.5"));   // default engagement: disclosure NOT allowed
+        Assert.False(env.ExternalDisclosureAllowed);
+        Assert.Throws<ExternalDisclosureForbiddenException>(() => env.FailIfExternalDisclosureForbidden());
+    }
+
+    [Fact]
+    public void Disclosure_Allowed_WhenEngagementOptsIn()
+    {
+        var env = new LocalEnvironment();
+        env.TrySetEngagement(new EngagementInfo("eng-d", "Acme", "A", "RoE",
+            DateTime.UtcNow.AddHours(-1), DateTime.UtcNow.AddHours(1),
+            [new ScopeTarget(ScopeKind.Host, "10.0.0.5")], AllowExternalTargetDisclosure: true));
+        Assert.True(env.ExternalDisclosureAllowed);
+        env.FailIfExternalDisclosureForbidden();   // no throw
+    }
+
+    [Fact]
+    public void Disclosure_FailClosed_NoEngagement()
+    {
+        Assert.Throws<EngagementRequiredException>(() => new LocalEnvironment().FailIfExternalDisclosureForbidden());
+    }
 }

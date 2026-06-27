@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Camel.Runtime\Camel.Runtime.csproj" />
+    <ProjectReference Include="..\Camel.Environments\Camel.Environments.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Camel.Intel\Camel.Intel.csproj" />
+    <ProjectReference Include="..\..\src\Camel.Environments\Camel.Environments.csproj" />
   </ItemGroup>
 
   <ItemGroup>

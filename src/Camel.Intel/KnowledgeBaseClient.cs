@@ -13,13 +13,17 @@ using System.Threading.Tasks;
 
 using Microsoft.Extensions.Configuration;
 
+using Camel.Environments;
+
 /// <summary>
 /// The generic client for external intelligence sources: it does everything that is the same across knowledge
-/// bases — request build + auth injection, rate limiting, response caching, and uniform <b>provenance auditing</b>
-/// — so adding a KB is "a config entry + a thin typed facade". Every call returns a <see cref="KbResult{T}"/>
-/// (source, redacted query, retrieval time, response digest) and emits a <c>kb-query</c> audit event attributed
-/// to the ambient case/execution; the resolved auth key is injected into the request but never appears in the
-/// audited query, the result, or the trail. Investigation-neutral. See <c>docs/KnowledgeBases.md</c>.
+/// bases — rate limiting, response caching, and uniform <b>provenance auditing</b> — regardless of <i>how</i> the
+/// raw response is obtained. The transport (<see cref="KbTransport"/>) is the only thing that varies: an HTTP GET
+/// (with auth injection), a CLI command run on the platform (local/SSH via the <see cref="AuditEnvironment"/>), or
+/// a file read. Every call returns a provenance-stamped <see cref="KbResult{T}"/> and emits a <c>kb-query</c>
+/// audit event attributed to the ambient case/execution; a resolved auth key is injected into the request but
+/// never appears in the audited query, the result, or the trail. Investigation-neutral. See
+/// <c>docs/KnowledgeBases.md</c>.
 /// </summary>
 public class KnowledgeBaseClient : Runtime
 {
@@ -29,21 +33,27 @@ public class KnowledgeBaseClient : Runtime
     private static readonly HttpClient SharedHttp = new() { Timeout = TimeSpan.FromSeconds(30) };
 
     private readonly HttpClient http;
+    private readonly AuditEnvironment? env;                                  // for Cli/File transports (null = HTTP-only)
     private readonly ISecretsProvider secrets;
     private readonly IReadOnlyDictionary<string, KnowledgeBase> bases;
     private readonly ConcurrentDictionary<string, CacheEntry> cache = new();
     private readonly ConcurrentDictionary<string, DateTime> nextCallAfter = new();   // per-source rate-limit clock
     private readonly object rateLock = new();
 
-    public KnowledgeBaseClient(IConfigurationRoot config, ISecretsProvider? secrets = null, HttpClient? http = null)
+    public KnowledgeBaseClient(IConfigurationRoot config, ISecretsProvider? secrets = null,
+        HttpClient? http = null, AuditEnvironment? env = null)
     {
         this.secrets = secrets ?? new DefaultSecretsProvider(config);
         this.http = http ?? SharedHttp;
+        this.env = env;
         bases = LoadBases(config);
     }
 
     // A cached raw response: the body plus the provenance (digest + original fetch time) a cache hit must reproduce.
     private sealed record CacheEntry(string Body, string Digest, DateTime RetrievedUtc, DateTime ExpiresUtc);
+
+    // The outcome of one transport fetch: the raw response body, success, and a short status label for the trail.
+    private sealed record FetchResult(string Body, bool Ok, string Status);
     #endregion
 
     #region Availability
@@ -54,80 +64,135 @@ public class KnowledgeBaseClient : Runtime
     public bool IsConfigured(string source) => bases.ContainsKey(source);
 
     /// <summary>True if <paramref name="source"/> is configured AND, when it needs a key, that key resolves — the
-    /// KB analogue of <c>Tool.Available</c>. A query to an unavailable KB returns a null result and audits it.</summary>
+    /// KB analogue of <c>Tool.Available</c>. (For a CLI source this does not probe whether the command is installed;
+    /// a missing command surfaces as a failed query, audited, like any other transport error.)</summary>
     public bool IsAvailable(string source) =>
         bases.TryGetValue(source, out var kb) && (!kb.RequiresKey || !string.IsNullOrWhiteSpace(secrets.Resolve(kb.KeyRef)));
     #endregion
 
-    #region Query
+    #region Query — HTTP
     /// <summary>
-    /// Issues a GET against knowledge base <paramref name="source"/> at <paramref name="path"/> with
-    /// <paramref name="query"/> params, maps the JSON response with <paramref name="map"/>, and wraps it in a
-    /// provenance-stamped <see cref="KbResult{T}"/>. Auth is injected from the configured secret (never into the
-    /// audited query). <paramref name="disclosedTarget"/>, when set, marks this as a target-keyed query and adds a
-    /// <c>kb-disclosure</c> event recording the client asset sent to the third party (the gating itself is the
-    /// caller/facade's job). Returns a failed result (null payload) on an unknown/unavailable KB, a transport
-    /// error, or an HTTP error — auditing each.
+    /// HTTP GET against <paramref name="source"/> at <paramref name="path"/> with <paramref name="query"/> params,
+    /// mapping the JSON response with <paramref name="map"/>. Auth is injected from the configured secret (never
+    /// into the audited query). <paramref name="disclosedTarget"/>, when set, marks this a target-keyed query and
+    /// adds a <c>kb-disclosure</c> event. Returns a failed result on an unknown/unavailable KB, transport error, or
+    /// HTTP error — auditing each.
     /// </summary>
-    public async Task<KbResult<T>> QueryAsync<T>(
-        string source, string path, IReadOnlyDictionary<string, string> query,
-        Func<JsonElement, T?> map, string? disclosedTarget = null)
-    {
-        var queryId = Guid.NewGuid().ToString("N")[..8];
-        // The AUDITED query is the path + user params only — the auth key is injected separately and never logged.
-        var auditedQuery = BuildQueryString(path, query);
+    public Task<KbResult<T>> QueryAsync<T>(string source, string path, IReadOnlyDictionary<string, string> query,
+        Func<JsonElement, T?> map, string? disclosedTarget = null) =>
+        QueryRawAsync<T>(source, path, query, raw => MapJson(raw, map), disclosedTarget);
 
-        if (!bases.TryGetValue(source, out var kb))
+    /// <summary>As <see cref="QueryAsync"/> but the response body is mapped as raw text (for CSV / non-JSON HTTP
+    /// sources). <paramref name="map"/> receives the raw response string.</summary>
+    public Task<KbResult<T>> QueryRawAsync<T>(string source, string path, IReadOnlyDictionary<string, string> query,
+        Func<string, T?> map, string? disclosedTarget = null)
+    {
+        var queryId = NewId();
+        var label = BuildQueryString(path, query);   // audited query: path + params, never the auth key
+        if (!TryPrepare<T>(source, label, queryId, out var kb, out var key, out var failed)) return Task.FromResult(failed);
+        if (kb.Transport != KbTransport.Http)
+            return Task.FromResult(NotThisTransport<T>(source, kb, "HTTP", label, queryId));
+        return RunAsync(source, kb, queryId, label, () => HttpFetch(kb, path, query, key), map, disclosedTarget);
+    }
+    #endregion
+
+    #region Query — CLI / File
+    /// <summary>
+    /// Runs the CLI source <paramref name="source"/>'s command with <paramref name="args"/> on the platform
+    /// (local/SSH via the <see cref="AuditEnvironment"/>) and maps its stdout as raw text. The audited query is the
+    /// command line; the underlying execution ALSO emits the environment's own <c>command</c> audit event, so a CLI
+    /// KB lookup is doubly recorded. Returns a failed result if the source is not CLI / no environment is available
+    /// / the command failed.
+    /// </summary>
+    public Task<KbResult<T>> QueryCliAsync<T>(string source, string args, Func<string, T?> map,
+        string? disclosedTarget = null)
+    {
+        var queryId = NewId();
+        if (!TryPrepare<T>(source, args, queryId, out var kb, out _, out var failed)) return Task.FromResult(failed);
+        if (kb.Transport != KbTransport.Cli)
+            return Task.FromResult(NotThisTransport<T>(source, kb, "CLI", args, queryId));
+        var label = $"{kb.Command} {args}".Trim();   // the audited query is the command line
+        return RunAsync(source, kb, queryId, label, () => CliFetch(kb, args), map, disclosedTarget);
+    }
+
+    /// <summary>As <see cref="QueryCliAsync"/> but the command's stdout is parsed as JSON (e.g. <c>searchsploit
+    /// --json</c>) and mapped with <paramref name="map"/>.</summary>
+    public Task<KbResult<T>> QueryCliJsonAsync<T>(string source, string args, Func<JsonElement, T?> map,
+        string? disclosedTarget = null) =>
+        QueryCliAsync<T>(source, args, raw => MapJson(raw, map), disclosedTarget);
+
+    /// <summary>Reads the file source <paramref name="source"/>'s configured file (path in its <c>Command</c>) on
+    /// the platform and maps its contents as raw text — for a local data file (e.g. a CSV index).</summary>
+    public Task<KbResult<T>> QueryFileAsync<T>(string source, Func<string, T?> map)
+    {
+        var queryId = NewId();
+        if (!TryPrepare<T>(source, source, queryId, out var kb, out _, out var failed)) return Task.FromResult(failed);
+        if (kb.Transport != KbTransport.File)
+            return Task.FromResult(NotThisTransport<T>(source, kb, "File", kb.Command, queryId));
+        return RunAsync(source, kb, queryId, kb.Command, () => FileFetch(kb), map, disclosedTarget: null);
+    }
+    #endregion
+
+    #region Pipeline
+    // Resolves the KB and its key (the availability gate). Returns false + a failed result (audited) when the source
+    // is unknown or a required key is unset. The transport-specific public methods then build the fetch.
+    private bool TryPrepare<T>(string source, string label, string queryId,
+        out KnowledgeBase kb, out string? key, out KbResult<T> failed)
+    {
+        key = null; failed = default!;
+        if (!bases.TryGetValue(source, out kb!))
         {
             AuditEvent("kb-unavailable", "kb-query {QueryId} to unknown source {Source}", queryId, source);
             Error($"Knowledge base '{source}' is not configured.");
-            return KbResult<T>.Failed(source, auditedQuery, queryId);
+            failed = KbResult<T>.Failed(source, label, queryId);
+            return false;
         }
-
-        // Resolve the key whenever one is configured (so an OPTIONAL key is used when present); only refuse the
-        // call when the key is REQUIRED and absent.
-        string? key = kb.UsesKey ? secrets.Resolve(kb.KeyRef) : null;
+        // Resolve the key when one is configured (so an OPTIONAL key is used when present); only refuse when REQUIRED.
+        key = kb.UsesKey ? secrets.Resolve(kb.KeyRef) : null;
         if (kb.RequiresKey && string.IsNullOrWhiteSpace(key))
         {
             AuditEvent("kb-unavailable", "kb-query {QueryId} to {Source}: secret {KeyRef} is not set",
                 queryId, source, kb.KeyRef);
             Error($"Knowledge base '{source}' is unavailable: secret '{kb.KeyRef}' is not set.");
-            return KbResult<T>.Failed(source, auditedQuery, queryId);
+            failed = KbResult<T>.Failed(source, label, queryId);
+            return false;
         }
+        return true;
+    }
 
-        // Cache hit: reproduce the ORIGINAL provenance (retrieval time + digest), flagged FromCache.
-        var cacheKey = source + "|" + auditedQuery;
+    private KbResult<T> NotThisTransport<T>(string source, KnowledgeBase kb, string expected, string label, string queryId)
+    {
+        Error($"Knowledge base '{source}' is a {kb.Transport} source, not {expected}.");
+        return KbResult<T>.Failed(source, label, queryId);
+    }
+
+    // The shared pipeline: cache → fetch (via the transport closure) → digest → provenance audit → map → KbResult.
+    // Transport-agnostic; only <paramref name="fetch"/> differs between HTTP / CLI / File.
+    private async Task<KbResult<T>> RunAsync<T>(string source, KnowledgeBase kb, string queryId, string label,
+        Func<Task<FetchResult>> fetch, Func<string, T?> map, string? disclosedTarget)
+    {
+        var cacheKey = source + "|" + label;
         if (kb.CacheTtlMinutes > 0 && cache.TryGetValue(cacheKey, out var hit) && hit.ExpiresUtc > DateTime.UtcNow)
         {
-            AuditEvent("kb-query",
-                "kb-query {QueryId} {Source} {Query} (cache hit) digest={Digest} retrieved={Retrieved:u}",
-                queryId, source, auditedQuery, hit.Digest, hit.RetrievedUtc);
-            return MapEntry(hit, true);
+            AuditEvent("kb-query", "kb-query {QueryId} {Source} {Query} (cache hit) digest={Digest} retrieved={Retrieved:u}",
+                queryId, source, label, hit.Digest, hit.RetrievedUtc);
+            return Map(hit, true);
         }
 
         await ThrottleAsync(source, kb.RateLimitPerMinute);
 
-        var url = BuildUrl(kb, path, query, key);
         var sw = Stopwatch.StartNew();
-        HttpResponseMessage resp;
-        string body;
-        try
-        {
-            using var req = new HttpRequestMessage(HttpMethod.Get, url);
-            if (kb.Auth == KbAuth.Header && key is not null) req.Headers.TryAddWithoutValidation(kb.AuthName, key);
-            resp = await http.SendAsync(req);
-            body = await resp.Content.ReadAsStringAsync();
-        }
+        FetchResult f;
+        try { f = await fetch(); }
         catch (Exception ex)
         {
-            AuditEvent("kb-error", "kb-query {QueryId} {Source} {Query} failed: {Message}",
-                queryId, source, auditedQuery, ex.Message);
+            AuditEvent("kb-error", "kb-query {QueryId} {Source} {Query} failed: {Message}", queryId, source, label, ex.Message);
             Error($"Knowledge base '{source}' query failed: {ex.Message}");
-            return KbResult<T>.Failed(source, auditedQuery, queryId);
+            return KbResult<T>.Failed(source, label, queryId);
         }
         sw.Stop();
 
-        var digest = Digest(body);
+        var digest = Digest(f.Body);
         var now = DateTime.UtcNow;
 
         // A target-keyed query disclosed a client asset to a third party — record exactly what left the perimeter.
@@ -136,30 +201,63 @@ public class KnowledgeBaseClient : Runtime
                 queryId, disclosedTarget, source);
 
         AuditEvent("kb-query", "kb-query {QueryId} {Source} {Query} status={Status} digest={Digest} {DurationMs}ms",
-            queryId, source, auditedQuery, (int)resp.StatusCode, digest, sw.ElapsedMilliseconds);
+            queryId, source, label, f.Status, digest, sw.ElapsedMilliseconds);
 
-        if (!resp.IsSuccessStatusCode)
+        if (!f.Ok)
         {
-            Error($"Knowledge base '{source}' returned HTTP {(int)resp.StatusCode}.");
-            return new KbResult<T>(source, auditedQuery, now, default, digest, queryId, false);
+            Error($"Knowledge base '{source}' returned no usable response ({f.Status}).");
+            return new KbResult<T>(source, label, now, default, digest, queryId, false);
         }
 
-        var entry = new CacheEntry(body, digest, now, now.AddMinutes(Math.Max(kb.CacheTtlMinutes, 0)));
+        var entry = new CacheEntry(f.Body, digest, now, now.AddMinutes(Math.Max(kb.CacheTtlMinutes, 0)));
         if (kb.CacheTtlMinutes > 0) cache[cacheKey] = entry;
-        return MapEntry(entry, false);
+        return Map(entry, false);
 
-        // Parse + map a (fresh or cached) body into the typed result, carrying the entry's provenance.
-        KbResult<T> MapEntry(CacheEntry e, bool fromCache)
+        // Map a (fresh or cached) body into the typed result, carrying the entry's provenance.
+        KbResult<T> Map(CacheEntry e, bool fromCache)
         {
             T? payload;
-            try { using var doc = JsonDocument.Parse(e.Body); payload = map(doc.RootElement); }
+            try { payload = map(e.Body); }
             catch (Exception ex) { Error($"Failed to parse {source} response: {ex.Message}"); payload = default; }
-            return new KbResult<T>(source, auditedQuery, e.RetrievedUtc, payload, e.Digest, queryId, fromCache);
+            return new KbResult<T>(source, label, e.RetrievedUtc, payload, e.Digest, queryId, fromCache);
         }
     }
     #endregion
 
+    #region Transports
+    private async Task<FetchResult> HttpFetch(KnowledgeBase kb, string path, IReadOnlyDictionary<string, string> query, string? key)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, BuildUrl(kb, path, query, key));
+        if (kb.Auth == KbAuth.Header && key is not null) req.Headers.TryAddWithoutValidation(kb.AuthName, key);
+        var resp = await http.SendAsync(req);
+        var body = await resp.Content.ReadAsStringAsync();
+        return new FetchResult(body, resp.IsSuccessStatusCode, ((int)resp.StatusCode).ToString());
+    }
+
+    private async Task<FetchResult> CliFetch(KnowledgeBase kb, string args)
+    {
+        if (env is null) return new FetchResult("", false, "no-environment");
+        var r = await env.ExecuteCommandAsync(kb.Command, args, false);
+        return new FetchResult(r.Output ?? "", r.IsCompleted, r.IsCompleted ? "exit 0" : "exit !=0");
+    }
+
+    private async Task<FetchResult> FileFetch(KnowledgeBase kb)
+    {
+        if (env is null) return new FetchResult("", false, "no-environment");
+        var r = await env.ExecuteCommandAsync("cat", $"'{kb.Command}'", false);
+        return new FetchResult(r.Output ?? "", r.IsCompleted, r.IsCompleted ? "read" : "read-failed");
+    }
+    #endregion
+
     #region Helpers
+    private static string NewId() => Guid.NewGuid().ToString("N")[..8];
+
+    private static T? MapJson<T>(string raw, Func<JsonElement, T?> map)
+    {
+        using var doc = JsonDocument.Parse(raw);
+        return map(doc.RootElement);
+    }
+
     // Per-source minimum spacing between calls (a simple, monotonic rate clock). No-op when unlimited.
     private async Task ThrottleAsync(string source, int perMinute)
     {
@@ -204,8 +302,12 @@ public class KnowledgeBaseClient : Runtime
         var dict = new Dictionary<string, KnowledgeBase>(StringComparer.OrdinalIgnoreCase);
         foreach (var kb in config.GetSection("KnowledgeBases").GetChildren())
         {
-            var baseUrl = kb["BaseUrl"];
-            if (string.IsNullOrWhiteSpace(baseUrl)) continue;
+            var transport = Enum.TryParse<KbTransport>(kb["Transport"], true, out var tp) ? tp : KbTransport.Http;
+            var baseUrl = kb["BaseUrl"] ?? "";
+            var command = kb["Command"] ?? "";
+            // A KB is valid if it has what its transport needs: an HTTP base URL, or a CLI/File command/path.
+            if (transport == KbTransport.Http ? string.IsNullOrWhiteSpace(baseUrl) : string.IsNullOrWhiteSpace(command))
+                continue;
             dict[kb.Key] = new KnowledgeBase(
                 kb.Key, baseUrl,
                 Enum.TryParse<KbAuth>(kb["Auth"], true, out var a) ? a : KbAuth.None,
@@ -213,7 +315,8 @@ public class KnowledgeBaseClient : Runtime
                 int.TryParse(kb["RateLimitPerMinute"], out var r) ? r : 0,
                 int.TryParse(kb["CacheTtlMinutes"], out var c) ? c : 0,
                 bool.TryParse(kb["DisclosesTarget"], out var d) && d,
-                !bool.TryParse(kb["KeyRequired"], out var kr) || kr);   // default true when unspecified
+                !bool.TryParse(kb["KeyRequired"], out var kr) || kr,   // default true when unspecified
+                transport, command);
         }
         return dict;
     }

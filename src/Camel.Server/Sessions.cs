@@ -85,7 +85,7 @@ public sealed class SessionContext : IDisposable
         ToolkitsApi = new CamelToolkitsApi(Environment, config);
         WorkflowsApi = new CamelWorkflowsApi(ToolkitsApi);
         PenTestToolkitsApi = new CamelPenTestToolkitsApi(Environment, config);
-        KnowledgeApi = new CamelKnowledgeApi(config);
+        KnowledgeApi = new CamelKnowledgeApi(Environment, config);
     }
 
     public void Dispose()

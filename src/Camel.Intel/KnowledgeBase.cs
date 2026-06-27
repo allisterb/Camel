@@ -5,6 +5,12 @@ using System;
 /// <summary>How a knowledge base authenticates a request.</summary>
 public enum KbAuth { None, Header, QueryParam }
 
+/// <summary>How a knowledge base's raw response is obtained — the only thing that varies across KBs; the
+/// provenance/cache/audit/map pipeline is identical. <see cref="Http"/>: a GET against <c>BaseUrl</c>.
+/// <see cref="Cli"/>: run <c>Command</c> on the platform (local/SSH) and capture stdout. <see cref="File"/>:
+/// read a file (path in <c>Command</c>) on the platform.</summary>
+public enum KbTransport { Http, Cli, File }
+
 /// <summary>
 /// A configured external intelligence source (Shodan, NVD, Vulners, …). <see cref="KeyRef"/> is the NAME of a
 /// secret to resolve at call time (an env-var / secrets-file key), never the key itself — secrets never live in
@@ -22,6 +28,9 @@ public enum KbAuth { None, Header, QueryParam }
 /// <param name="KeyRequired">When true (default), the KB is unavailable without its key (e.g. Shodan). When false,
 /// the key is OPTIONAL — the KB works without it and the key, if resolvable, is used anyway (e.g. NVD, where a key
 /// only raises the rate limit).</param>
+/// <param name="Transport">How the raw response is obtained: an HTTP GET (default), a CLI command, or a file read.</param>
+/// <param name="Command">For <see cref="KbTransport.Cli"/>, the executable to run (e.g. "searchsploit"); for
+/// <see cref="KbTransport.File"/>, the file path to read. Unused for HTTP.</param>
 public record KnowledgeBase(
     string Name,
     string BaseUrl,
@@ -31,7 +40,9 @@ public record KnowledgeBase(
     int RateLimitPerMinute = 0,
     int CacheTtlMinutes = 0,
     bool DisclosesTarget = false,
-    bool KeyRequired = true)
+    bool KeyRequired = true,
+    KbTransport Transport = KbTransport.Http,
+    string Command = "")
 {
     /// <summary>True when the KB authenticates with a key AND cannot run without it — so its secret must resolve
     /// for the KB to be usable. An optional-key KB (<see cref="KeyRequired"/> false) is usable regardless.</summary>

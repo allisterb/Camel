@@ -38,6 +38,11 @@ public record ScopeTarget(ScopeKind Kind, string Value, bool Excluded = false);
 /// <param name="ValidFromUtc">Start of the authorized testing window (UTC).</param>
 /// <param name="ValidUntilUtc">End of the authorized testing window (UTC); actions after this are refused.</param>
 /// <param name="Scope">Authorized and excluded targets. Empty in-scope set ⇒ nothing is in scope (fail-closed).</param>
+/// <param name="AllowExternalTargetDisclosure">Whether the engagement permits sending a client asset (a target IP/
+/// host/domain) to a third-party intelligence service — e.g. a Shodan host lookup. Default false (fail-closed):
+/// target-keyed knowledge-base queries are refused until the RoE explicitly opts in, because such a query discloses
+/// the client's asset to an external party that caches and indexes it. Knowledge queries (CVE lookups, etc.) carry
+/// no target and are unaffected.</param>
 public record EngagementInfo(
     string EngagementId,
     string Client,
@@ -45,7 +50,8 @@ public record EngagementInfo(
     string RulesOfEngagementRef,
     DateTime ValidFromUtc,
     DateTime ValidUntilUtc,
-    ScopeTarget[] Scope)
+    ScopeTarget[] Scope,
+    bool AllowExternalTargetDisclosure = false)
 {
     /// <summary>True if <paramref name="nowUtc"/> falls inside the authorized window.</summary>
     public bool IsWithinWindow(DateTime nowUtc) => nowUtc >= ValidFromUtc && nowUtc <= ValidUntilUtc;
@@ -88,3 +94,14 @@ public class OutOfScopeException(ScopeDecision decision)
 /// </summary>
 public class EngagementRequiredException()
     : Exception("No engagement is registered for this session. Call SetEngagement with the authorized scope and validity window before running any offensive tool.");
+
+/// <summary>
+/// Thrown when a target-keyed external query (e.g. a Shodan host lookup) would disclose a client asset to a
+/// third-party service but the registered engagement does not permit external disclosure
+/// (<see cref="EngagementInfo.AllowExternalTargetDisclosure"/> is false). Fail-closed: such a query sends the
+/// client's host/IP/domain to an external party, so it is refused until the rules of engagement opt in.
+/// </summary>
+public class ExternalDisclosureForbiddenException()
+    : Exception("This engagement does not permit disclosing target details to external services. A target-keyed " +
+                "knowledge-base query (e.g. Shodan) would send a client asset to a third party; set " +
+                "AllowExternalTargetDisclosure on the engagement to authorize it.");
