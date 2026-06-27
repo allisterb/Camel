@@ -64,6 +64,21 @@ public class CamelMCPServer : Runtime
             throw new InvalidOperationException(report.RefusalMessage(tools.InvestigationName));
         foreach (var u in report.Unavailable)
             Warn("Toolkit '{Toolkit}' has no tools on platform '{Platform}' and will be inert.", u.Toolkit, report.Platform);
+
+        // Knowledge bases (intelligence sources) are config-driven, not platform tools — report their availability
+        // separately for the servers that bind them, so an operator sees which sources are live (and which are dark
+        // for want of an API key) at launch.
+        if (tools.BindsKnowledgeBases)
+        {
+            var sources = new Camel.Intel.KnowledgeBaseClient(config).DescribeSources().ToList();
+            if (sources.Count > 0)
+            {
+                var summary = string.Join(Environment.NewLine,
+                    sources.Select(s => $"  {s.Name} [{s.Transport}]: {(s.Available ? "available" : "UNAVAILABLE")} ({s.Detail})"));
+                Info("Knowledge bases for {Investigation}:{NewLine}{Summary}",
+                    tools.InvestigationName, Environment.NewLine, summary);
+            }
+        }
     }
 
     public static async Task RunStdioAsync(IConfigurationRoot config, InvestigationType investigation = InvestigationType.DFIR)

@@ -71,10 +71,18 @@ internal class Program : Runtime
         // token-usage summary the SessionEnd hook writes there) when create-case baked a --case-dir into
         // the .mcp.json, so the whole audit trail is bundled in one place. Falls back to <assembly-dir>/logs
         // for a manually-launched server with no case dir. The file is named audit-<caseId>.clef.
-        var logDir = string.IsNullOrWhiteSpace(opts.CaseDir)
-            ? Path.Combine(AssemblyLocation, "logs")
-            : Path.Combine(opts.CaseDir, "logs");
+        var caseRoot = string.IsNullOrWhiteSpace(opts.CaseDir) ? AssemblyLocation : opts.CaseDir;
+        var logDir = Path.Combine(caseRoot, "logs");
         Runtime.WithAuditLog(logDir);
+
+        // Retain raw knowledge-base responses (content-addressed) under the case's exports/, so any external-intel
+        // finding can be verified byte-for-byte. The KB client reads this config key; unset = retention off.
+        config["KnowledgeBaseRetentionDir"] = Path.Combine(caseRoot, "exports", "kb");
+
+        // The case directory itself, so the PenTest SetEngagement tool can resolve a supplied authorization
+        // document (relative to the case dir) and preserve a hashed copy under reports/authorization/. Case-side,
+        // local to where the CLI/server runs (the case dir holds logs/exports/reports regardless of SSH platform).
+        config["CaseDir"] = caseRoot;
 
         // Resolve the active platform profile (the config section holding this box's connection details + tool
         // paths): explicit --platform wins, else the config 'Platform' key, else the investigation default

@@ -45,6 +45,15 @@ public sealed class SessionContext : IDisposable
     public string CaseId = "";
 
     /// <summary>
+    /// The case directory (holding logs/, exports/, reports/) on the machine the server runs on, from the
+    /// <c>CaseDir</c> config key the CLI bakes in at launch. Case-side and local even when the audit
+    /// <see cref="Environment"/> targets a remote SSH box. Used by <c>SetEngagement</c> to resolve a supplied
+    /// authorization document and preserve a hashed copy under <c>reports/authorization/</c>. Empty when the
+    /// server was launched with no case dir.
+    /// </summary>
+    public readonly string CaseDir;
+
+    /// <summary>
     /// Per-session scratch storage, exposed to the JS engine as the global <c>Session</c>. A script can stash an
     /// expensive result (a workflow output, a parsed super-timeline) under a string key and reuse it in a later
     /// <c>Execute</c> call instead of recomputing it — keeping successive analysis steps consistent with the same
@@ -81,6 +90,7 @@ public sealed class SessionContext : IDisposable
 
     public SessionContext(IConfigurationRoot config)
     {
+        CaseDir = config["CaseDir"] ?? "";
         Environment = AuditEnvironment.CreateFromConfig(config);
         ToolkitsApi = new CamelToolkitsApi(Environment, config);
         WorkflowsApi = new CamelWorkflowsApi(ToolkitsApi);

@@ -36,6 +36,7 @@ public class KnowledgeBaseClient : Runtime
     private readonly AuditEnvironment? env;                                  // for Cli/File transports (null = HTTP-only)
     private readonly ISecretsProvider secrets;
     private readonly IReadOnlyDictionary<string, KnowledgeBase> bases;
+    private readonly string? retentionDir;                                   // where raw responses are retained (null = off)
     private readonly ConcurrentDictionary<string, CacheEntry> cache = new();
     private readonly ConcurrentDictionary<string, DateTime> nextCallAfter = new();   // per-source rate-limit clock
     private readonly object rateLock = new();
@@ -46,6 +47,8 @@ public class KnowledgeBaseClient : Runtime
         this.secrets = secrets ?? new DefaultSecretsProvider(config);
         this.http = http ?? SharedHttp;
         this.env = env;
+        // Where to retain raw response bodies (content-addressed) for byte-for-byte provenance; off when unset.
+        retentionDir = config["KnowledgeBaseRetentionDir"];
         bases = LoadBases(config);
     }
 
@@ -131,6 +134,49 @@ public class KnowledgeBaseClient : Runtime
             return Task.FromResult(NotThisTransport<T>(source, kb, "File", kb.Command, queryId));
         return RunAsync(source, kb, queryId, kb.Command, () => FileFetch(kb), map, disclosedTarget: null);
     }
+
+    /// <summary>
+    /// HTTP POST to <paramref name="source"/> at <paramref name="path"/> with the JSON request body
+    /// <paramref name="jsonBody"/> (the body is the query, recorded in the provenance), mapping the JSON response.
+    /// Auth is injected as a header / query param exactly as for GET (the key never enters the body or the audited
+    /// query). Enables query-by-body APIs (OSV, Vulners). The body must not contain secrets.
+    /// </summary>
+    public Task<KbResult<T>> QueryPostAsync<T>(string source, string path, string jsonBody,
+        Func<JsonElement, T?> map, string? disclosedTarget = null)
+    {
+        var queryId = NewId();
+        var label = $"POST {path} {jsonBody}";
+        if (!TryPrepare<T>(source, label, queryId, out var kb, out var key, out var failed)) return Task.FromResult(failed);
+        if (kb.Transport != KbTransport.Http)
+            return Task.FromResult(NotThisTransport<T>(source, kb, "HTTP", label, queryId));
+        return RunAsync(source, kb, queryId, label, () => HttpPostFetch(kb, path, jsonBody, key),
+            raw => MapJson(raw, map), disclosedTarget);
+    }
+    #endregion
+
+    #region Capability report
+    /// <summary>One configured KB's launch-time availability (for the capability report).</summary>
+    /// <param name="Name">The KB id.</param>
+    /// <param name="Transport">Its transport (Http/Cli/File).</param>
+    /// <param name="Available">True when usable now (configured + key resolves if required). For a CLI source this
+    /// does not probe whether the command is installed.</param>
+    /// <param name="Detail">Short reason / descriptor (e.g. "http", "cli: searchsploit", "needs SHODAN_API_KEY").</param>
+    public record SourceStatus(string Name, KbTransport Transport, bool Available, string Detail);
+
+    /// <summary>The availability of every configured knowledge base, for the launch capability report.</summary>
+    public IEnumerable<SourceStatus> DescribeSources() =>
+        bases.Values.OrderBy(kb => kb.Name).Select(kb =>
+        {
+            var available = IsAvailable(kb.Name);
+            var detail = kb.Transport switch
+            {
+                KbTransport.Cli => $"cli: {kb.Command}",
+                KbTransport.File => $"file: {kb.Command}",
+                _ when kb.RequiresKey && !available => $"needs {kb.KeyRef}",
+                _ => kb.DisclosesTarget ? "http (target-keyed)" : "http",
+            };
+            return new SourceStatus(kb.Name, kb.Transport, available, detail);
+        });
     #endregion
 
     #region Pipeline
@@ -200,8 +246,12 @@ public class KnowledgeBaseClient : Runtime
             AuditEvent("kb-disclosure", "kb-disclosure {QueryId}: target {Target} sent to {Source}",
                 queryId, disclosedTarget, source);
 
-        AuditEvent("kb-query", "kb-query {QueryId} {Source} {Query} status={Status} digest={Digest} {DurationMs}ms",
-            queryId, source, label, f.Status, digest, sw.ElapsedMilliseconds);
+        // Retain the raw body (content-addressed) on a successful fresh fetch so a reviewer can verify the claim
+        // byte-for-byte; the CLEF carries the digest + path, not the body.
+        var retained = f.Ok ? RetainBody(source, digest, f.Body) : null;
+
+        AuditEvent("kb-query", "kb-query {QueryId} {Source} {Query} status={Status} digest={Digest} retained={Retained} {DurationMs}ms",
+            queryId, source, label, f.Status, digest, retained ?? "-", sw.ElapsedMilliseconds);
 
         if (!f.Ok)
         {
@@ -234,6 +284,19 @@ public class KnowledgeBaseClient : Runtime
         return new FetchResult(body, resp.IsSuccessStatusCode, ((int)resp.StatusCode).ToString());
     }
 
+    private async Task<FetchResult> HttpPostFetch(KnowledgeBase kb, string path, string jsonBody, string? key)
+    {
+        // No user query params; QueryParam auth (if any) is appended to the URL, the body carries the query.
+        using var req = new HttpRequestMessage(HttpMethod.Post, BuildUrl(kb, path, EmptyQuery, key))
+        {
+            Content = new StringContent(jsonBody, Encoding.UTF8, "application/json"),
+        };
+        if (kb.Auth == KbAuth.Header && key is not null) req.Headers.TryAddWithoutValidation(kb.AuthName, key);
+        var resp = await http.SendAsync(req);
+        var body = await resp.Content.ReadAsStringAsync();
+        return new FetchResult(body, resp.IsSuccessStatusCode, ((int)resp.StatusCode).ToString());
+    }
+
     private async Task<FetchResult> CliFetch(KnowledgeBase kb, string args)
     {
         if (env is null) return new FetchResult("", false, "no-environment");
@@ -250,7 +313,25 @@ public class KnowledgeBaseClient : Runtime
     #endregion
 
     #region Helpers
+    private static readonly IReadOnlyDictionary<string, string> EmptyQuery = new Dictionary<string, string>();
+
     private static string NewId() => Guid.NewGuid().ToString("N")[..8];
+
+    // Writes the raw response body content-addressed to the retention dir as <source>-<hexdigest>.json (skipped if
+    // already present, since the name is content-addressed). Returns the path, or null when retention is off / fails.
+    private string? RetainBody(string source, string digest, string body)
+    {
+        if (string.IsNullOrWhiteSpace(retentionDir)) return null;
+        try
+        {
+            System.IO.Directory.CreateDirectory(retentionDir);
+            var hex = digest.StartsWith("sha256:", StringComparison.Ordinal) ? digest[7..] : digest;
+            var path = System.IO.Path.Combine(retentionDir, $"{source}-{hex}.json");
+            if (!System.IO.File.Exists(path)) System.IO.File.WriteAllText(path, body);
+            return path;
+        }
+        catch (Exception ex) { Error($"Failed to retain {source} response: {ex.Message}"); return null; }
+    }
 
     private static T? MapJson<T>(string raw, Func<JsonElement, T?> map)
     {

@@ -259,6 +259,10 @@ public abstract class CamelMCPTools : Runtime
     /// <summary>Human label for this investigation ("DFIR" / "PenTest"), used in capability-check messages.</summary>
     public abstract string InvestigationName { get; }
 
+    /// <summary>True when this server binds the external knowledge-base facades (intelligence sources), so the
+    /// launch capability check should also report their availability. False by default (DFIR binds none yet).</summary>
+    public virtual bool BindsKnowledgeBases => false;
+
     /// <summary>
     /// Launch-time platform capability report for this server's toolkits, computed from config (see
     /// <see cref="Camel.Toolkits.PlatformCapability"/>). The host uses it to refuse startup when no toolkit has

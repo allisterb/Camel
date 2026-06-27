@@ -24,6 +24,53 @@ public enum ScopeKind
 /// <param name="Excluded">True for an out-of-scope carve-out (e.g. a production box inside an in-scope subnet).</param>
 public record ScopeTarget(ScopeKind Kind, string Value, bool Excluded = false);
 
+/// <summary>The kind of signed engagement document, mirroring the distinct documents a real pen-test engagement
+/// produces (see docs/PenTestBookGapAnalysis.md). The kind matters because not every document <em>authorizes</em>
+/// testing: an NDA governs confidentiality, not permission. <see cref="Authorizes"/> identifies the kinds that
+/// actually grant authorization (used by the scope tiering to decide whether a target has a backing authorization).</summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum EngagementDocumentKind
+{
+    RulesOfEngagement,    // RoE: scope, testing windows, off-limits targets, contacts
+    AuthorizationLetter,  // authorization-to-test / "get out of jail free" letter
+    Contract,             // the pen-test agreement / statement of work
+    Nda,                  // non-disclosure agreement: confidentiality, NOT authorization to test
+    TestPlan,             // the penetration test plan (Appendix A)
+    Other                 // any other signed artifact (e.g. a sensitive-disclosure agreement)
+}
+
+/// <summary>
+/// One signed document backing an engagement (RoE, authorization letter, contract, NDA, …). Recorded as a
+/// <em>case-side</em> artifact, the red-side counterpart of registered <see cref="EvidenceInfo"/> on the blue
+/// side: the <c>SetEngagement</c> tool confirms the file exists, hashes it (SHA-256), records the hash in the
+/// audit trail, and copies it into the case's <c>reports/authorization/</c> so the signed proof travels with the
+/// report. The operator still attests the enforceable <see cref="EngagementInfo.Scope"/>; documents are the
+/// immutable proof the attestation rests on and are never parsed to <em>derive</em> scope. Optional: a self-owned
+/// lab / loopback engagement may carry none.
+/// </summary>
+/// <param name="Kind">What this document is (an NDA does not authorize testing — see <see cref="EngagementDocumentKind"/>).</param>
+/// <param name="FilePath">Path to the supplied document — relative to the case directory or absolute. The
+/// provenance (where the operator pointed); the preserved copy is recorded in <paramref name="StoredPath"/>.</param>
+/// <param name="HashType">Algorithm of <paramref name="HashValue"/>; <see cref="HashType.None"/> until
+/// <c>SetEngagement</c> hashes the document (it computes SHA-256).</param>
+/// <param name="HashValue">The document's hash, filled in by <c>SetEngagement</c>; empty until then.</param>
+/// <param name="StoredPath">The case-relative path of the preserved copy (e.g. <c>reports/authorization/roe-acme.pdf</c>),
+/// filled in by <c>SetEngagement</c>; what the report cites. Empty until the document is stored.</param>
+public record EngagementDocument(
+    EngagementDocumentKind Kind,
+    string FilePath,
+    HashType HashType = HashType.None,
+    string HashValue = "",
+    string StoredPath = "")
+{
+    /// <summary>True if this kind of document actually authorizes testing (RoE / authorization letter / contract),
+    /// as opposed to an NDA / test plan / other supporting artifact. The scope tiering treats only these as a
+    /// backing authorization for an in-scope target.</summary>
+    [JsonIgnore]
+    public bool Authorizes => Kind is EngagementDocumentKind.RulesOfEngagement
+        or EngagementDocumentKind.AuthorizationLetter or EngagementDocumentKind.Contract;
+}
+
 /// <summary>
 /// Identifies the authorization under which a red-team engagement runs: who authorized it, the
 /// rules-of-engagement reference, the validity window, and the in-/out-of-scope targets. Offensive
@@ -43,6 +90,10 @@ public record ScopeTarget(ScopeKind Kind, string Value, bool Excluded = false);
 /// target-keyed knowledge-base queries are refused until the RoE explicitly opts in, because such a query discloses
 /// the client's asset to an external party that caches and indexes it. Knowledge queries (CVE lookups, etc.) carry
 /// no target and are unaffected.</param>
+/// <param name="Documents">The signed documents backing this engagement (RoE, authorization letter, contract,
+/// NDA, …), if supplied. <c>SetEngagement</c> hashes each and preserves a copy under the case's reports/. Optional
+/// (a self-owned lab may carry none); the enforceable scope is always the operator's attestation, never derived
+/// from these documents.</param>
 public record EngagementInfo(
     string EngagementId,
     string Client,
@@ -51,7 +102,8 @@ public record EngagementInfo(
     DateTime ValidFromUtc,
     DateTime ValidUntilUtc,
     ScopeTarget[] Scope,
-    bool AllowExternalTargetDisclosure = false)
+    bool AllowExternalTargetDisclosure = false,
+    EngagementDocument[]? Documents = null)
 {
     /// <summary>True if <paramref name="nowUtc"/> falls inside the authorized window.</summary>
     public bool IsWithinWindow(DateTime nowUtc) => nowUtc >= ValidFromUtc && nowUtc <= ValidUntilUtc;

@@ -31,6 +31,7 @@ public class CamelKnowledgeApi : Runtime
     private KevKnowledgeBase? _kev;
     private EpssKnowledgeBase? _epss;
     private ExploitDbKnowledgeBase? _exploitDb;
+    private OsvKnowledgeBase? _osv;
     private ShodanKnowledgeBase? _shodan;
     #endregion
 
@@ -50,6 +51,9 @@ public class CamelKnowledgeApi : Runtime
     /// <summary>Exploit-DB lookups via the local <c>searchsploit</c> CLI (knowledge source, runs on the platform).
     /// Lazily constructed.</summary>
     public ExploitDbKnowledgeBase ExploitDb => _exploitDb ??= new ExploitDbKnowledgeBase(client);
+
+    /// <summary>OSV.dev package-vulnerability lookups (knowledge source, HTTP POST). Lazily constructed.</summary>
+    public OsvKnowledgeBase Osv => _osv ??= new OsvKnowledgeBase(client);
 
     /// <summary>Shodan host intelligence (target-keyed — gated by engagement scope + external-disclosure).
     /// Lazily constructed.</summary>
