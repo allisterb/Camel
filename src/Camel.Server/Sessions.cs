@@ -27,6 +27,11 @@ public sealed class SessionContext : IDisposable
     /// so they do nothing until <c>SetEngagement</c> is called regardless of which server is running.</summary>
     public readonly CamelPenTestToolkitsApi PenTestToolkitsApi;
 
+    /// <summary>External knowledge-base / intelligence-source facades (NVD, …) over a shared client. Bound into the
+    /// JS engine by the PenTest server; investigation-neutral, so the blue server can bind threat-intel facades
+    /// over the same api later.</summary>
+    public readonly CamelKnowledgeApi KnowledgeApi;
+
     public DateTimeOffset LastAccess = DateTimeOffset.UtcNow;
 
     /// <summary>The MCP session id (set when the context is created); the default audit case id.</summary>
@@ -80,6 +85,7 @@ public sealed class SessionContext : IDisposable
         ToolkitsApi = new CamelToolkitsApi(Environment, config);
         WorkflowsApi = new CamelWorkflowsApi(ToolkitsApi);
         PenTestToolkitsApi = new CamelPenTestToolkitsApi(Environment, config);
+        KnowledgeApi = new CamelKnowledgeApi(config);
     }
 
     public void Dispose()

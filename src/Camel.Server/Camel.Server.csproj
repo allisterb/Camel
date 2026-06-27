@@ -35,6 +35,7 @@
     <ProjectReference Include="..\Camel.Toolkits\Camel.Toolkits.csproj" />
     <ProjectReference Include="..\Camel.DFIR.Toolkits\Camel.DFIR.Toolkits.csproj" />
     <ProjectReference Include="..\Camel.PenTest.Toolkits\Camel.PenTest.Toolkits.csproj" />
+    <ProjectReference Include="..\Camel.Intel\Camel.Intel.csproj" />
     <ProjectReference Include="..\Camel.Inference\Camel.Inference.csproj" />
     <ProjectReference Include="..\Camel.DFIR.Workflows\Camel.DFIR.Workflows.csproj" />
   </ItemGroup>

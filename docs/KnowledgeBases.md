@@ -92,11 +92,12 @@ public record KnowledgeBase(
 /// <param name="RetrievedUtc">When the underlying response was fetched (the ORIGINAL fetch time on a cache hit).</param>
 /// <param name="Result">The typed payload (T), or null on failure / empty result.</param>
 /// <param name="ResponseDigest">SHA-256 of the raw response body — the authoritative reference to the retained copy.</param>
-/// <param name="ExecutionId">The audit execution id of the call (cite this in findings).</param>
+/// <param name="QueryId">Short id of this call's <c>kb-query</c> audit event (cite this in findings). The event is
+/// also auto-attributed to the ambient case/execution, so it shows up under the Execute call that issued it.</param>
 /// <param name="FromCache">True when served from the response cache rather than a fresh fetch.</param>
 public record KbResult<T>(
     string Source, string Query, DateTime RetrievedUtc, T? Result,
-    string ResponseDigest, string ExecutionId, bool FromCache = false)
+    string ResponseDigest, string QueryId, bool FromCache = false)
 {
     public bool Ok => Result is not null;
 }
@@ -266,7 +267,7 @@ if (ssh) {
         `${scan.Address} openssh ${ssh.Version} -> ${c.Id} (CVSS ${c.Cvss}), KEV-listed, ${mods.Result.length} MSF module(s)`,
         "Known-exploited CVE on an exposed service - prioritise",
         "MEDIUM",                                  // a version-banner match is a LEAD, not confirmed exploitability
-        `${cves.ExecutionId}, ${kev.ExecutionId}, ${mods.ExecutionId}`);   // cite the kb-query executions
+        `${cves.QueryId}, ${kev.QueryId}, ${mods.QueryId}`);   // cite the kb-query ids
     }
   }
 }
