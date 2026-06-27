@@ -461,6 +461,43 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     }
 
     /// <summary>
+    /// Decides whether an entire range (a CIDR) may be SWEPT — used by host-discovery operations whose target is a
+    /// network, not a single host. Authorized when the requested range is fully contained in an authorized
+    /// <see cref="ScopeKind.Cidr"/> inclusion, the validity window is open, and the range is not wholly contained
+    /// in a Cidr exclusion. A carve-out that only *partially* overlaps the range does not refuse the sweep: the
+    /// individual hosts a sweep discovers are still checked per-host with <see cref="EvaluateScope"/>, so an
+    /// excluded host inside an authorized range is dropped from the results rather than blocking the whole sweep.
+    /// </summary>
+    public ScopeDecision EvaluateRangeScope(string cidr)
+    {
+        if (Engagement is null)
+            return new ScopeDecision(cidr, false, "No engagement registered (fail-closed).");
+        if (!Engagement.IsWithinWindow(DateTime.UtcNow))
+            return new ScopeDecision(cidr, false,
+                $"Outside the authorized window ({Engagement.ValidFromUtc:u} – {Engagement.ValidUntilUtc:u}).");
+        var excl = Engagement.Excluded.FirstOrDefault(t => t.Kind == ScopeKind.Cidr && CidrContainsCidr(t.Value, cidr));
+        if (excl is not null)
+            return new ScopeDecision(cidr, false, $"The range is wholly excluded by {excl.Kind} {excl.Value}.");
+        var incl = Engagement.Included.FirstOrDefault(t => t.Kind == ScopeKind.Cidr && CidrContainsCidr(t.Value, cidr));
+        return incl is not null
+            ? new ScopeDecision(cidr, true, $"Authorized by Cidr {incl.Value} (RoE {Engagement.RulesOfEngagementRef}).")
+            : new ScopeDecision(cidr, false, "No authorized CIDR fully contains this range.");
+    }
+
+    /// <summary>
+    /// Refuses a range/host-discovery sweep whose CIDR is not fully within an authorized range by throwing
+    /// <see cref="OutOfScopeException"/> (or <see cref="EngagementRequiredException"/> when nothing is
+    /// registered). The range-level counterpart of <see cref="FailIfOutOfScope"/>; call it before sweeping, then
+    /// still gate each discovered host with the per-host check so excluded carve-outs inside the range are dropped.
+    /// </summary>
+    public void FailIfRangeOutOfScope(string cidr)
+    {
+        if (!engagementRegistered) throw new EngagementRequiredException();
+        var decision = EvaluateRangeScope(cidr);
+        if (!decision.InScope) throw new OutOfScopeException(decision);
+    }
+
+    /// <summary>
     /// Preflight a proposed engagement before registering it: every scope entry must parse and the window must
     /// be non-empty and not already in the past. The <c>SetEngagement</c> tool refuses registration when this is
     /// not <see cref="EngagementSummary.Valid"/>, so the gate is never armed with an unparseable or already-expired
@@ -535,6 +572,21 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         if (remBits == 0) return true;
         int mask = (byte)(0xFF << (8 - remBits));
         return (netBytes[fullBytes] & mask) == (ipBytes[fullBytes] & mask);
+    }
+
+    // True when CIDR <paramref name="inner"/> is entirely contained within CIDR <paramref name="outer"/>: the
+    // outer prefix must be no longer than the inner one (a smaller/longer-prefix outer can't hold a bigger inner),
+    // and inner's network address must fall inside outer. Malformed input yields false (fail-closed). Used to
+    // authorize a range sweep against a broader authorized range (cidr-contained-in-cidr).
+    private static bool CidrContainsCidr(string outer, string inner)
+    {
+        var i = inner.Split('/', 2);
+        var o = outer.Split('/', 2);
+        if (i.Length != 2 || o.Length != 2
+            || !int.TryParse(i[1], out var innerPrefix) || !int.TryParse(o[1], out var outerPrefix))
+            return false;
+        if (outerPrefix > innerPrefix) return false;
+        return IpInCidr(i[0], outer);   // inner's network address must lie within outer (same-family check inside)
     }
 
     // A scope entry parses when its Value is well-formed for its Kind: a CIDR splits into a valid address +

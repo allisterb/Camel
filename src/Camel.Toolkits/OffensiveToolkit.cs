@@ -57,5 +57,20 @@ public abstract class OffensiveToolkit : Toolkit
     {
         foreach (var t in targets) GuardTarget(t);
     }
+
+    /// <summary>
+    /// Refuses to sweep <paramref name="cidr"/> unless the whole range is within an authorized range and the
+    /// window is open (throws <see cref="OutOfScopeException"/> / <see cref="EngagementRequiredException"/>
+    /// otherwise). Call this at the start of a range/host-discovery method; then still filter each discovered
+    /// host with <see cref="IsTargetInScope"/> so an excluded carve-out inside the range is dropped.
+    /// </summary>
+    protected void GuardRange(string cidr) => auditEnvironment.FailIfRangeOutOfScope(cidr);
+
+    /// <summary>
+    /// Non-throwing per-target scope check (true when <paramref name="target"/> is authorized and in window).
+    /// Use it to silently drop out-of-scope hosts a sweep discovered — e.g. an excluded host inside an authorized
+    /// range — rather than throwing, which <see cref="GuardTarget"/> would do.
+    /// </summary>
+    protected bool IsTargetInScope(string target) => auditEnvironment.EvaluateScope(target).InScope;
     #endregion
 }

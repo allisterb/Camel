@@ -113,4 +113,51 @@ public class EngagementScopeTests
         // A well-formed engagement passes.
         Assert.True(env.ValidateEngagement(Eng(new ScopeTarget(ScopeKind.Cidr, "10.0.5.0/24"))).Valid);
     }
+
+    // ---- Range (CIDR-sweep) scope, for host discovery ----
+
+    [Fact]
+    public void RangeScope_SubnetInsideAuthorizedRange_InScope()
+    {
+        var env = Armed(new ScopeTarget(ScopeKind.Cidr, "10.0.0.0/16"));
+        Assert.True(env.EvaluateRangeScope("10.0.5.0/24").InScope);   // /24 fully within the /16
+        Assert.True(env.EvaluateRangeScope("10.0.0.0/16").InScope);   // equal range is contained
+    }
+
+    [Fact]
+    public void RangeScope_BroaderOrUnrelatedRange_OutOfScope()
+    {
+        var env = Armed(new ScopeTarget(ScopeKind.Cidr, "10.0.5.0/24"));
+        Assert.False(env.EvaluateRangeScope("10.0.0.0/16").InScope);    // a /16 is NOT inside a /24
+        Assert.False(env.EvaluateRangeScope("192.168.1.0/24").InScope); // unrelated range
+        Assert.Throws<OutOfScopeException>(() => env.FailIfRangeOutOfScope("10.0.0.0/16"));
+    }
+
+    [Fact]
+    public void RangeScope_WhollyExcludedRange_Refused()
+    {
+        var env = Armed(
+            new ScopeTarget(ScopeKind.Cidr, "10.0.0.0/16"),
+            new ScopeTarget(ScopeKind.Cidr, "10.0.5.0/24", Excluded: true));
+        Assert.False(env.EvaluateRangeScope("10.0.5.0/24").InScope);    // the whole sub-range is excluded
+        Assert.True(env.EvaluateRangeScope("10.0.6.0/24").InScope);     // a sibling range is still fine
+    }
+
+    [Fact]
+    public void RangeScope_PartialExclusion_SweepAllowed_HostDropped()
+    {
+        // A single excluded host inside the range does NOT block the sweep; the per-host check drops it instead.
+        var env = Armed(
+            new ScopeTarget(ScopeKind.Cidr, "10.0.0.0/16"),
+            new ScopeTarget(ScopeKind.Host, "10.0.5.99", Excluded: true));
+        Assert.True(env.EvaluateRangeScope("10.0.5.0/24").InScope);     // sweep authorized
+        Assert.False(env.EvaluateScope("10.0.5.99").InScope);          // ...but the carve-out host is out
+        Assert.True(env.EvaluateScope("10.0.5.21").InScope);
+    }
+
+    [Fact]
+    public void RangeScope_FailClosed_NoEngagement()
+    {
+        Assert.Throws<EngagementRequiredException>(() => new LocalEnvironment().FailIfRangeOutOfScope("10.0.5.0/24"));
+    }
 }
