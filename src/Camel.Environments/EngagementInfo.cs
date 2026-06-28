@@ -3,6 +3,7 @@ namespace Camel.Environments;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Text.Json.Serialization;
 
 /// <summary>The kind of authorized in-scope target a <see cref="ScopeTarget"/> matches.</summary>
@@ -72,6 +73,110 @@ public record EngagementDocument(
 }
 
 /// <summary>
+/// The engagement's authorization posture — the operator's deliberate declaration of how strict the proof of
+/// authorization must be, which the address-class tiers sit inside as an automatic floor (see
+/// docs/PenTestBookGapAnalysis.md C.2). <see cref="Lab"/> = a self-owned lab (private/internal addresses are
+/// self-attested); <see cref="Internal"/> = an internal engagement (private addresses need a document or a
+/// recorded waiver); <see cref="Client"/> = a real client engagement (strict: private and public alike need an
+/// authorizing document). Public addresses always require a document regardless of posture.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum EngagementPosture
+{
+    Internal,   // default: private targets need a document OR a recorded waiver; public needs a document
+    Lab,        // self-owned lab: loopback AND private targets are self-attested; public still needs a document
+    Client      // strict: every non-loopback target needs an authorizing document
+}
+
+/// <summary>The ownership tier of a target's address, a proxy for "do we provably own this?" used to decide how
+/// strong the proof of authorization must be. Ordered most-permissive to most-restrictive so the most-restrictive
+/// tier across a set of resolved addresses can be taken with <c>Max</c>.</summary>
+public enum AddressTier
+{
+    SelfOwned = 0,  // loopback / link-local: the tester's own machine
+    Private   = 1,  // RFC1918 / IPv6 ULA / CGNAT: private, but ownership is NOT implied (could be a client's net)
+    Public    = 2   // routable / unknown: never provably self-owned
+}
+
+/// <summary>How strongly an in-scope target's authorization must be proven, given the posture and the target's
+/// <see cref="AddressTier"/> (see <see cref="EngagementAuthorization.RequiredProof"/>).</summary>
+public enum ProofRequirement
+{
+    SelfAttested,       // no document needed (the operator owns it / declared it a lab)
+    DocumentOrWaiver,   // an authorizing document, or an explicit recorded waiver, is required
+    DocumentRequired    // an authorizing document is required (no waiver escape) - the public hard gate
+}
+
+/// <summary>The per-entry authorization decision for one in-scope <see cref="ScopeTarget"/>: its address tier, the
+/// proof the posture requires, whether that proof is satisfied, and on what basis (or why not).</summary>
+/// <param name="Target">The in-scope entry this decision is about.</param>
+/// <param name="Tier">The entry's classified address tier.</param>
+/// <param name="Required">The proof the posture+tier demands.</param>
+/// <param name="Satisfied">True if the demanded proof is present.</param>
+/// <param name="Basis">How it was satisfied: <c>self</c>, <c>document</c>, or <c>waiver</c> (empty when unsatisfied).</param>
+/// <param name="Problem">Why it was refused (null when satisfied) - surfaced to the operator.</param>
+public record ScopeAuthorizationDecision(
+    ScopeTarget Target, AddressTier Tier, ProofRequirement Required, bool Satisfied, string Basis, string? Problem);
+
+/// <summary>The outcome of checking every in-scope entry's proof of authorization against the engagement's posture
+/// and documents (see <see cref="AuditEnvironment.EvaluateEngagementAuthorization"/>). The <c>SetEngagement</c>
+/// tool refuses registration when this is not <see cref="Valid"/>, the public-IP hard gate; entries satisfied by a
+/// <c>waiver</c> are audited as <c>authorization-waiver</c> events and flagged as residual risk in the report.</summary>
+/// <param name="Valid">True when every in-scope entry's required proof is satisfied.</param>
+/// <param name="Decisions">One decision per in-scope entry, in order.</param>
+public record EngagementAuthorizationResult(bool Valid, ScopeAuthorizationDecision[] Decisions)
+{
+    /// <summary>Entries allowed only because an explicit waiver was supplied (residual-risk items for the report).</summary>
+    public IEnumerable<ScopeAuthorizationDecision> Waived => Decisions.Where(d => d.Satisfied && d.Basis == "waiver");
+
+    /// <summary>One message per unsatisfied entry (empty when valid).</summary>
+    public IEnumerable<string> Problems => Decisions.Where(d => !d.Satisfied).Select(d => d.Problem!);
+}
+
+/// <summary>Pure tiering logic for the engagement authorization gate: classify an address into an
+/// <see cref="AddressTier"/> and map (posture, tier) to the <see cref="ProofRequirement"/>. No I/O — the DNS
+/// resolution needed to classify a hostname/domain lives in <see cref="AuditEnvironment.ClassifyTier"/>.</summary>
+public static class EngagementAuthorization
+{
+    /// <summary>Classify a literal IP address by ownership tier: loopback/link-local are the tester's own machine
+    /// (<see cref="AddressTier.SelfOwned"/>); RFC1918 / IPv6 unique-local / CGNAT (100.64/10) are
+    /// <see cref="AddressTier.Private"/> (private, but ownership not implied); everything else is
+    /// <see cref="AddressTier.Public"/>.</summary>
+    public static AddressTier ClassifyIp(IPAddress ip)
+    {
+        if (IPAddress.IsLoopback(ip) || ip.IsIPv6LinkLocal) return AddressTier.SelfOwned;
+        var b = ip.GetAddressBytes();
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            if (b[0] == 169 && b[1] == 254) return AddressTier.SelfOwned;             // 169.254/16 link-local
+            if (b[0] == 10) return AddressTier.Private;                                // 10/8
+            if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return AddressTier.Private;   // 172.16/12
+            if (b[0] == 192 && b[1] == 168) return AddressTier.Private;                // 192.168/16
+            if (b[0] == 100 && b[1] >= 64 && b[1] <= 127) return AddressTier.Private;  // 100.64/10 CGNAT
+            return AddressTier.Public;
+        }
+        if (ip.IsIPv6UniqueLocal) return AddressTier.Private;                          // fc00::/7 ULA
+        return AddressTier.Public;
+    }
+
+    /// <summary>The proof the (posture, tier) combination demands. Public always requires a document; a self-owned
+    /// address is self-attested; a private address needs a document under <see cref="EngagementPosture.Client"/>,
+    /// a document-or-waiver under <see cref="EngagementPosture.Internal"/>, and is self-attested under
+    /// <see cref="EngagementPosture.Lab"/>.</summary>
+    public static ProofRequirement RequiredProof(EngagementPosture posture, AddressTier tier) => tier switch
+    {
+        AddressTier.SelfOwned => ProofRequirement.SelfAttested,
+        AddressTier.Public    => ProofRequirement.DocumentRequired,
+        _ /* Private */       => posture switch
+        {
+            EngagementPosture.Lab    => ProofRequirement.SelfAttested,
+            EngagementPosture.Client => ProofRequirement.DocumentRequired,
+            _ /* Internal */         => ProofRequirement.DocumentOrWaiver,
+        },
+    };
+}
+
+/// <summary>
 /// Identifies the authorization under which a red-team engagement runs: who authorized it, the
 /// rules-of-engagement reference, the validity window, and the in-/out-of-scope targets. Offensive
 /// toolkits consult the environment's registered engagement — via <see cref="AuditEnvironment.FailIfOutOfScope"/>
@@ -94,6 +199,12 @@ public record EngagementDocument(
 /// NDA, …), if supplied. <c>SetEngagement</c> hashes each and preserves a copy under the case's reports/. Optional
 /// (a self-owned lab may carry none); the enforceable scope is always the operator's attestation, never derived
 /// from these documents.</param>
+/// <param name="Posture">The authorization posture (<see cref="EngagementPosture"/>) — how strict the proof of
+/// authorization must be for the address tiers in scope. Defaults to <see cref="EngagementPosture.Internal"/>.</param>
+/// <param name="InternalAuthorizationWaiver">An explicit operator attestation that authorization exists for
+/// internal (private) targets with no signed document on file, with the reason. Non-empty = a waiver is granted
+/// (recorded as an <c>authorization-waiver</c> event and flagged as residual risk in the report). Only satisfies
+/// private targets under <see cref="EngagementPosture.Internal"/>; never satisfies a public target.</param>
 public record EngagementInfo(
     string EngagementId,
     string Client,
@@ -103,8 +214,20 @@ public record EngagementInfo(
     DateTime ValidUntilUtc,
     ScopeTarget[] Scope,
     bool AllowExternalTargetDisclosure = false,
-    EngagementDocument[]? Documents = null)
+    EngagementDocument[]? Documents = null,
+    EngagementPosture Posture = EngagementPosture.Internal,
+    string InternalAuthorizationWaiver = "")
 {
+    /// <summary>True if at least one supplied document is of a kind that actually authorizes testing
+    /// (RoE / authorization letter / contract) — an NDA-only engagement is false. The backing-authorization
+    /// signal the scope tiering uses for public/strict targets.</summary>
+    [JsonIgnore]
+    public bool HasAuthorizingDocument => (Documents ?? []).Any(d => d.Authorizes);
+
+    /// <summary>True if the operator supplied an internal-authorization waiver reason.</summary>
+    [JsonIgnore]
+    public bool HasInternalWaiver => !string.IsNullOrWhiteSpace(InternalAuthorizationWaiver);
+
     /// <summary>True if <paramref name="nowUtc"/> falls inside the authorized window.</summary>
     public bool IsWithinWindow(DateTime nowUtc) => nowUtc >= ValidFromUtc && nowUtc <= ValidUntilUtc;
 

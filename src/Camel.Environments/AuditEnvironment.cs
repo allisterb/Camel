@@ -532,6 +532,74 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         return new EngagementSummary(problems.Count == 0, problems.ToArray());
     }
 
+    /// <summary>
+    /// Classify an in-scope target by ownership <see cref="AddressTier"/>: an IP literal is classified directly; a
+    /// CIDR by its network address; a hostname / domain / URL host is resolved via DNS and classified by the
+    /// most-restrictive resolved address. A name that does not resolve is treated as <see cref="AddressTier.Public"/>
+    /// (conservative — an unknown target gets the strongest proof requirement). This is the one piece of the
+    /// tiering that does I/O; the pure mapping lives in <see cref="EngagementAuthorization"/>.
+    /// </summary>
+    public AddressTier ClassifyTier(ScopeTarget t)
+    {
+        if (t.Kind == ScopeKind.Cidr)
+        {
+            var addr = t.Value.Split('/', 2)[0];
+            return IPAddress.TryParse(addr, out var nip) ? EngagementAuthorization.ClassifyIp(nip) : AddressTier.Public;
+        }
+        var host = HostOf(t.Value);
+        if (IPAddress.TryParse(host, out var ip)) return EngagementAuthorization.ClassifyIp(ip);
+        var resolved = ResolveHostAddresses(host);
+        return resolved.Length == 0
+            ? AddressTier.Public                                                   // unresolvable ⇒ treat as public
+            : resolved.Select(EngagementAuthorization.ClassifyIp).Max();           // most-restrictive resolved tier
+    }
+
+    // DNS resolution for tier classification; returns empty on any failure (offline, NXDOMAIN, malformed) so the
+    // caller treats an unresolvable name as Public — fail-closed toward the strongest proof requirement.
+    private static IPAddress[] ResolveHostAddresses(string host)
+    {
+        try { return System.Net.Dns.GetHostAddresses(host); } catch { return Array.Empty<IPAddress>(); }
+    }
+
+    /// <summary>
+    /// Evaluate the proof of authorization for every in-scope entry against the engagement's posture, documents,
+    /// and waiver: each entry's <see cref="AddressTier"/> selects a <see cref="ProofRequirement"/>, satisfied by
+    /// self-attestation, an authorizing document, or (private targets under <see cref="EngagementPosture.Internal"/>
+    /// only) an explicit waiver. The <c>SetEngagement</c> tool refuses registration when the result is not
+    /// <see cref="EngagementAuthorizationResult.Valid"/> — the public-IP hard gate — and audits each waived entry.
+    /// </summary>
+    public EngagementAuthorizationResult EvaluateEngagementAuthorization(EngagementInfo e)
+    {
+        var hasDoc = e.HasAuthorizingDocument;
+        var hasWaiver = e.HasInternalWaiver;
+        var decisions = e.Included.Select(t =>
+        {
+            var tier = ClassifyTier(t);
+            var required = EngagementAuthorization.RequiredProof(e.Posture, tier);
+            return required switch
+            {
+                ProofRequirement.SelfAttested =>
+                    new ScopeAuthorizationDecision(t, tier, required, true, "self", null),
+                ProofRequirement.DocumentRequired when hasDoc =>
+                    new ScopeAuthorizationDecision(t, tier, required, true, "document", null),
+                ProofRequirement.DocumentRequired =>
+                    new ScopeAuthorizationDecision(t, tier, required, false, "",
+                        $"Scope entry {t.Kind} {t.Value} is {tier}: an authorizing document " +
+                        "(RulesOfEngagement / AuthorizationLetter / Contract) is required. Add one to documents, " +
+                        "or remove the entry."),
+                ProofRequirement.DocumentOrWaiver when hasDoc =>
+                    new ScopeAuthorizationDecision(t, tier, required, true, "document", null),
+                ProofRequirement.DocumentOrWaiver when hasWaiver =>
+                    new ScopeAuthorizationDecision(t, tier, required, true, "waiver", null),
+                _ =>
+                    new ScopeAuthorizationDecision(t, tier, required, false, "",
+                        $"Scope entry {t.Kind} {t.Value} is {tier}: supply an authorizing document, or set " +
+                        "internalAuthorizationWaiver with the reason authorization exists for this internal target."),
+            };
+        }).ToArray();
+        return new EngagementAuthorizationResult(decisions.All(d => d.Satisfied), decisions);
+    }
+
     // host == exact (case-insensitive); cidr == IP containment; domain == suffix match incl. subdomains;
     // url == host-of-url containment against the rule. Kept private so inclusion/exclusion use identical rules.
     private static bool Matches(ScopeTarget rule, string target) => rule.Kind switch
