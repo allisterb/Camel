@@ -176,6 +176,24 @@ public static class EngagementAuthorization
     };
 }
 
+/// <summary>A named point of contact for an engagement (a row of the RoE's Personnel / call-tree table). Recorded
+/// only; surfaced in <c>EngagementStatus</c> and the report's Contact Information section. Mark the incident/
+/// emergency contact via <paramref name="Role"/> so the report's incident-handling reference has someone to name.</summary>
+/// <param name="Name">The person's name.</param>
+/// <param name="Role">Their role (e.g. "Pentest lead", "Client POC", "Incident/emergency contact").</param>
+/// <param name="Email">Contact email (optional).</param>
+/// <param name="Phone">Contact phone (optional).</param>
+public record EngagementContact(string Name, string Role, string Email = "", string Phone = "");
+
+/// <summary>The permitted testing hours window from the RoE (NIST SP 800-115 App. B "Test Schedule"). Recorded
+/// only for now — surfaced in <c>EngagementStatus</c> and the report; the validity *window* (ValidFrom/Until) is
+/// the enforced control. A later increment may enforce this recurring daily/weekday window at the scope gate.</summary>
+/// <param name="StartLocal">Daily start time, "HH:mm" in <paramref name="TimeZone"/> (e.g. "09:00").</param>
+/// <param name="EndLocal">Daily end time, "HH:mm" in <paramref name="TimeZone"/> (e.g. "17:00").</param>
+/// <param name="Days">Weekdays testing is permitted (e.g. ["Mon","Tue","Wed","Thu","Fri"]); empty = any day.</param>
+/// <param name="TimeZone">The time zone the times are expressed in (e.g. "America/New_York"); empty = unspecified.</param>
+public record TestingHours(string StartLocal = "", string EndLocal = "", string[]? Days = null, string TimeZone = "");
+
 /// <summary>
 /// Identifies the authorization under which a red-team engagement runs: who authorized it, the
 /// rules-of-engagement reference, the validity window, and the in-/out-of-scope targets. Offensive
@@ -205,6 +223,14 @@ public static class EngagementAuthorization
 /// internal (private) targets with no signed document on file, with the reason. Non-empty = a waiver is granted
 /// (recorded as an <c>authorization-waiver</c> event and flagged as residual risk in the report). Only satisfies
 /// private targets under <see cref="EngagementPosture.Internal"/>; never satisfies a public target.</param>
+/// <param name="Contacts">Engagement points of contact (RoE Personnel / call tree). Record-only.</param>
+/// <param name="SourceAddresses">The addresses the test team operates *from* (RoE "Test Site"); lets the client
+/// attribute and whitelist test traffic. Record-only.</param>
+/// <param name="TestType">Free-text description of the test type (e.g. "External gray-box network test"). Record-only.</param>
+/// <param name="Announced">Whether the engagement is announced (vs covert/unannounced). Record-only; default true.</param>
+/// <param name="AuthorizedTools">Tools the RoE authorizes the team to use (RoE "Test Equipment"). Record-only.</param>
+/// <param name="TestingHours">The permitted daily testing-hours window (RoE "Test Schedule"). Record-only for now;
+/// the enforced time control is the ValidFrom/Until window.</param>
 public record EngagementInfo(
     string EngagementId,
     string Client,
@@ -216,7 +242,13 @@ public record EngagementInfo(
     bool AllowExternalTargetDisclosure = false,
     EngagementDocument[]? Documents = null,
     EngagementPosture Posture = EngagementPosture.Internal,
-    string InternalAuthorizationWaiver = "")
+    string InternalAuthorizationWaiver = "",
+    EngagementContact[]? Contacts = null,
+    string[]? SourceAddresses = null,
+    string TestType = "",
+    bool Announced = true,
+    string[]? AuthorizedTools = null,
+    TestingHours? TestingHours = null)
 {
     /// <summary>True if at least one supplied document is of a kind that actually authorizes testing
     /// (RoE / authorization letter / contract) — an NDA-only engagement is false. The backing-authorization
