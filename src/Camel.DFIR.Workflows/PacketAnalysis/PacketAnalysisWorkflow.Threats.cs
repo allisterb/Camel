@@ -31,14 +31,14 @@ public partial class PacketAnalysisWorkflow
         var formT = PacketAnalysis.NgrepAsync(pcap, "(pass(word)?|pwd|login|user)=", "tcp");
         await Task.WhenAll(basicT, ftpT, formT);
 
-        if (basicT.Result is null && ftpT.Result is null && formT.Result is null)
+        if (basicT.Result.Value is null && ftpT.Result.Value is null && formT.Result.Value is null)
             return WorkflowResult<PcapCredentialReport>.Failure(
                 $"Could not read '{pcap}' for credential extraction; check the path and that the file is a capture.");
 
         var findings = new List<CredentialFinding>();
 
         // HTTP Basic: "Basic <base64(user:pass)>".
-        foreach (var r in basicT.Result ?? [])
+        foreach (var r in basicT.Result.Value ?? [])
         {
             var hdr = r.Length > 2 ? r[2] : "";
             var m = Regex.Match(hdr, @"Basic\s+(?<b64>[A-Za-z0-9+/=]+)");
@@ -55,7 +55,7 @@ public partial class PacketAnalysisWorkflow
 
         // FTP: pair each USER with the following PASS on the same (src,dst).
         var pendingUser = new Dictionary<string, string>();
-        foreach (var r in ftpT.Result ?? [])
+        foreach (var r in ftpT.Result.Value ?? [])
         {
             string key = $"{Nz(r, 0)}->{Nz(r, 1)}", cmd = (r.Length > 2 ? r[2] : "").ToUpperInvariant(), arg = r.Length > 3 ? r[3] : "";
             if (cmd == "USER") pendingUser[key] = arg;
@@ -68,7 +68,7 @@ public partial class PacketAnalysisWorkflow
         }
 
         // Form/login params seen in payloads.
-        foreach (var ng in formT.Result ?? [])
+        foreach (var ng in formT.Result.Value ?? [])
         {
             var user = Regex.Match(ng.Payload, @"(?i)(user(name)?|login)=([^&\s]+)");
             var pass = Regex.Match(ng.Payload, @"(?i)(pass(word)?|pwd)=([^&\s]+)");
@@ -107,8 +107,8 @@ public partial class PacketAnalysisWorkflow
         using var _audit = AuditScope();
         using var op = Begin("Detecting C2 beaconing in {0}", pcap);
 
-        var rows = await PacketAnalysis.FieldsAsync(pcap, "tcp.flags.syn==1 && tcp.flags.ack==0",
-            ["frame.time_epoch", "ip.src", "ip.dst", "tcp.dstport"]);
+        var rows = (await PacketAnalysis.FieldsAsync(pcap, "tcp.flags.syn==1 && tcp.flags.ack==0",
+            ["frame.time_epoch", "ip.src", "ip.dst", "tcp.dstport"])).Value;
         if (rows is null)
             return WorkflowResult<BeaconReport>.Failure(
                 $"Could not read connection starts from '{pcap}'; check the path and that the file is a capture.");
@@ -159,7 +159,7 @@ public partial class PacketAnalysisWorkflow
         using var _audit = AuditScope();
         using var op = Begin("Passively fingerprinting hosts in {0}", pcap);
 
-        var fps = await PacketAnalysis.P0fAsync(pcap);
+        var fps = (await PacketAnalysis.P0fAsync(pcap)).Value;
         if (fps is null)
             return WorkflowResult<HostFingerprintReport>.Failure(
                 $"p0f could not read '{pcap}'; check the path and that the file is a capture.");
@@ -195,7 +195,7 @@ public partial class PacketAnalysisWorkflow
         using var _audit = AuditScope();
         using var op = Begin("Running Suricata IDS over {0}", pcap);
 
-        var alerts = await PacketAnalysis.SuricataAsync(pcap, outDir);
+        var alerts = (await PacketAnalysis.SuricataAsync(pcap, outDir)).Value;
         if (alerts is null)
             return WorkflowResult<IdsReport>.Failure(
                 $"Suricata could not analyse '{pcap}'; check the path and that suricata is installed/provisioned.");

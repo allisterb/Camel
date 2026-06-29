@@ -27,6 +27,27 @@ types are defined once (in the toolkit that owns them) and referenced by name el
 
 ---
 
+## ToolResult (returned by toolkit data methods that can fail)
+
+Some toolkit methods (currently `PacketAnalysisToolkit`'s data methods) return their payload wrapped in a
+`ToolResult<T>` instead of a bare value, so a failure carries a reason rather than an opaque `null`. Check `.Ok`
+first; read `.Value` on success or `.FailureReason` on failure. An empty `.Value` collection means "ran clean,
+found nothing" — not a failure.
+
+### ToolResult Schema
+```json
+{
+  "type": "object",
+  "properties": {
+    "Ok":            { "type": "boolean", "description": "True when the operation succeeded and Value is populated." },
+    "Value":         { "description": "The typed payload (type T) on success; null when Ok is false." },
+    "FailureReason": { "type": "string", "description": "On failure, why no value was produced (tool not installed vs. command failed); null on success." }
+  }
+}
+```
+
+---
+
 ## MemoryAnalysisToolkit
 
 ### WindowsInfo Schema

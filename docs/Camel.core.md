@@ -481,22 +481,26 @@ via **tshark** plus tcpdump/capinfos/tcptrace/tcpflow/ngrep/p0f/nfdump and the *
 auto-provisions `tshark` + `suricata` (+ ET rules) if missing (the worthwhile installs; Zeek has no apt package
 and is not auto-provisioned). Grounded in SANS FOR501.2. Pass `sudo: true` for a root-owned capture on a mounted image.
 
-- `CapInfoAsync(pcap: string)` → `PcapInfo` — capture metadata (packets/bytes/duration/time span/hashes).
-- `ProtocolHierarchyAsync(pcap: string)` → `ProtocolLayer[]` — protocol mix tree (frames/bytes, nesting `Depth`).
-- `ConversationsAsync(pcap: string, proto?: string)` → `Conversation[]` — flows (default tcp): endpoints, directional + total frames/bytes, duration.
-- `EndpointsAsync(pcap: string, proto?: string)` → `Endpoint[]` — per-host packet/byte (tx/rx) totals (default ip).
-- `ReadPacketsAsync(pcap: string, displayFilter?: string, count?: int)` → `PacketSummary[]` — per-packet column view.
-- `FieldsAsync(pcap: string, displayFilter: string, fields: string[])` → `string[][]` — generic `tshark -T fields`
+Each data method returns a **`ToolResult<T>`**: check `.Ok`, read the payload from `.Value`, or read why it
+produced nothing from `.FailureReason` (it distinguishes "tool not installed on this platform" from "the command
+ran but failed"). An empty `.Value` array means "ran clean, found nothing" — not a failure.
+
+- `CapInfoAsync(pcap: string)` → `ToolResult<PcapInfo>` — capture metadata (packets/bytes/duration/time span/hashes).
+- `ProtocolHierarchyAsync(pcap: string)` → `ToolResult<ProtocolLayer[]>` — protocol mix tree (frames/bytes, nesting `Depth`).
+- `ConversationsAsync(pcap: string, proto?: string)` → `ToolResult<Conversation[]>` — flows (default tcp): endpoints, directional + total frames/bytes, duration.
+- `EndpointsAsync(pcap: string, proto?: string)` → `ToolResult<Endpoint[]>` — per-host packet/byte (tx/rx) totals (default ip).
+- `ReadPacketsAsync(pcap: string, displayFilter?: string, count?: int)` → `ToolResult<PacketSummary[]>` — per-packet column view.
+- `FieldsAsync(pcap: string, displayFilter: string, fields: string[])` → `ToolResult<string[][]>` — generic `tshark -T fields`
   extractor (one row per packet); the primitive for custom hunts (DNS names, HTTP hosts, SYN timing, …).
-- `FollowStreamAsync(pcap: string, proto: string, index: int)` → `string` — reassembled stream content.
-- `ExportObjectsAsync(pcap: string, kind: string, outDir: string)` → `string[]` — carve transferred objects (http/smb/tftp/imf).
-- `TcpFlowAsync(pcap: string, outDir: string)` → `string[]` — reassemble every TCP flow to files.
-- `TcpTraceAsync(pcap: string)` → `TcpTraceConn[]` — per-connection TCP summary.
-- `NgrepAsync(pcap: string, pattern: string, bpf?: string)` → `NgrepMatch[]` — regex payload search.
-- `P0fAsync(pcap: string)` → `P0fRecord[]` — passive OS/device fingerprints.
-- `NfdumpAsync(flowSource: string, filter?: string)` → `NetflowRecord[]` — NetFlow records (nfcapd files, not pcap).
-- `SuricataAsync(pcap: string, outDir: string)` → `SuricataAlert[]` — run the IDS, parse `eve.json` alerts.
-- `EditcapSliceAsync(...)` / `MergeAsync(pcaps: string[], outFile: string)` → utility slice / merge.
+- `FollowStreamAsync(pcap: string, proto: string, index: int)` → `ToolResult<string>` — reassembled stream content.
+- `ExportObjectsAsync(pcap: string, kind: string, outDir: string)` → `ToolResult<string[]>` — carve transferred objects (http/smb/tftp/imf).
+- `TcpFlowAsync(pcap: string, outDir: string)` → `ToolResult<string[]>` — reassemble every TCP flow to files.
+- `TcpTraceAsync(pcap: string)` → `ToolResult<TcpTraceConn[]>` — per-connection TCP summary.
+- `NgrepAsync(pcap: string, pattern: string, bpf?: string)` → `ToolResult<NgrepMatch[]>` — regex payload search.
+- `P0fAsync(pcap: string)` → `ToolResult<P0fRecord[]>` — passive OS/device fingerprints.
+- `NfdumpAsync(flowSource: string, filter?: string)` → `ToolResult<NetflowRecord[]>` — NetFlow records (nfcapd files, not pcap).
+- `SuricataAsync(pcap: string, outDir: string)` → `ToolResult<SuricataAlert[]>` — run the IDS, parse `eve.json` alerts.
+- `EditcapSliceAsync(...)` / `MergeAsync(pcaps: string[], outFile: string)` → `bool` utility slice / merge (true on success).
 
 ---
 

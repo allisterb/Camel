@@ -24,7 +24,7 @@ public partial class PacketAnalysisWorkflow
         using var _audit = AuditScope();
         using var op = Begin("Hunting DNS tunneling in {0}", pcap);
 
-        var rows = await PacketAnalysis.FieldsAsync(pcap, "dns.flags.response==0", ["dns.qry.name", "dns.qry.type"]);
+        var rows = (await PacketAnalysis.FieldsAsync(pcap, "dns.flags.response==0", ["dns.qry.name", "dns.qry.type"])).Value;
         if (rows is null)
             return WorkflowResult<DnsTunnelingReport>.Failure(
                 $"Could not read DNS queries from '{pcap}'; the path may be wrong or the file not a capture.");

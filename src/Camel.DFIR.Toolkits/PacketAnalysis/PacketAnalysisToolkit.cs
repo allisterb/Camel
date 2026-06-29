@@ -28,7 +28,9 @@ using Camel.DFIR.Toolkits.Models;
 /// Emerging Threats open ruleset. Zeek is deliberately not auto-provisioned (no apt package; an OBS-repo/source
 /// build is too heavy) — a future conn/dns/http.log extension.
 /// </para>
-/// Grounded in SANS FOR501.2 <em>Packet Analysis</em>.
+/// Each data method returns a <see cref="ToolResult{T}"/>: check <c>.Ok</c>, read the payload from <c>.Value</c>,
+/// or read why it produced nothing from <c>.FailureReason</c> (tool not installed vs. command failed) — the
+/// distinction a bare <c>null</c> used to hide. Grounded in SANS FOR501.2 <em>Packet Analysis</em>.
 /// </summary>
 public class PacketAnalysisToolkit : Toolkit
 {
@@ -41,7 +43,7 @@ public class PacketAnalysisToolkit : Toolkit
     /// <summary>
     /// Provisions the two tools the SIFT base image lacks: <c>tshark</c> and <c>suricata</c> (+ ET open rules).
     /// Pre-seeds the wireshark-common debconf answer so the tshark install never blocks on the setuid prompt.
-    /// Best-effort: a failure here just means those methods return null until the tool is present.
+    /// Best-effort: a failure here just means those methods return a failed result until the tool is present.
     /// </summary>
     protected override void InstallMissingTools()
     {
@@ -58,11 +60,12 @@ public class PacketAnalysisToolkit : Toolkit
     }
 
     #region Capture metadata
-    /// <summary>Capture-file metadata via <c>capinfos -M</c> (packets, bytes, duration, time span, hashes). Null on failure.</summary>
-    public async Task<PcapInfo?> CapInfoAsync(string pcap, bool sudo = false)
+    /// <summary>Capture-file metadata via <c>capinfos -M</c> (packets, bytes, duration, time span, hashes).</summary>
+    public async Task<ToolResult<PcapInfo>> CapInfoAsync(string pcap, bool sudo = false)
     {
-        var o = await RunAsync("Capinfos", $"-M {Q(pcap)}", sudo);
-        if (o is null) return null;
+        var res = await RunAsync("Capinfos", $"-M {Q(pcap)}", sudo);
+        if (!res.Ok) return ToolResult<PcapInfo>.Fail(res.FailureReason!);
+        var o = res.Value!;
         var kv = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var line in Lines(o))
         {
@@ -93,10 +96,11 @@ public class PacketAnalysisToolkit : Toolkit
 
     #region tshark statistics
     /// <summary>Protocol-hierarchy tree via <c>tshark -z io,phs</c> (each protocol's frame/byte totals and nesting depth).</summary>
-    public async Task<ProtocolLayer[]?> ProtocolHierarchyAsync(string pcap, bool sudo = false)
+    public async Task<ToolResult<ProtocolLayer[]>> ProtocolHierarchyAsync(string pcap, bool sudo = false)
     {
-        var o = await RunAsync("Tshark", $"-n -q -r {Q(pcap)} -z io,phs", sudo);
-        if (o is null) return null;
+        var res = await RunAsync("Tshark", $"-n -q -r {Q(pcap)} -z io,phs", sudo);
+        if (!res.Ok) return ToolResult<ProtocolLayer[]>.Fail(res.FailureReason!);
+        var o = res.Value!;
         var layers = new List<ProtocolLayer>();
         foreach (var line in o.Split('\n'))
         {
@@ -115,10 +119,11 @@ public class PacketAnalysisToolkit : Toolkit
 
     /// <summary>Conversations (flows) via <c>tshark -z conv,&lt;proto&gt;</c> (default tcp). Directional + total
     /// frame/byte counts and duration per endpoint pair. <paramref name="proto"/> is tcp/udp/ip/eth/…</summary>
-    public async Task<Conversation[]?> ConversationsAsync(string pcap, string proto = "tcp", bool sudo = false)
+    public async Task<ToolResult<Conversation[]>> ConversationsAsync(string pcap, string proto = "tcp", bool sudo = false)
     {
-        var o = await RunAsync("Tshark", $"-n -q -r {Q(pcap)} -z conv,{proto}", sudo);
-        if (o is null) return null;
+        var res = await RunAsync("Tshark", $"-n -q -r {Q(pcap)} -z conv,{proto}", sudo);
+        if (!res.Ok) return ToolResult<Conversation[]>.Fail(res.FailureReason!);
+        var o = res.Value!;
         var convs = new List<Conversation>();
         foreach (var line in o.Split('\n'))
         {
@@ -146,10 +151,11 @@ public class PacketAnalysisToolkit : Toolkit
 
     /// <summary>Endpoints (hosts) via <c>tshark -z endpoints,&lt;proto&gt;</c> (default ip) with exact packet/byte
     /// and tx/rx splits.</summary>
-    public async Task<Endpoint[]?> EndpointsAsync(string pcap, string proto = "ip", bool sudo = false)
+    public async Task<ToolResult<Endpoint[]>> EndpointsAsync(string pcap, string proto = "ip", bool sudo = false)
     {
-        var o = await RunAsync("Tshark", $"-n -q -r {Q(pcap)} -z endpoints,{proto}", sudo);
-        if (o is null) return null;
+        var res = await RunAsync("Tshark", $"-n -q -r {Q(pcap)} -z endpoints,{proto}", sudo);
+        if (!res.Ok) return ToolResult<Endpoint[]>.Fail(res.FailureReason!);
+        var o = res.Value!;
         var eps = new List<Endpoint>();
         foreach (var line in o.Split('\n'))
         {
@@ -172,15 +178,16 @@ public class PacketAnalysisToolkit : Toolkit
     /// <summary>
     /// Per-packet summary rows (the Wireshark column view) via <c>tshark -T fields</c>. Optional
     /// <paramref name="displayFilter"/> is a Wireshark display filter (e.g. <c>"http.request"</c>);
-    /// <paramref name="count"/> caps packets read. Null on failure.
+    /// <paramref name="count"/> caps packets read.
     /// </summary>
-    public async Task<PacketSummary[]?> ReadPacketsAsync(string pcap, string? displayFilter = null, int? count = null, bool sudo = false)
+    public async Task<ToolResult<PacketSummary[]>> ReadPacketsAsync(string pcap, string? displayFilter = null, int? count = null, bool sudo = false)
     {
         var args = $"-n -r {Q(pcap)}" + (count is int c and > 0 ? $" -c {c}" : "") +
                    (displayFilter is not null ? $" -Y {Q(displayFilter)}" : "") +
                    " -T fields -e frame.number -e frame.time_epoch -e ip.src -e ip.dst -e _ws.col.Protocol -e frame.len -e _ws.col.Info";
-        var o = await RunAsync("Tshark", args, sudo);
-        if (o is null) return null;
+        var res = await RunAsync("Tshark", args, sudo);
+        if (!res.Ok) return ToolResult<PacketSummary[]>.Fail(res.FailureReason!);
+        var o = res.Value!;
         var rows = new List<PacketSummary>();
         foreach (var line in Lines(o))
         {
@@ -203,16 +210,17 @@ public class PacketAnalysisToolkit : Toolkit
     /// Generic field extractor: runs <c>tshark -T fields</c> with the given Wireshark <paramref name="fields"/>
     /// (e.g. <c>["dns.qry.name","dns.qry.type"]</c>) over packets matching <paramref name="displayFilter"/>, and
     /// returns one <c>string[]</c> per packet (one element per requested field, empty string when absent). This
-    /// is the primitive the workflows build their DNS/HTTP/credential hunts on. Null on failure.
+    /// is the primitive the workflows build their DNS/HTTP/credential hunts on.
     /// </summary>
-    public async Task<string[][]?> FieldsAsync(string pcap, string displayFilter, string[] fields, bool sudo = false)
+    public async Task<ToolResult<string[][]>> FieldsAsync(string pcap, string displayFilter, string[] fields, bool sudo = false)
     {
-        if (fields.Length == 0) return [];
+        if (fields.Length == 0) return ToolResult<string[][]>.Pass([]);
         var fieldArgs = string.Join(" ", fields.Select(f => $"-e {f}"));
         var args = $"-n -r {Q(pcap)}" + (string.IsNullOrEmpty(displayFilter) ? "" : $" -Y {Q(displayFilter)}") +
                    $" -T fields {fieldArgs}";
-        var o = await RunAsync("Tshark", args, sudo);
-        if (o is null) return null;
+        var res = await RunAsync("Tshark", args, sudo);
+        if (!res.Ok) return ToolResult<string[][]>.Fail(res.FailureReason!);
+        var o = res.Value!;
         return Lines(o).Select(l =>
         {
             var parts = l.Split('\t');
@@ -228,12 +236,13 @@ public class PacketAnalysisToolkit : Toolkit
     /// <summary>
     /// Reassembles and returns the content of one stream via <c>tshark -z follow,&lt;proto&gt;,ascii,&lt;index&gt;</c>
     /// (proto = tcp/udp/http). <paramref name="index"/> is the stream number (e.g. <c>tcp.stream</c>). The header
-    /// banner is stripped; the reassembled payload text is returned. Null on failure.
+    /// banner is stripped; the reassembled payload text is returned.
     /// </summary>
-    public async Task<string?> FollowStreamAsync(string pcap, string proto, int index, bool sudo = false)
+    public async Task<ToolResult<string>> FollowStreamAsync(string pcap, string proto, int index, bool sudo = false)
     {
-        var o = await RunAsync("Tshark", $"-n -q -r {Q(pcap)} -z follow,{proto},ascii,{index}", sudo);
-        if (o is null) return null;
+        var res = await RunAsync("Tshark", $"-n -q -r {Q(pcap)} -z follow,{proto},ascii,{index}", sudo);
+        if (!res.Ok) return ToolResult<string>.Fail(res.FailureReason!);
+        var o = res.Value!;
         // Drop the banner (up to and including the "Node 1:" line) and the trailing "===" rule.
         var lines = o.Split('\n').ToList();
         int start = lines.FindIndex(l => l.StartsWith("Node 1:", StringComparison.Ordinal));
@@ -245,23 +254,24 @@ public class PacketAnalysisToolkit : Toolkit
     /// <summary>
     /// Carves transferred objects of <paramref name="kind"/> (http/smb/tftp/imf/dicom) into
     /// <paramref name="outDir"/> on the workstation via <c>tshark --export-objects</c>, and returns the full paths
-    /// of the carved files. The directory is created if missing. Null on failure.
+    /// of the carved files. The directory is created if missing.
     /// </summary>
-    public Task<string[]?> ExportObjectsAsync(string pcap, string kind, string outDir, bool sudo = false) =>
+    public Task<ToolResult<string[]>> ExportObjectsAsync(string pcap, string kind, string outDir, bool sudo = false) =>
         RunToDirAsync(outDir, sudo, () => RunAsync("Tshark", $"-n -q -r {Q(pcap)} --export-objects {kind},{Q(outDir)}", sudo));
 
     /// <summary>Reassembles every TCP flow into files under <paramref name="outDir"/> via <c>tcpflow -r -o</c>;
-    /// returns the carved flow-file paths. Null on failure.</summary>
-    public Task<string[]?> TcpFlowAsync(string pcap, string outDir, bool sudo = false) =>
+    /// returns the carved flow-file paths.</summary>
+    public Task<ToolResult<string[]>> TcpFlowAsync(string pcap, string outDir, bool sudo = false) =>
         RunToDirAsync(outDir, sudo, () => RunAsync("Tcpflow", $"-r {Q(pcap)} -o {Q(outDir)}", sudo));
     #endregion
 
     #region Other analysers
     /// <summary>Per-connection TCP summary via <c>tcptrace -n</c> (host pairs, packet counts each way, completeness).</summary>
-    public async Task<TcpTraceConn[]?> TcpTraceAsync(string pcap, bool sudo = false)
+    public async Task<ToolResult<TcpTraceConn[]>> TcpTraceAsync(string pcap, bool sudo = false)
     {
-        var o = await RunAsync("Tcptrace", $"-n {Q(pcap)}", sudo);
-        if (o is null) return null;
+        var res = await RunAsync("Tcptrace", $"-n {Q(pcap)}", sudo);
+        if (!res.Ok) return ToolResult<TcpTraceConn[]>.Fail(res.FailureReason!);
+        var o = res.Value!;
         var conns = new List<TcpTraceConn>();
         foreach (var line in o.Split('\n'))
         {
@@ -283,12 +293,13 @@ public class PacketAnalysisToolkit : Toolkit
     /// <summary>
     /// Searches packet payloads with <c>ngrep</c> for the (extended-regex) <paramref name="pattern"/>, optionally
     /// constrained by a BPF <paramref name="bpf"/> filter (e.g. <c>"tcp port 80"</c>). Returns the matching
-    /// packets (endpoints + single-line payload). Null on failure.
+    /// packets (endpoints + single-line payload).
     /// </summary>
-    public async Task<NgrepMatch[]?> NgrepAsync(string pcap, string pattern, string? bpf = null, bool sudo = false)
+    public async Task<ToolResult<NgrepMatch[]>> NgrepAsync(string pcap, string pattern, string? bpf = null, bool sudo = false)
     {
-        var o = await RunAsync("Ngrep", $"-I {Q(pcap)} -q -W single {Q(pattern)}" + (bpf is not null ? $" {Q(bpf)}" : ""), sudo);
-        if (o is null) return null;
+        var res = await RunAsync("Ngrep", $"-I {Q(pcap)} -q -W single {Q(pattern)}" + (bpf is not null ? $" {Q(bpf)}" : ""), sudo);
+        if (!res.Ok) return ToolResult<NgrepMatch[]>.Fail(res.FailureReason!);
+        var o = res.Value!;
         var matches = new List<NgrepMatch>();
         NgrepMatch? cur = null; var payload = new StringBuilder();
         void Flush() { if (cur is not null) { matches.Add(cur with { Payload = payload.ToString().Trim() }); cur = null; payload.Clear(); } }
@@ -310,11 +321,12 @@ public class PacketAnalysisToolkit : Toolkit
         return matches.ToArray();
     }
 
-    /// <summary>Passive OS/device fingerprints from <c>p0f -r</c>. Distinct (host, OS) observations. Null on failure.</summary>
-    public async Task<P0fRecord[]?> P0fAsync(string pcap, bool sudo = false)
+    /// <summary>Passive OS/device fingerprints from <c>p0f -r</c>. Distinct (host, OS) observations.</summary>
+    public async Task<ToolResult<P0fRecord[]>> P0fAsync(string pcap, bool sudo = false)
     {
-        var o = await RunAsync("P0f", $"-r {Q(pcap)}", sudo);
-        if (o is null) return null;
+        var res = await RunAsync("P0f", $"-r {Q(pcap)}", sudo);
+        if (!res.Ok) return ToolResult<P0fRecord[]>.Fail(res.FailureReason!);
+        var o = res.Value!;
         var records = new List<P0fRecord>();
         string? subject = null, address = null;
         foreach (var raw in o.Split('\n'))
@@ -332,13 +344,13 @@ public class PacketAnalysisToolkit : Toolkit
     /// <summary>
     /// Reads NetFlow records from an nfcapd flow file (or directory with <c>-R</c>) via <c>nfdump -o csv</c>,
     /// optionally filtered by an nfdump <paramref name="filter"/>. Note: operates on collected NetFlow, not pcap.
-    /// Null on failure.
     /// </summary>
-    public async Task<NetflowRecord[]?> NfdumpAsync(string flowSource, string? filter = null, bool sudo = false)
+    public async Task<ToolResult<NetflowRecord[]>> NfdumpAsync(string flowSource, string? filter = null, bool sudo = false)
     {
         var src = flowSource.Contains('*') || !flowSource.Contains('.') ? $"-R {Q(flowSource)}" : $"-r {Q(flowSource)}";
-        var o = await RunAsync("Nfdump", $"{src} -o csv -q" + (filter is not null ? $" {Q(filter)}" : ""), sudo);
-        if (o is null) return null;
+        var res = await RunAsync("Nfdump", $"{src} -o csv -q" + (filter is not null ? $" {Q(filter)}" : ""), sudo);
+        if (!res.Ok) return ToolResult<NetflowRecord[]>.Fail(res.FailureReason!);
+        var o = res.Value!;
         var records = new List<NetflowRecord>();
         foreach (var line in Lines(o))
         {
@@ -359,21 +371,22 @@ public class PacketAnalysisToolkit : Toolkit
     /// <summary>
     /// Runs the Suricata signature IDS over <paramref name="pcap"/>, writing its logs to <paramref name="outDir"/>
     /// (created if missing), and returns the parsed alert events from <c>eve.json</c>. Alert lines are filtered
-    /// server-side before transfer. Null only if Suricata could not run. An empty array means "ran clean, no
-    /// alerts" (or no ruleset loaded — provision with <c>suricata-update</c>).
+    /// server-side before transfer. A failed result only if Suricata could not run; an empty array means "ran
+    /// clean, no alerts" (or no ruleset loaded — provision with <c>suricata-update</c>).
     /// </summary>
-    public async Task<SuricataAlert[]?> SuricataAsync(string pcap, string outDir, bool sudo = false)
+    public async Task<ToolResult<SuricataAlert[]>> SuricataAsync(string pcap, string outDir, bool sudo = false)
     {
         auditEnvironment.FailIfEvidenceSpoliationRisk(outDir);
         await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {Q(outDir)}", false);
-        if (await RunAsync("Suricata", $"-r {Q(pcap)} -l {Q(outDir)}", sudo || Tools["Suricata"].Sudo) is null) return null;
+        var res = await RunAsync("Suricata", $"-r {Q(pcap)} -l {Q(outDir)}", sudo || Tools["Suricata"].Sudo);
+        if (!res.Ok) return ToolResult<SuricataAlert[]>.Fail(res.FailureReason!);
         if (Tools["Suricata"].Sudo || sudo)
             await auditEnvironment.ExecuteCommandAsync("chown", $"-R $(id -un):$(id -gn) {Q(outDir)}", true);
 
         // Pull only the alert lines out of (a potentially large) eve.json.
         var eve = $"{outDir.TrimEnd('/')}/eve.json";
         var r = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"grep '\\\"event_type\\\":\\\"alert\\\"' {Q(eve)} 2>/dev/null\"", false);
-        if (!r.IsCompleted) return [];
+        if (!r.IsCompleted) return ToolResult<SuricataAlert[]>.Pass([]);
         var alerts = new List<SuricataAlert>();
         foreach (var line in Lines(r.Output))
         {
@@ -421,7 +434,7 @@ public class PacketAnalysisToolkit : Toolkit
         if (endEpoch is not null) args.Append($"-B {EpochArg(endEpoch.Value)} ");
         args.Append($"{Q(pcap)} {Q(outFile)}");
         if (firstPacket is not null && lastPacket is not null) args.Append($" {firstPacket}-{lastPacket}");
-        return await RunAsync("Editcap", args.ToString().Trim(), sudo) is not null;
+        return (await RunAsync("Editcap", args.ToString().Trim(), sudo)).Ok;
     }
 
     /// <summary>Merges multiple captures into <paramref name="outFile"/> via <c>mergecap -w</c>. Returns true on success.</summary>
@@ -429,31 +442,40 @@ public class PacketAnalysisToolkit : Toolkit
     {
         if (pcaps.Length == 0) return false;
         auditEnvironment.FailIfEvidenceSpoliationRisk(outFile);
-        return await RunAsync("Mergecap", $"-w {Q(outFile)} {string.Join(" ", pcaps.Select(Q))}", sudo) is not null;
+        return (await RunAsync("Mergecap", $"-w {Q(outFile)} {string.Join(" ", pcaps.Select(Q))}", sudo)).Ok;
     }
     #endregion
 
     #region Helpers
     // Runs a tool that writes files into outDir; creates the dir (as login user), runs, hands files back, lists them.
-    private async Task<string[]?> RunToDirAsync(string outDir, bool sudo, Func<Task<string?>> run)
+    private async Task<ToolResult<string[]>> RunToDirAsync(string outDir, bool sudo, Func<Task<ToolResult<string>>> run)
     {
         auditEnvironment.FailIfEvidenceSpoliationRisk(outDir);
         await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {Q(outDir)}", false);
-        if (await run() is null) return null;
+        var res = await run();
+        if (!res.Ok) return ToolResult<string[]>.Fail(res.FailureReason!);
         if (sudo) await auditEnvironment.ExecuteCommandAsync("chown", $"-R $(id -un):$(id -gn) {Q(outDir)}", true);
         var find = await auditEnvironment.ExecuteCommandAsync("find", $"{Q(outDir)} -maxdepth 1 -type f -printf '%p\\n'", false);
         return find.IsCompleted
             ? find.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToArray()
-            : [];
+            : System.Array.Empty<string>();
     }
 
-    private async Task<string?> RunAsync(string name, string args, bool sudo)
+    // Runs a tool and returns its stdout as a ToolResult: a failed result names the tool when it is unavailable on
+    // the platform, or carries the command's error output when it ran but failed — the distinction a bare null hid.
+    private async Task<ToolResult<string>> RunAsync(string name, string args, bool sudo)
     {
+        if (!Tools[name].Available)
+            return ToolResult<string>.Fail($"{name} is not available on platform '{platform}'.");
         var r = await auditEnvironment.ExecuteCommandAsync(Tools[name].Command, args, Tools[name].Sudo || sudo);
-        if (r.IsCompleted) return r.Output;
+        if (r.IsCompleted) return r.Output ?? "";
         Error($"Failed to execute tool command {Tools[name].Command} {args}: {r.Output}.");
-        return null;
+        return ToolResult<string>.Fail($"{name} command failed: {Short(r.Output)}");
     }
+
+    // Condenses tool error output into a single-line reason for a failed ToolResult (avoids dumping huge stderr).
+    private static string Short(string? s) =>
+        string.IsNullOrWhiteSpace(s) ? "(no output)" : (s.Length > 200 ? s[..200] + "…" : s).Replace("\r", " ").Replace("\n", " ").Trim();
 
     // tshark/conv byte values use decimal SI units (kB=1000). Returns bytes as a long.
     private static long Si(string num, string unit)
