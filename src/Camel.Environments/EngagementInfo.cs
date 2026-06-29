@@ -88,6 +88,26 @@ public enum EngagementPosture
     Client      // strict: every non-loopback target needs an authorizing document
 }
 
+/// <summary>The class of offensive activity a toolkit method performs, the axis the engagement's
+/// <see cref="EngagementInfo.AllowedActivities"/> allow-list governs (the RoE's "allowable / unallowable
+/// activities", NIST SP 800-115 App. B §5.2). The information-gathering classes are an always-permitted baseline
+/// (still gated by scope + tier); the intrusive classes must be explicitly authorized, and
+/// <see cref="DenialOfService"/> / <see cref="SocialEngineering"/> are never permitted unless explicitly listed.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum ActivityClass
+{
+    Recon,             // passive / OSINT information gathering (baseline)
+    Scan,              // active host / port / service scanning (baseline)
+    Enumerate,         // service enumeration (baseline)
+    VulnScan,          // automated vulnerability scanning (baseline)
+    Exploit,           // exploitation attempts (intrusive - opt-in)
+    CredentialAttack,  // password attacks: brute force / spraying / stuffing (intrusive - opt-in)
+    PostExploit,       // post-exploitation, lateral movement, installing/modifying/executing files on a target (opt-in)
+    Exfiltration,      // data exfiltration, even simulated (opt-in)
+    SocialEngineering, // phishing, pretexting, physical (never baseline - explicit only)
+    DenialOfService    // DoS / stress / resource exhaustion (never baseline - explicit only)
+}
+
 /// <summary>The ownership tier of a target's address, a proxy for "do we provably own this?" used to decide how
 /// strong the proof of authorization must be. Ordered most-permissive to most-restrictive so the most-restrictive
 /// tier across a set of resolved addresses can be taken with <c>Max</c>.</summary>
@@ -176,6 +196,42 @@ public static class EngagementAuthorization
     };
 }
 
+/// <summary>The always-permitted baseline of offensive activity classes — the non-exploitative information-gathering
+/// phases (still gated by scope + tier). An engagement's <see cref="EngagementInfo.AllowedActivities"/> *adds* the
+/// intrusive classes on top; <see cref="ActivityClass.DenialOfService"/> and <see cref="ActivityClass.SocialEngineering"/>
+/// are never baseline and must be listed explicitly.</summary>
+public static class EngagementActivities
+{
+    public static readonly ActivityClass[] Baseline =
+        [ActivityClass.Recon, ActivityClass.Scan, ActivityClass.Enumerate, ActivityClass.VulnScan];
+}
+
+/// <summary>The effective intensity caps an offensive operation runs under (the resolved result of merging the
+/// engagement's optional caps with the server's configured defaults — see
+/// <see cref="AuditEnvironment.EffectiveThrottle"/>). Intensity is fail-<em>safe</em>, never uncapped: an
+/// unspecified engagement cap falls back to the appsettings default (and a built-in constant if even that is
+/// absent). The <c>*Source</c> flags say whether each cap came from the engagement or the settings default, so the
+/// report can state it.</summary>
+/// <param name="MaxPacketRate">Effective scan packet-rate cap (packets/sec).</param>
+/// <param name="MaxConcurrentTargets">Effective cap on concurrently-acted-on targets.</param>
+/// <param name="RateFromEngagement">True if the rate came from the engagement; false if from the settings default.</param>
+/// <param name="ConcurrencyFromEngagement">True if the concurrency cap came from the engagement; false if default.</param>
+public record EngagementThrottle(
+    int MaxPacketRate, int MaxConcurrentTargets, bool RateFromEngagement, bool ConcurrencyFromEngagement)
+{
+    /// <summary>Built-in safe fallback used when neither the engagement nor appsettings specifies a packet-rate cap.</summary>
+    public const int FallbackMaxPacketRate = 1000;
+
+    /// <summary>Built-in safe fallback used when neither the engagement nor appsettings specifies a target-concurrency cap.</summary>
+    public const int FallbackMaxConcurrentTargets = 16;
+
+    /// <summary>"engagement" or "default (appsettings)" — the provenance of the rate cap, for the report.</summary>
+    public string RateSource => RateFromEngagement ? "engagement" : "default (appsettings)";
+
+    /// <summary>"engagement" or "default (appsettings)" — the provenance of the concurrency cap, for the report.</summary>
+    public string ConcurrencySource => ConcurrencyFromEngagement ? "engagement" : "default (appsettings)";
+}
+
 /// <summary>A named point of contact for an engagement (a row of the RoE's Personnel / call-tree table). Recorded
 /// only; surfaced in <c>EngagementStatus</c> and the report's Contact Information section. Mark the incident/
 /// emergency contact via <paramref name="Role"/> so the report's incident-handling reference has someone to name.</summary>
@@ -191,8 +247,71 @@ public record EngagementContact(string Name, string Role, string Email = "", str
 /// <param name="StartLocal">Daily start time, "HH:mm" in <paramref name="TimeZone"/> (e.g. "09:00").</param>
 /// <param name="EndLocal">Daily end time, "HH:mm" in <paramref name="TimeZone"/> (e.g. "17:00").</param>
 /// <param name="Days">Weekdays testing is permitted (e.g. ["Mon","Tue","Wed","Thu","Fri"]); empty = any day.</param>
-/// <param name="TimeZone">The time zone the times are expressed in (e.g. "America/New_York"); empty = unspecified.</param>
-public record TestingHours(string StartLocal = "", string EndLocal = "", string[]? Days = null, string TimeZone = "");
+/// <param name="TimeZone">The time zone the times are expressed in (e.g. "America/New_York"); empty = UTC.</param>
+public record TestingHours(string StartLocal = "", string EndLocal = "", string[]? Days = null, string TimeZone = "")
+{
+    // Resolve the zone id; empty = UTC, and an unknown id falls back to UTC (Problems() reports an unknown id at
+    // registration, so by enforcement/display time the id has already been validated).
+    private TimeZoneInfo Zone()
+    {
+        if (string.IsNullOrWhiteSpace(TimeZone)) return TimeZoneInfo.Utc;
+        try { return TimeZoneInfo.FindSystemTimeZoneById(TimeZone); } catch { return TimeZoneInfo.Utc; }
+    }
+
+    /// <summary>True if <paramref name="nowUtc"/>, converted to this window's zone, falls on a permitted weekday
+    /// AND within the daily start-end time. Midnight-wrap aware (end &lt;= start spans midnight). An empty
+    /// <see cref="Days"/> means any day; unparseable/empty start-end times drop the time-of-day check (leaving the
+    /// weekday check) — registration <see cref="Problems"/> is the guard against malformed input.</summary>
+    public bool Contains(DateTime nowUtc)
+    {
+        var local = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc), Zone());
+        if (Days is { Length: > 0 } days && !days.Any(d => DayMatches(d, local.DayOfWeek))) return false;
+        if (TimeOnly.TryParse(StartLocal, out var start) && TimeOnly.TryParse(EndLocal, out var end))
+        {
+            var t = TimeOnly.FromDateTime(local);
+            bool within = end <= start ? (t >= start || t < end) : (t >= start && t <= end);
+            if (!within) return false;
+        }
+        return true;
+    }
+
+    /// <summary>Registration-time validation problems (empty when valid): a non-empty <see cref="TimeZone"/> must
+    /// resolve, any supplied <see cref="StartLocal"/>/<see cref="EndLocal"/> must parse as a time, and each
+    /// <see cref="Days"/> token must name a weekday.</summary>
+    public IEnumerable<string> Problems()
+    {
+        if (!string.IsNullOrWhiteSpace(TimeZone))
+        {
+            var ok = true;
+            try { _ = TimeZoneInfo.FindSystemTimeZoneById(TimeZone); } catch { ok = false; }
+            if (!ok) yield return $"TestingHours.timeZone '{TimeZone}' is not a known time zone.";
+        }
+        if (!string.IsNullOrWhiteSpace(StartLocal) && !TimeOnly.TryParse(StartLocal, out _))
+            yield return $"TestingHours.startLocal '{StartLocal}' is not a valid HH:mm time.";
+        if (!string.IsNullOrWhiteSpace(EndLocal) && !TimeOnly.TryParse(EndLocal, out _))
+            yield return $"TestingHours.endLocal '{EndLocal}' is not a valid HH:mm time.";
+        foreach (var d in Days ?? [])
+            if (!Enum.GetValues<DayOfWeek>().Any(dow => DayMatches(d, dow)))
+                yield return $"TestingHours.days entry '{d}' is not a weekday name.";
+    }
+
+    /// <summary>Human-readable one-liner for EngagementStatus / the report (e.g. "09:00-17:00 America/New_York Mon/Fri").</summary>
+    public override string ToString()
+    {
+        var t = string.IsNullOrWhiteSpace(StartLocal) && string.IsNullOrWhiteSpace(EndLocal) ? "any time" : $"{StartLocal}-{EndLocal}";
+        var tz = string.IsNullOrWhiteSpace(TimeZone) ? "UTC" : TimeZone;
+        var days = Days is { Length: > 0 } ? string.Join("/", Days) : "any day";
+        return $"{t} {tz} {days}";
+    }
+
+    // A token matches a weekday if it is a >=2-char case-insensitive prefix of the full weekday name
+    // ("Mon"/"Monday" -> Monday; "Tu"/"Tue" -> Tuesday; "Th" -> Thursday). >=2 chars disambiguates T/S pairs.
+    private static bool DayMatches(string token, DayOfWeek d)
+    {
+        token = token.Trim();
+        return token.Length >= 2 && d.ToString().StartsWith(token, StringComparison.OrdinalIgnoreCase);
+    }
+}
 
 /// <summary>
 /// Identifies the authorization under which a red-team engagement runs: who authorized it, the
@@ -231,6 +350,16 @@ public record TestingHours(string StartLocal = "", string EndLocal = "", string[
 /// <param name="AuthorizedTools">Tools the RoE authorizes the team to use (RoE "Test Equipment"). Record-only.</param>
 /// <param name="TestingHours">The permitted daily testing-hours window (RoE "Test Schedule"). Record-only for now;
 /// the enforced time control is the ValidFrom/Until window.</param>
+/// <param name="AllowedActivities">The intrusive offensive activity classes this engagement authorizes, *added* to
+/// the always-permitted <see cref="EngagementActivities.Baseline"/> (recon/scan/enumerate/vuln-scan). An offensive
+/// toolkit method whose <see cref="ActivityClass"/> is neither baseline nor listed here is refused
+/// (<see cref="ActivityNotAuthorizedException"/>). <see cref="ActivityClass.DenialOfService"/> and
+/// <see cref="ActivityClass.SocialEngineering"/> are only ever permitted by listing them here explicitly.</param>
+/// <param name="MaxPacketRate">Optional cap on scan packet rate (packets/sec). Null = use the server's configured
+/// default (fail-safe, never uncapped); set a value to raise/lower it for this engagement. See
+/// <see cref="AuditEnvironment.EffectiveThrottle"/>.</param>
+/// <param name="MaxConcurrentTargets">Optional cap on how many targets an offensive toolkit acts on concurrently.
+/// Null = use the server's configured default. Bounds scan fan-out to limit load on the target network.</param>
 public record EngagementInfo(
     string EngagementId,
     string Client,
@@ -248,8 +377,21 @@ public record EngagementInfo(
     string TestType = "",
     bool Announced = true,
     string[]? AuthorizedTools = null,
-    TestingHours? TestingHours = null)
+    TestingHours? TestingHours = null,
+    ActivityClass[]? AllowedActivities = null,
+    int? MaxPacketRate = null,
+    int? MaxConcurrentTargets = null)
 {
+    /// <summary>True if <paramref name="activity"/> is permitted: either a baseline class or one explicitly listed
+    /// in <see cref="AllowedActivities"/>.</summary>
+    public bool IsActivityAllowed(ActivityClass activity) =>
+        EngagementActivities.Baseline.Contains(activity) || (AllowedActivities ?? []).Contains(activity);
+
+    /// <summary>The full set of permitted activity classes (baseline plus the engagement's additions), for display.</summary>
+    [JsonIgnore]
+    public IEnumerable<ActivityClass> EffectiveActivities =>
+        EngagementActivities.Baseline.Concat(AllowedActivities ?? []).Distinct();
+
     /// <summary>True if at least one supplied document is of a kind that actually authorizes testing
     /// (RoE / authorization letter / contract) — an NDA-only engagement is false. The backing-authorization
     /// signal the scope tiering uses for public/strict targets.</summary>
@@ -259,6 +401,11 @@ public record EngagementInfo(
     /// <summary>True if the operator supplied an internal-authorization waiver reason.</summary>
     [JsonIgnore]
     public bool HasInternalWaiver => !string.IsNullOrWhiteSpace(InternalAuthorizationWaiver);
+
+    /// <summary>True if no testing-hours window is set, or <paramref name="nowUtc"/> falls within it. The recurring
+    /// daily/weekday window is advisory (surfaced in EngagementStatus and warned at registration); the enforced
+    /// time control remains the <see cref="ValidFromUtc"/>/<see cref="ValidUntilUtc"/> span.</summary>
+    public bool IsWithinTestingHours(DateTime nowUtc) => TestingHours?.Contains(nowUtc) ?? true;
 
     /// <summary>True if <paramref name="nowUtc"/> falls inside the authorized window.</summary>
     public bool IsWithinWindow(DateTime nowUtc) => nowUtc >= ValidFromUtc && nowUtc <= ValidUntilUtc;
@@ -301,6 +448,18 @@ public class OutOfScopeException(ScopeDecision decision)
 /// </summary>
 public class EngagementRequiredException()
     : Exception("No engagement is registered for this session. Call SetEngagement with the authorized scope and validity window before running any offensive tool.");
+
+/// <summary>
+/// Thrown when an offensive operation performs an activity class the registered engagement does not authorize
+/// (e.g. exploitation, credential attacks, DoS, or social engineering that the RoE did not permit). The
+/// activity-class counterpart of <see cref="OutOfScopeException"/>: scope answers "where", this answers "what".
+/// </summary>
+public class ActivityNotAuthorizedException(ActivityClass activity)
+    : Exception($"The '{activity}' activity is not authorized by the registered engagement and was refused. " +
+                $"Add '{activity}' to the engagement's AllowedActivities to authorize it.")
+{
+    public ActivityClass Activity { get; } = activity;
+}
 
 /// <summary>
 /// Thrown when a target-keyed external query (e.g. a Shodan host lookup) would disclose a client asset to a

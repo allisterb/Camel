@@ -72,5 +72,25 @@ public abstract class OffensiveToolkit : Toolkit
     /// range — rather than throwing, which <see cref="GuardTarget"/> would do.
     /// </summary>
     protected bool IsTargetInScope(string target) => auditEnvironment.EvaluateScope(target).InScope;
+
+    /// <summary>
+    /// Refuses to perform <paramref name="activity"/> unless the registered engagement authorizes that activity
+    /// class (a baseline class, or one in <see cref="EngagementInfo.AllowedActivities"/>) — recording an
+    /// <c>activity-violation</c> audit event and throwing <see cref="ActivityNotAuthorizedException"/> otherwise
+    /// (or <see cref="EngagementRequiredException"/> when nothing is registered). Call it at the start of every
+    /// offensive toolkit method to declare what the method does: scope answers "where", this answers "what".
+    /// DoS and social engineering are refused unless the engagement explicitly lists them.
+    /// </summary>
+    protected void GuardActivity(ActivityClass activity)
+    {
+        if (!auditEnvironment.EngagementRegistered) throw new EngagementRequiredException();
+        if (!auditEnvironment.IsActivityAllowed(activity))
+        {
+            AuditEvent("activity-violation",
+                "Refused {Activity} activity in toolkit {Toolkit}: not authorized by the registered engagement.",
+                activity, name);
+            throw new ActivityNotAuthorizedException(activity);
+        }
+    }
     #endregion
 }

@@ -514,6 +514,51 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         if (!ExternalDisclosureAllowed) throw new ExternalDisclosureForbiddenException();
     }
 
+    /// <summary>True when an engagement is registered and it permits <paramref name="activity"/> (a baseline class
+    /// or one in its <see cref="EngagementInfo.AllowedActivities"/>). The activity-class counterpart of
+    /// <see cref="EvaluateScope"/>: scope answers "where", this answers "what".</summary>
+    public bool IsActivityAllowed(ActivityClass activity) =>
+        engagementRegistered && Engagement is not null && Engagement.IsActivityAllowed(activity);
+
+    /// <summary>
+    /// Refuses an offensive operation whose <paramref name="activity"/> class the registered engagement does not
+    /// authorize — throwing <see cref="ActivityNotAuthorizedException"/> (or <see cref="EngagementRequiredException"/>
+    /// when nothing is registered). The activity-class counterpart of <see cref="FailIfOutOfScope"/>; call it from an
+    /// offensive toolkit method (via <c>OffensiveToolkit.GuardActivity</c>) before acting.
+    /// </summary>
+    public void FailIfActivityNotAuthorized(ActivityClass activity)
+    {
+        if (!engagementRegistered) throw new EngagementRequiredException();
+        if (!IsActivityAllowed(activity)) throw new ActivityNotAuthorizedException(activity);
+    }
+
+    /// <summary>The server-configured default scan packet-rate cap (packets/sec), used when the registered
+    /// engagement does not specify one. Set from <c>PenTest:DefaultMaxPacketRate</c> at
+    /// <see cref="CreateFromConfig"/>; defaults to <see cref="EngagementThrottle.FallbackMaxPacketRate"/>.</summary>
+    public int DefaultMaxPacketRate { get; set; } = EngagementThrottle.FallbackMaxPacketRate;
+
+    /// <summary>The server-configured default cap on concurrently-acted-on targets, used when the engagement does
+    /// not specify one. Set from <c>PenTest:DefaultMaxConcurrentTargets</c>; defaults to
+    /// <see cref="EngagementThrottle.FallbackMaxConcurrentTargets"/>.</summary>
+    public int DefaultMaxConcurrentTargets { get; set; } = EngagementThrottle.FallbackMaxConcurrentTargets;
+
+    /// <summary>
+    /// Resolves the effective intensity caps an offensive operation runs under: each cap is the engagement's value
+    /// when it specified one, else the server's configured default (fail-safe — never uncapped). The returned
+    /// <see cref="EngagementThrottle"/> also records, per cap, whether it came from the engagement or the default,
+    /// so the toolkits can apply it and the report can state it.
+    /// </summary>
+    public EngagementThrottle EffectiveThrottle()
+    {
+        var e = Engagement;
+        bool rateFromEng = e?.MaxPacketRate is > 0;
+        bool concFromEng = e?.MaxConcurrentTargets is > 0;
+        return new EngagementThrottle(
+            rateFromEng ? e!.MaxPacketRate!.Value : DefaultMaxPacketRate,
+            concFromEng ? e!.MaxConcurrentTargets!.Value : DefaultMaxConcurrentTargets,
+            rateFromEng, concFromEng);
+    }
+
     /// <summary>
     /// Preflight a proposed engagement before registering it: every scope entry must parse and the window must
     /// be non-empty and not already in the past. The <c>SetEngagement</c> tool refuses registration when this is
@@ -529,6 +574,7 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         if (!e.Included.Any())                  problems.Add("No in-scope targets — nothing would be authorized.");
         foreach (var t in e.Scope ?? Array.Empty<ScopeTarget>())
             if (!ScopeEntryParses(t)) problems.Add($"Unparseable scope entry: {t.Kind} '{t.Value}'.");
+        if (e.TestingHours is { } th) problems.AddRange(th.Problems());   // refuse a malformed testing-hours window
         return new EngagementSummary(problems.Count == 0, problems.ToArray());
     }
 
@@ -1448,6 +1494,11 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         var environmentType = Enum.Parse<EnvironmentType>(GetRequiredValue(config, $"{platform}:Environment"));
         // Optional cap on concurrent async executions (0/absent = unlimited).
         int maxConcurrent = int.TryParse(config[$"{platform}:MaxConcurrentExecutions"], out var n) ? n : 0;
+        // Offensive intensity defaults (fail-safe, used when an engagement does not specify its own caps). Unlike
+        // MaxConcurrentExecutions these are NOT platform-scoped — a packet rate is a property of the target network,
+        // not the box we run from — so they live under a top-level PenTest section. Absent = built-in safe fallback.
+        int defaultRate = int.TryParse(config["PenTest:DefaultMaxPacketRate"], out var r) ? r : EngagementThrottle.FallbackMaxPacketRate;
+        int defaultConc = int.TryParse(config["PenTest:DefaultMaxConcurrentTargets"], out var c) ? c : EngagementThrottle.FallbackMaxConcurrentTargets;
         AuditEnvironment env;
         if (environmentType == EnvironmentType.Local)
         {
@@ -1463,6 +1514,8 @@ public abstract class AuditEnvironment : Runtime, IDisposable
         }
         else throw new Exception($"Invalid environment type specified in configuration: {environmentType.ToString()}");
         env.MaxConcurrentExecutions = maxConcurrent;
+        env.DefaultMaxPacketRate = defaultRate;
+        env.DefaultMaxConcurrentTargets = defaultConc;
         return env;
     }
     #endregion
