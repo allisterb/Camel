@@ -169,6 +169,33 @@ set option → `MsfModuleContext.Get`. Two details make it correct: it implement
 the wrapper to an `ExpandoObject` and the call throws); and because it forwards to the default wrapper rather than
 being a dictionary, it exposes **exactly** the context's documented surface — no `Dictionary` members leak in.
 
+### Hallucination posture (what the sugar costs, and the guard)
+
+The property sugar has one real cost: `m.AnyName = x` *always* writes to the datastore, so a hallucinated or
+mistyped **option name** can no longer be caught by "is that a member?" — Metasploit itself silently ignores
+unknown datastore keys, so the bad setting just does nothing. This is the one place the SDK is dynamic, so the
+guards are graduated:
+
+- **Methods are self-guarding, and unified with the global case.** Calling a method that doesn't exist
+  (`m.Frobnicate()`) is a hard JS error, so a hallucinated *method* cannot pass silently. It also flows through the
+  shared hallucination classifier in `CamelMCPTools.Execute`: Jint reports any invented method generically as
+  `Property 'Name' of object is not a function` (it doesn't name the object), and since Camel methods are PascalCase
+  by convention, the classifier flags a PascalCase missing method as an invented SDK call and nudges the agent back
+  to the docs — the *same* handling whether the method was invented on a toolkit global or on a value it returned
+  (a `HostScan`, an `MsfModuleContext`, a session). So the fluent Metasploit objects need no bespoke method-guard;
+  only the silent option-*name* case below is Metasploit-specific. (We can't extend hard-failing to property *reads*
+  via Jint's `ThrowOnUnresolvedMember` — it also throws on the `.then` probe Jint does when awaiting a CLR result,
+  which breaks every async SDK call. So reads of an invented property return `undefined`, as everywhere in the Camel
+  SDK, and the contract there is the schema doc.)
+- **Option names are discoverable.** `m.Options` is the authoritative per-module list (from `module.info`,
+  including advanced options); the docs tell the agent to set from it, not from memory.
+- **Unrecognized option names are flagged.** `MetasploitToolkit.UnknownOptionWarnings` compares the datastore
+  against `m.Options` ∪ a universal payload/connection allowlist (`PAYLOAD`/`LHOST`/`LPORT`/…) and surfaces a "did
+  you mean" for anything else, on `m.Warnings` (pre-run) and `run.Result.Warnings` (audited as a `hallucination`
+  event). It **warns rather than refuses** — the universal set can't enumerate every payload's options, so a rare
+  false positive must not block a legitimate run; a required-option typo is still caught hard by the
+  required-option preflight (the real option ends up unset).
+
 ---
 
 ## Hard guardrails

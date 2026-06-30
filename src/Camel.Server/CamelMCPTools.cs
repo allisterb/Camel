@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -334,23 +335,41 @@ public abstract class CamelMCPTools : Runtime
     }
 
     /// <summary>
-    /// Heuristically classifies a Jint error message as a probable API hallucination: a reference to an undefined
-    /// name, or a call to a non-existent method, where the message names a Camel <c>*Toolkit</c>/<c>*Workflow</c>.
-    /// Scoped to those tokens so ordinary undeclared-variable typos and language-feature gaps are not misfiled.
+    /// Heuristically classifies a Jint error message as a probable Camel-API hallucination — the agent invented a
+    /// global or a method that the SDK does not define — so the catch in <see cref="Execute"/> can record a
+    /// <c>hallucination</c> event and nudge the agent back to the documented surface. Two shapes are recognized:
+    /// <list type="bullet">
+    /// <item>an invented <b>method</b>, which Jint reports generically as <c>Property 'Name' of object is not a
+    /// function</c> (it does not name the receiving object). Camel SDK methods are PascalCase by convention, while
+    /// JavaScript built-ins and a script's own helpers are camelCase, so a PascalCase missing method is almost
+    /// always an invented SDK call — on a toolkit/workflow global OR on a value one returned (a <c>HostScan</c>, an
+    /// <c>MsfModuleContext</c>, a session, …). This is what catches e.g. <c>m.Frobnicate()</c> on the fluent
+    /// Metasploit context, unifying it with the global case (a hallucinated option <i>name</i> does not throw, so it
+    /// is handled separately by the toolkit's option-warnings).</item>
+    /// <item>an invented <b>global object</b>, reported as <c>&lt;Name&gt; is not defined</c>; scoped to
+    /// <c>*Toolkit</c>/<c>*Workflow</c> names so an ordinary undeclared-variable typo is not misfiled.</item>
+    /// </list>
     /// Returns a human-readable reason, or <c>null</c> when the error is not hallucination-shaped.
     /// </summary>
     static string? ClassifyHallucination(string? jsErrorMessage)
     {
         if (string.IsNullOrEmpty(jsErrorMessage)) return null;
-        var namesApi = jsErrorMessage.Contains("Toolkit", StringComparison.Ordinal)
-                       || jsErrorMessage.Contains("Workflow", StringComparison.Ordinal);
-        if (!namesApi) return null;
-        if (jsErrorMessage.Contains("is not defined", StringComparison.OrdinalIgnoreCase))
+
+        // Invented method: PascalCase missing member => an invented SDK method (camelCase => JS builtin / own code).
+        if (NotAFunctionRegex.Match(jsErrorMessage) is { Success: true } m
+            && m.Groups[1].Value is { Length: > 0 } method && char.IsUpper(method[0]))
+            return $"called a method that does not exist on a Camel SDK object ({jsErrorMessage})";
+
+        // Invented global: scope to *Toolkit/*Workflow so a script's own undeclared-variable typo is not misfiled.
+        if ((jsErrorMessage.Contains("Toolkit", StringComparison.Ordinal) || jsErrorMessage.Contains("Workflow", StringComparison.Ordinal))
+            && jsErrorMessage.Contains("is not defined", StringComparison.OrdinalIgnoreCase))
             return $"referenced a toolkit/workflow that does not exist ({jsErrorMessage})";
-        if (jsErrorMessage.Contains("is not a function", StringComparison.OrdinalIgnoreCase))
-            return $"called a method that does not exist on a Camel toolkit/workflow ({jsErrorMessage})";
+
         return null;
     }
+
+    // Jint's message for calling a non-existent member: "Property 'Name' of object is not a function".
+    static readonly Regex NotAFunctionRegex = new(@"Property '([^']+)' of object is not a function", RegexOptions.Compiled);
 
     /// <summary>
     /// The audit-handle block appended to every <c>Execute</c> result: the case id and this call's

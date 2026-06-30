@@ -213,4 +213,32 @@ public class AuditedScriptOutputTests : TestsRuntime, IAsyncLifetime
         var lines = File.ReadAllLines(file);
         Assert.Contains(lines, l => l.Contains("\"EventType\":\"hallucination\""));
     }
+
+    [Fact]
+    public async Task InventedMethodOnSdkObjectIsClassifiedAsHallucination()
+    {
+        await using var client = await NewClientAsync();
+
+        // Calling a method the SDK doesn't define surfaces generically as "Property 'Frobnicate' of object is not a
+        // function" (Jint doesn't name the object). Camel methods are PascalCase, so the classifier treats a missing
+        // PascalCase method as an invented SDK call and nudges the agent — the same handling as an invented global,
+        // and the path that also covers an invented method on a returned object (a HostScan, an MsfModuleContext, …).
+        var r = await client.CallToolAsync("Execute", Script("MemoryAnalysisToolkit.Frobnicate('/x');"));
+
+        Assert.Equal(true, r.IsError);
+        Assert.Contains("[possible hallucination]", Text(r));
+    }
+
+    [Fact]
+    public async Task CamelCaseMissingMethodIsNotMisfiledAsHallucination()
+    {
+        await using var client = await NewClientAsync();
+
+        // A lowercase missing method is the script's own logic bug or a JS idiom, NOT an invented SDK API — it must
+        // not be flagged as a hallucination (only the PascalCase SDK-method convention is).
+        var r = await client.CallToolAsync("Execute", Script("var a = [1, 2]; a.frobnicate();"));
+
+        Assert.Equal(true, r.IsError);
+        Assert.DoesNotContain("[possible hallucination]", Text(r));
+    }
 }
