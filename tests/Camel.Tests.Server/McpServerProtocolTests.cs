@@ -213,10 +213,10 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
         await using var client = await NewClientAsync();
 
         // WindowsInfoAsync returns a CLR Task<ToolResult<WindowsInfo[]>>. With ExperimentalFeature.TaskInterop the
-        // JS `await` must resolve it to the ToolResult value (whose .Value is null here, since vol can't run on the
+        // JS `await` must resolve it to the ToolResult value (whose .Result is null here, since vol can't run on the
         // Local test host) rather than hand back an un-awaitable Task object. isNull=true proves the interop works.
         var r = await client.CallToolAsync("Execute",
-            Script("var info = await MemoryAnalysisToolkit.WindowsInfoAsync('/no/such/image'); log('isNull=' + (info.Value === null));"));
+            Script("var info = await MemoryAnalysisToolkit.WindowsInfoAsync('/no/such/image'); log('isNull=' + (info.Result === null));"));
 
         Assert.NotEqual(true, r.IsError);
         Assert.Contains("isNull=true", Text(r));

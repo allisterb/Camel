@@ -4,12 +4,13 @@
 module run and session command stays on the [engagement gate](RedTeamEngagementGate.md) — the principled
 alternative to Metasploit resource (`.rc`) scripts.*
 
-> **Status:** v1 implemented (redserver, uncommitted). The fluent surface
+> **Status:** v1 + v2 implemented (redserver, uncommitted). The fluent surface
 > ([`MetasploitFluent.cs`](../src/Camel.PenTest.Toolkits/Metasploit/MetasploitFluent.cs):
 > `MsfModuleContext` + `MsfSessionHandle`; `UseAsync`/`GetSessionAsync`/`RunDatastoreAsync` on
 > [`MetasploitToolkit`](../src/Camel.PenTest.Toolkits/Metasploit/MetasploitToolkit.cs)) is built on the
 > **same** gate logic and `MsfRpcClient` transport as the one-shot `RunModuleAsync`. The datastore-as-properties
-> sugar (v2) and pivoting (v3) below remain unbuilt.
+> sugar (v2) is the [`MsfModuleContextWrapper`](../src/Camel.Server/MsfModuleContextWrapper.cs) Jint interop hook.
+> Pivoting (v3) remains unbuilt.
 
 > **Local-only during the hackathon freeze.** Like the rest of the red server, this lives on the
 > `redserver` branch and stays off GitHub until the Find Evil! hackathon is over.
@@ -139,7 +140,7 @@ Module paths and option keys are *legitimately* open-ended — and they are chec
 (`module.info` for the module; the module's own option metadata for keys), not invented. So the open-world part is
 validated at runtime, inside a closed-world API.
 
-### The one place Jint interception earns its keep
+### The one place Jint interception earns its keep (v2, built)
 
 The single genuinely-dynamic surface worth sugaring is the **datastore-as-properties**, since a module's options
 vary per module:
@@ -147,14 +148,24 @@ vary per module:
 ```js
 m.RHOSTS  = target;            // sugar for m.Set("RHOSTS", target)
 m.PAYLOAD = "cmd/unix/reverse";
+const set = m.RHOSTS;          // reads it back
 ```
 
 This is a *bounded* dynamic surface — every assignment is an inert key/value datastore write, funneled through the
-same `RunAsync` gate. It is the right use of Jint's member interception (a custom `ObjectInstance.Set(JsValue
-prop, …)` override on `MsfModuleContext`, or a JS `Proxy` set-trap), because it cannot widen what `RunAsync`
-checks. It is **optional sugar**: `Set(key, value)` stays the primary, always-documented surface, so the feature
-can ship later without changing the contract. We deliberately do **not** intercept member *reads* into dynamic
-module resolution (that is the rejected property-chain).
+same `RunAsync` gate. It cannot widen what `RunAsync` checks. It is **optional sugar**: `Set(key, value)` stays the
+primary, always-documented surface. We deliberately do **not** intercept member *reads* into dynamic module
+resolution (the rejected property-chain).
+
+**How it's implemented** ([`MsfModuleContextWrapper`](../src/Camel.Server/MsfModuleContextWrapper.cs)). The
+context cannot derive from a CLR `Dictionary` (Jint's dictionary support *does* give `m.RHOSTS = x`, but it also
+leaks `Clear`/`Count`/`Add`/… onto the JS surface) and `ObjectWrapper` has an internal ctor (can't be subclassed).
+So the sugar is a thin `ObjectInstance` installed via `Options.Interop.WrapObjectHandler` (in `PenTestMCPTools`,
+keeping `MsfModuleContext` itself Jint-free): it **delegates every real member** to a default `ObjectWrapper` over
+the context, and only intercepts *unknown* string property names — a write → `MsfModuleContext.Set`, a read of a
+set option → `MsfModuleContext.Get`. Two details make it correct: it implements `IObjectWrapper` (and overrides
+`ToObject`) so a delegated method like `m.Set(...)` binds its CLR `this` to the context (without this Jint coerces
+the wrapper to an `ExpandoObject` and the call throws); and because it forwards to the default wrapper rather than
+being a dictionary, it exposes **exactly** the context's documented surface — no `Dictionary` members leak in.
 
 ---
 

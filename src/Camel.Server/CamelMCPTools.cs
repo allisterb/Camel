@@ -463,6 +463,8 @@ public abstract class CamelMCPTools : Runtime
     }
 
     protected readonly SessionRegistry registry;
-    readonly Options jsoptions;
+    // protected so an investigation subclass can customize interop (e.g. PenTest installs a WrapObjectHandler for
+    // the fluent Metasploit context's datastore-as-properties sugar).
+    protected readonly Options jsoptions;
 }
 

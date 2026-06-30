@@ -82,7 +82,7 @@ public class McpServerSshIntegrationTests : TestsRuntime, IAsyncLifetime
         await using var client = await NewClientAsync();
 
         // Proof the async tool surface works end-to-end: JS awaits a CLR Task that runs vol over SSH.
-        var script = $"var info = await MemoryAnalysisToolkit.WindowsInfoAsync('{MemoryImage}'); log('rows=' + info.Value.length);";
+        var script = $"var info = await MemoryAnalysisToolkit.WindowsInfoAsync('{MemoryImage}'); log('rows=' + info.Result.length);";
         var r = await client.CallToolAsync("Execute",
             new Dictionary<string, object?> { ["script"] = script });
 
