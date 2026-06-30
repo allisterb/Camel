@@ -58,10 +58,12 @@ MetasploitToolkit                       (existing global; SearchModules / Module
   │      ├─ SetMany({...})   ─▶ this
   │      ├─ Get(key) / Keys / Options / Module / Type
   │      └─ RunAsync()       ─▶ ToolResult<ModuleRunResult>   ◀── THE GATE FIRES HERE  (.Result.SessionId)
-  └─ GetSessionAsync(id) ──────────────▶ ToolResult<MsfSessionHandle>
-                                            ├─ RunCommandAsync(cmd) ─▶ ToolResult<string>  (re-checks peer scope)
-                                            ├─ Info / Type / PeerHost / Id / ViaExploit
-                                            └─ (future) pivot helpers
+  ├─ GetSessionAsync(id) ──────────────▶ ToolResult<MsfSessionHandle>
+  │                                         ├─ RunCommandAsync(cmd) ─▶ ToolResult<string>  (re-checks peer scope)
+  │                                         ├─ StopAsync()          ─▶ ToolResult<bool>    (teardown; Enumerate)
+  │                                         ├─ Info / Type / PeerHost / Id / ViaExploit
+  │                                         └─ (future) pivot helpers
+  └─ StopSessionAsync(id) ─────────────▶ ToolResult<bool>          (close a session by id; teardown)
 ```
 
 - **`MsfModuleContext`** is the msfconsole *module context* in object form. `UseAsync("exploit/multi/samba/usermap_script")`
