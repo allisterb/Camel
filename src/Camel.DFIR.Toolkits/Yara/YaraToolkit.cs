@@ -40,11 +40,16 @@ public class YaraToolkit : Toolkit
     /// Scans <paramref name="scanPath"/> (a file or, with <c>options.Recurse</c>, a directory) using the
     /// YARA rules in <paramref name="rules"/>. <paramref name="options"/> maps to the yara command flags
     /// (recursion, tags/meta/strings output, timeout, threads, compiled rules, etc.). Returns one
-    /// <see cref="YaraMatch"/> per rule/file hit.
+    /// <see cref="YaraMatch"/> per rule/file hit. The <see cref="ToolResult{T}"/> distinguishes "yara not
+    /// installed on this platform" from "the scan command failed"; an empty array means "ran clean, no hits".
     /// </summary>
-    public async Task<YaraMatch[]?> ScanAsync(string rules, string scanPath, YaraOptions? options = null) =>
-        await ExecuteToolTextAsync("Scan", (options?.ToArgs() ?? "") + Q(rules) + " " + Q(scanPath))
-            is { } o ? YaraMatch.ParseAll(o) : null;
+    public async Task<ToolResult<YaraMatch[]>> ScanAsync(string rules, string scanPath, YaraOptions? options = null)
+    {
+        if (!IsToolAvailable("Scan")) return ToolResult<YaraMatch[]>.Fail($"yara is not available on platform '{platform}'.");
+        var o = await ExecuteToolTextAsync("Scan", (options?.ToArgs() ?? "") + Q(rules) + " " + Q(scanPath));
+        if (o is null) return ToolResult<YaraMatch[]>.Fail($"yara scan command failed on platform '{platform}' (see server log).");
+        return YaraMatch.ParseAll(o);
+    }
 
     /// <summary>
     /// Compiles the YARA rules in <paramref name="rules"/> to the binary rules file

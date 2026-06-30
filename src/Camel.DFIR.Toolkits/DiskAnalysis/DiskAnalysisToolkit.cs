@@ -20,11 +20,11 @@ public class DiskAnalysisToolkit : Toolkit
     protected override void InstallMissingTools() => InstallAptPackage("libbde-tools", "/usr/bin/bdemount");
 
     #region EWF tools
-    public async Task<EwfInfo?> EwfInfoAsync(string image) =>
-        await ExecuteToolTextAsync("EwfInfo", Q(image)) is { } o ? Models.EwfInfo.Parse(o) : null;
+    public Task<ToolResult<EwfInfo>> EwfInfoAsync(string image) =>
+        TextResultAsync("EwfInfo", "ewfinfo", Q(image), Models.EwfInfo.Parse);
 
-    public async Task<EwfVerify?> EwfVerifyAsync(string image) =>
-        await ExecuteToolTextAsync("EwfVerify", Q(image)) is { } o ? Models.EwfVerify.Parse(o) : null;
+    public Task<ToolResult<EwfVerify>> EwfVerifyAsync(string image) =>
+        TextResultAsync("EwfVerify", "ewfverify", Q(image), Models.EwfVerify.Parse);
 
     /// <summary>
     /// Mounts <paramref name="image"/> (E01/EWF) read-only at <paramref name="mountDir"/>, exposing
@@ -65,11 +65,11 @@ public class DiskAnalysisToolkit : Toolkit
     /// input. Returns null when there is no BDE volume at the offset (i.e. not a BitLocker volume) or the tool
     /// failed - inspect the returned model's <see cref="Models.BitLockerInfo.IsBitLockerVolume"/> otherwise.
     /// </summary>
-    public async Task<BitLockerInfo?> BdeInfoAsync(string source, int? offset = null,
+    public Task<ToolResult<BitLockerInfo>> BdeInfoAsync(string source, int? offset = null,
         string? recoveryPassword = null, string? password = null, string? bekFile = null, string? fullKey = null) =>
-        await ExecuteToolTextAsync("BdeInfo",
-            $"-u {BdeOffset(offset)}{BdeCredArgs(recoveryPassword, password, bekFile, fullKey)}{Q(source)}") is { } o
-            ? Models.BitLockerInfo.Parse(o) : null;
+        TextResultAsync("BdeInfo", "bdeinfo",
+            $"-u {BdeOffset(offset)}{BdeCredArgs(recoveryPassword, password, bekFile, fullKey)}{Q(source)}",
+            Models.BitLockerInfo.Parse);
 
     /// <summary>
     /// Unlocks and mounts a BitLocker (BDE) volume from <paramref name="volume"/> (a raw device/image) read-only
@@ -95,7 +95,7 @@ public class DiskAnalysisToolkit : Toolkit
     /// <c>bde1</c> device is root-owned). When <paramref name="maxMatches"/> is set the result is capped. Returns
     /// the distinct candidate keys (empty when none), or null when the input is unreadable.
     /// </summary>
-    public async Task<string[]?> SearchBitLockerRecoveryKeysAsync(string input, int? maxMatches = null)
+    public async Task<ToolResult<string[]>> SearchBitLockerRecoveryKeysAsync(string input, int? maxMatches = null)
     {
         // Eight groups of six decimal digits, '-' separated (the 48-digit BitLocker recovery key format).
         const string pattern = "[0-9]{6}-[0-9]{6}-[0-9]{6}-[0-9]{6}-[0-9]{6}-[0-9]{6}-[0-9]{6}-[0-9]{6}";
@@ -104,7 +104,9 @@ public class DiskAnalysisToolkit : Toolkit
         var script = $"strings {Q(input)} | grep -E -o {Q(pattern)} | sort -u{cap}";
         var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(script));
         var r = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"echo {b64} | base64 -d | bash\"", true);
-        return r.IsCompleted ? r.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : null;
+        return r.IsCompleted
+            ? r.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : ToolResult<string[]>.Fail($"BitLocker recovery-key search failed: {Short(r.Output)}");
     }
 
     // bdeinfo/bdemount take -o in BYTES (the rest of this toolkit's offsets are partition start sectors); convert.
@@ -123,19 +125,19 @@ public class DiskAnalysisToolkit : Toolkit
     #endregion
 
     #region Image and partition tools
-    public async Task<ImgStat?> ImgStatAsync(string image) =>
-        await ExecuteToolTextAsync("ImgStat", Q(image)) is { } o ? Models.ImgStat.Parse(o) : null;
+    public Task<ToolResult<ImgStat>> ImgStatAsync(string image) =>
+        TextResultAsync("ImgStat", "img_stat", Q(image), Models.ImgStat.Parse);
 
-    public async Task<MmlsEntry[]?> MmlsAsync(string image) =>
-        await ExecuteToolTextAsync("Mmls", Q(image)) is { } o ? MmlsEntry.ParseAll(o) : null;
+    public Task<ToolResult<MmlsEntry[]>> MmlsAsync(string image) =>
+        TextResultAsync("Mmls", "mmls", Q(image), MmlsEntry.ParseAll);
 
     /// <summary>
     /// Lists the partition table of a raw disk device (e.g. the <c>ewf1</c> exposed by <see cref="EwfMountRawAsync"/>)
     /// via <c>fdisk -l</c>. Each <see cref="PartitionInfo.Start"/> (in sectors) is the offset to pass to
     /// <see cref="EwfMountLoopbackAsync"/> / <see cref="EwfMountNtfsAsync"/> for that partition.
     /// </summary>
-    public async Task<PartitionInfo[]?> ListPartitionsAsync(string disk) =>
-        await ExecuteToolTextAsync("ListPartitions", $"-l {Q(disk)}") is { } o ? PartitionInfo.ParseAll(o) : null;
+    public Task<ToolResult<PartitionInfo[]>> ListPartitionsAsync(string disk) =>
+        TextResultAsync("ListPartitions", "fdisk", $"-l {Q(disk)}", PartitionInfo.ParseAll);
 
     /// <summary>
     /// Mounts a raw <c>.dd</c> disk image read-only at <paramref name="mountDir"/> via loopback. When
@@ -151,8 +153,13 @@ public class DiskAnalysisToolkit : Toolkit
     /// Creates the mount-point directory <c>/mnt/&lt;name&gt;</c> on the workstation (via <c>sudo mkdir -p</c>),
     /// for use when additional mount points are needed. Returns the created path, or null on failure.
     /// </summary>
-    public async Task<string?> MakeMountDirAsync(string name) =>
-        await ExecuteToolTextAsync("MakeMountDir", $"-p {Q($"/mnt/{name}")}") is not null ? $"/mnt/{name}" : null;
+    public async Task<ToolResult<string>> MakeMountDirAsync(string name)
+    {
+        if (!IsToolAvailable("MakeMountDir")) return ToolResult<string>.Fail($"mkdir is not available on platform '{platform}'.");
+        return await ExecuteToolTextAsync("MakeMountDir", $"-p {Q($"/mnt/{name}")}") is not null
+            ? ToolResult<string>.Pass($"/mnt/{name}")
+            : ToolResult<string>.Fail($"Could not create mount dir '/mnt/{name}'.");
+    }
 
     /// <summary>
     /// Creates the directory <paramref name="path"/> (and any missing parents) on the workstation via
@@ -171,13 +178,13 @@ public class DiskAnalysisToolkit : Toolkit
     #endregion
 
     #region Filesystem tools
-    public async Task<FsStat?> FsStatAsync(string image, int? offset = null) =>
-        await ExecuteToolTextAsync("FsStat", Offset(offset) + Q(image)) is { } o ? Models.FsStat.Parse(o) : null;
+    public Task<ToolResult<FsStat>> FsStatAsync(string image, int? offset = null) =>
+        TextResultAsync("FsStat", "fsstat", Offset(offset) + Q(image), Models.FsStat.Parse);
 
-    public async Task<FlsEntry[]?> FlsAsync(string image, int? offset = null, long? inode = null, bool recursive = false, bool deletedOnly = false) =>
-        await ExecuteToolTextAsync("Fls",
+    public Task<ToolResult<FlsEntry[]>> FlsAsync(string image, int? offset = null, long? inode = null, bool recursive = false, bool deletedOnly = false) =>
+        TextResultAsync("Fls", "fls",
             (recursive ? "-r " : "") + (deletedOnly ? "-d " : "") + Offset(offset) + Q(image) +
-            (inode is not null ? $" {inode}" : "")) is { } o ? FlsEntry.ParseAll(o) : null;
+            (inode is not null ? $" {inode}" : ""), FlsEntry.ParseAll);
 
     /// <summary>
     /// Runs <c>fls -r -m</c> against <paramref name="image"/> to produce a mactime <em>bodyfile</em> at
@@ -191,14 +198,14 @@ public class DiskAnalysisToolkit : Toolkit
         return await ExecuteToolTextAsync("Fls", $"-r -m {Q(mountPoint)} {Offset(offset)}{Q(image)} > {Q(outputFile)}") is not null;
     }
 
-    public async Task<Istat?> IstatAsync(string image, long inode, int? offset = null) =>
-        await ExecuteToolTextAsync("Istat", Offset(offset) + Q(image) + $" {inode}") is { } o ? Models.Istat.Parse(o) : null;
+    public Task<ToolResult<Istat>> IstatAsync(string image, long inode, int? offset = null) =>
+        TextResultAsync("Istat", "istat", Offset(offset) + Q(image) + $" {inode}", Models.Istat.Parse);
 
-    public async Task<string?> FfindAsync(string image, long inode, int? offset = null) =>
-        (await ExecuteToolTextAsync("Ffind", Offset(offset) + Q(image) + $" {inode}"))?.Trim();
+    public Task<ToolResult<string>> FfindAsync(string image, long inode, int? offset = null) =>
+        TextResultAsync("Ffind", "ffind", Offset(offset) + Q(image) + $" {inode}", s => s.Trim());
 
-    public async Task<IlsEntry[]?> IlsAsync(string image, int? offset = null) =>
-        await ExecuteToolTextAsync("Ils", Offset(offset) + Q(image)) is { } o ? IlsEntry.ParseAll(o) : null;
+    public Task<ToolResult<IlsEntry[]>> IlsAsync(string image, int? offset = null) =>
+        TextResultAsync("Ils", "ils", Offset(offset) + Q(image), IlsEntry.ParseAll);
 
     /// <summary>
     /// Extracts the content of <paramref name="inode"/> from <paramref name="image"/> and writes
@@ -286,10 +293,12 @@ public class DiskAnalysisToolkit : Toolkit
     }
 
     /// <summary>Returns the SHA-256 hex digest of <paramref name="path"/> on the mounted filesystem, or null on failure.</summary>
-    public async Task<string?> Sha256Async(string path)
+    public async Task<ToolResult<string>> Sha256Async(string path)
     {
         var r = await auditEnvironment.ExecuteCommandAsync("sha256sum", Q(path), false);
-        return r.IsCompleted ? r.Output.Split(' ', 2, StringSplitOptions.TrimEntries)[0] : null;
+        return r.IsCompleted
+            ? r.Output.Split(' ', 2, StringSplitOptions.TrimEntries)[0]
+            : ToolResult<string>.Fail($"sha256sum of '{path}' failed: {Short(r.Output)}");
     }
 
     /// <summary>
@@ -305,11 +314,11 @@ public class DiskAnalysisToolkit : Toolkit
     /// <param name="patterns">Extended-regex patterns; a line matching <em>any</em> of them is returned (grep -f OR semantics).</param>
     /// <param name="ignoreCase">Match case-insensitively (<c>grep -i</c>). Defaults to true.</param>
     /// <param name="maxMatches">When set, stop after this many matching lines (server-side <c>head</c>).</param>
-    public async Task<string[]?> GrepLinesAsync(string path, IEnumerable<string> patterns, bool ignoreCase = true, int? maxMatches = null)
+    public async Task<ToolResult<string[]>> GrepLinesAsync(string path, IEnumerable<string> patterns, bool ignoreCase = true, int? maxMatches = null)
     {
         var pats = patterns.Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
-        if (pats.Length == 0) return [];
-        if (!auditEnvironment.FileExists(path)) return null;
+        if (pats.Length == 0) return ToolResult<string[]>.Pass([]);
+        if (!auditEnvironment.FileExists(path)) return ToolResult<string[]>.Fail($"File '{path}' is not readable on the workstation.");
 
         // Ship the pattern set as a base64 temp file so regex metacharacters never hit the shell; grep -f gives
         // OR semantics across the lines. rc==1 (no match) is normalised to success; rc>=2 (real error) propagates.
@@ -319,7 +328,9 @@ public class DiskAnalysisToolkit : Toolkit
         var cap = maxMatches is int n and > 0 ? $" | head -n {n}" : "";
         var script = $"echo {b64} | base64 -d > {tmp}; grep {flags} -f {tmp} {Q(path)}{cap}; rc=${{PIPESTATUS[0]}}; rm -f {tmp}; exit $((rc==1?0:rc))";
         var r = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"{script}\"", false);
-        return r.IsCompleted ? r.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries) : null;
+        return r.IsCompleted
+            ? r.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            : ToolResult<string[]>.Fail($"grep of '{path}' failed: {Short(r.Output)}");
     }
     #endregion
 
@@ -330,13 +341,14 @@ public class DiskAnalysisToolkit : Toolkit
     /// as well; otherwise only allocated files. When <paramref name="dirInode"/> is supplied (-d) only
     /// that directory's tree is recovered. Returns the number of files recovered, or null on failure.
     /// </summary>
-    public async Task<int?> TskRecoverAsync(string image, string outputDir, bool all, long? dirInode = null, int? offset = null)
+    public async Task<ToolResult<int>> TskRecoverAsync(string image, string outputDir, bool all, long? dirInode = null, int? offset = null)
     {
         auditEnvironment.FailIfEvidenceSpoliationRisk(outputDir);   // never recover files (and chown) onto evidence
+        if (!IsToolAvailable("TskRecover")) return ToolResult<int>.Fail($"tsk_recover is not available on platform '{platform}'.");
         var o = await ExecuteToolTextAsync("TskRecover",
             (all ? "-e " : "") + Offset(offset) + (dirInode is not null ? $"-d {dirInode} " : "") +
             Q(image) + " " + Q(outputDir));
-        if (o is null) return null;
+        if (o is null) return ToolResult<int>.Fail($"tsk_recover failed for '{image}' (see server log).");
         // tsk_recover writes the files itself; under sudo they land root-owned, so hand the
         // recovered tree to the login user ($(id -un) expands before sudo runs).
         if (Tools["TskRecover"].Sudo)
@@ -361,12 +373,13 @@ public class DiskAnalysisToolkit : Toolkit
         return (await auditEnvironment.ExecuteCommandAsync("rm", $"-f {Q(path)}", false)).IsCompleted;
     }
 
-    public async Task<long?> BlklsAsync(string image, string outputFile, int? offset = null, bool slackOnly = false)
+    public async Task<ToolResult<long>> BlklsAsync(string image, string outputFile, int? offset = null, bool slackOnly = false)
     {
         auditEnvironment.FailIfEvidenceSpoliationRisk(outputFile);
+        if (!IsToolAvailable("Blkls")) return ToolResult<long>.Fail($"blkls is not available on platform '{platform}'.");
         if (await ExecuteToolTextAsync("Blkls",
                 (slackOnly ? "-s " : "") + Offset(offset) + Q(image) + " > " + Q(outputFile)) is null)
-            return null;
+            return ToolResult<long>.Fail($"blkls failed for '{image}' (see server log).");
         var r = await auditEnvironment.ExecuteCommandAsync("find", $"{Q(outputFile)} -printf '%s'", false);
         return r.IsCompleted && long.TryParse(r.Output.Trim(), out var n) ? n : 0;
     }
@@ -378,15 +391,17 @@ public class DiskAnalysisToolkit : Toolkit
     /// without an explicit <c>-t</c>). The directory must not already exist (foremost creates it). Returns the
     /// carved files (type/name/size/offset from <c>audit.txt</c>), or null on failure.
     /// </summary>
-    public async Task<CarvedFile[]?> ForemostAsync(string input, string outputDir, string fileTypes = "all", bool sudo = false)
+    public async Task<ToolResult<CarvedFile[]>> ForemostAsync(string input, string outputDir, string fileTypes = "all", bool sudo = false)
     {
         auditEnvironment.FailIfEvidenceSpoliationRisk(outputDir);
         if (ParentDir(outputDir) is { Length: > 0 } parent)
             await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {Q(parent)}", false);
-        if (await RunAsync("Foremost", $"-t {fileTypes} -i {Q(input)} -o {Q(outputDir)}", sudo) is null) return null;
+        var res = await RunAsync("Foremost", $"-t {fileTypes} -i {Q(input)} -o {Q(outputDir)}", sudo);
+        if (!res.Ok) return ToolResult<CarvedFile[]>.Fail(res.FailureReason!);
         await ChownBackAsync(outputDir, sudo || Tools["Foremost"].Sudo);
         var audit = await auditEnvironment.ExecuteCommandAsync("cat", $"{Q(outputDir.TrimEnd('/'))}/audit.txt", false);
-        return audit.IsCompleted ? ParseForemostAudit(audit.Output, outputDir) : [];
+        if (!audit.IsCompleted) return ToolResult<CarvedFile[]>.Pass([]);
+        return ParseForemostAudit(audit.Output, outputDir);
     }
 
     /// <summary>
@@ -395,13 +410,14 @@ public class DiskAnalysisToolkit : Toolkit
     /// signatures are all commented out by default, so supply a conf with the wanted types enabled). Returns the
     /// carved files (discovered under the output tree), or null on failure.
     /// </summary>
-    public async Task<CarvedFile[]?> ScalpelAsync(string input, string outputDir, string? confFile = null, bool sudo = false)
+    public async Task<ToolResult<CarvedFile[]>> ScalpelAsync(string input, string outputDir, string? confFile = null, bool sudo = false)
     {
         auditEnvironment.FailIfEvidenceSpoliationRisk(outputDir);
         if (ParentDir(outputDir) is { Length: > 0 } parent)
             await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {Q(parent)}", false);
         var conf = confFile is not null ? $"-c {Q(confFile)} " : "";
-        if (await RunAsync("Scalpel", $"{conf}-o {Q(outputDir)} {Q(input)}", sudo) is null) return null;
+        var res = await RunAsync("Scalpel", $"{conf}-o {Q(outputDir)} {Q(input)}", sudo);
+        if (!res.Ok) return ToolResult<CarvedFile[]>.Fail(res.FailureReason!);
         await ChownBackAsync(outputDir, sudo || Tools["Scalpel"].Sudo);
         return await ListCarvedAsync(outputDir);
     }
@@ -411,16 +427,16 @@ public class DiskAnalysisToolkit : Toolkit
     /// non-interactively. <paramref name="fileTypes"/> is reserved for future per-type selection; by default
     /// photorec's full signature set is used. Returns the recovered file paths, or null on failure.
     /// </summary>
-    public async Task<string[]?> PhotoRecAsync(string input, string outputDir, string? fileTypes = null, bool sudo = false)
+    public async Task<ToolResult<string[]>> PhotoRecAsync(string input, string outputDir, string? fileTypes = null, bool sudo = false)
     {
         auditEnvironment.FailIfEvidenceSpoliationRisk(outputDir);
         await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {Q(outputDir)}", false);
         // Non-interactive batch form: write the recovered tree under <outputDir>/recup, carve the whole input.
-        if (await RunAsync("PhotoRec", $"/log /d {Q(outputDir.TrimEnd('/') + "/recup")} /cmd {Q(input)} options,search", sudo) is null)
-            return null;
+        var res = await RunAsync("PhotoRec", $"/log /d {Q(outputDir.TrimEnd('/') + "/recup")} /cmd {Q(input)} options,search", sudo);
+        if (!res.Ok) return ToolResult<string[]>.Fail(res.FailureReason!);
         await ChownBackAsync(outputDir, sudo || Tools["PhotoRec"].Sudo);
         var r = await auditEnvironment.ExecuteCommandAsync("find", $"{Q(outputDir)} -type f ! -name 'report.xml' ! -name '*.log' -printf '%p\\n'", false);
-        return r.IsCompleted ? r.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToArray() : [];
+        return r.IsCompleted ? r.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToArray() : System.Array.Empty<string>();
     }
 
     /// <summary>
@@ -429,12 +445,13 @@ public class DiskAnalysisToolkit : Toolkit
     /// phone numbers, IP addresses, …) regardless of filesystem. The directory must not already exist. Returns
     /// the non-empty feature files with their hit counts, or null on failure.
     /// </summary>
-    public async Task<BulkFeatureFile[]?> BulkExtractorAsync(string input, string outputDir, bool sudo = false)
+    public async Task<ToolResult<BulkFeatureFile[]>> BulkExtractorAsync(string input, string outputDir, bool sudo = false)
     {
         auditEnvironment.FailIfEvidenceSpoliationRisk(outputDir);
         if (ParentDir(outputDir) is { Length: > 0 } parent)
             await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {Q(parent)}", false);
-        if (await RunAsync("BulkExtractor", $"-o {Q(outputDir)} {Q(input)}", sudo) is null) return null;
+        var res = await RunAsync("BulkExtractor", $"-o {Q(outputDir)} {Q(input)}", sudo);
+        if (!res.Ok) return ToolResult<BulkFeatureFile[]>.Fail(res.FailureReason!);
         await ChownBackAsync(outputDir, sudo || Tools["BulkExtractor"].Sudo);
         // For each non-empty feature file emit "path<TAB>count<TAB>top|values" — the top values come from the
         // category's *_histogram.txt (lines "n=<count>\t<value>", most-frequent first). One pass, one round trip.
@@ -447,7 +464,7 @@ public class DiskAnalysisToolkit : Toolkit
             "printf '%s\\t%s\\t%s\\n' \"$f\" \"$n\" \"$tv\"; done";
         var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(script));
         var r = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"echo {b64} | base64 -d | bash\"", false);
-        if (!r.IsCompleted) return [];
+        if (!r.IsCompleted) return ToolResult<BulkFeatureFile[]>.Pass([]);
         return r.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(l => l.Split('\t'))
             .Where(p => p.Length >= 2 && long.TryParse(p[1], out _))
@@ -464,10 +481,11 @@ public class DiskAnalysisToolkit : Toolkit
     /// <c>ffd8ffe0</c>) with <c>sigfind</c>, returning the block offsets where it occurs. <paramref name="offset"/>
     /// is a partition start sector. Returns null on failure.
     /// </summary>
-    public async Task<long[]?> SigfindAsync(string image, string signature, int? offset = null)
+    public async Task<ToolResult<long[]>> SigfindAsync(string image, string signature, int? offset = null)
     {
+        if (!IsToolAvailable("Sigfind")) return ToolResult<long[]>.Fail($"sigfind is not available on platform '{platform}'.");
         var o = await ExecuteToolTextAsync("Sigfind", Offset(offset) + Q(signature) + " " + Q(image));
-        if (o is null) return null;
+        if (o is null) return ToolResult<long[]>.Fail($"sigfind failed for '{image}' (see server log).");
         return Regex.Matches(o, @"Block:\s*(\d+)").Select(m => long.Parse(m.Groups[1].Value)).ToArray();
     }
 
@@ -478,13 +496,14 @@ public class DiskAnalysisToolkit : Toolkit
     /// pointers on delete, so recovery is often partial or empty — carving (<see cref="ForemostAsync"/>) is the
     /// fallback. Returns the number of files recovered, or null on failure.
     /// </summary>
-    public async Task<int?> ExtundeleteAsync(string image, string outputDir, bool restoreAll = true, bool sudo = false)
+    public async Task<ToolResult<int>> ExtundeleteAsync(string image, string outputDir, bool restoreAll = true, bool sudo = false)
     {
         auditEnvironment.FailIfEvidenceSpoliationRisk(outputDir);
         await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {Q(outputDir)}", false);
         // extundelete writes RECOVERED_FILES into the CWD, so run it inside outputDir.
         var arg = restoreAll ? "--restore-all" : "";
-        if (await RunAsync("Extundelete", $"{arg} {Q(image)}", sudo, workingDir: outputDir) is null) return null;
+        var res = await RunAsync("Extundelete", $"{arg} {Q(image)}", sudo, workingDir: outputDir);
+        if (!res.Ok) return ToolResult<int>.Fail(res.FailureReason!);
         await ChownBackAsync(outputDir, sudo || Tools["Extundelete"].Sudo);
         var r = await auditEnvironment.ExecuteCommandAsync("find", $"{Q(outputDir.TrimEnd('/') + "/RECOVERED_FILES")} -type f 2>/dev/null | wc -l", false);
         return r.IsCompleted && int.TryParse(r.Output.Trim(), out var n) ? n : 0;
@@ -492,8 +511,8 @@ public class DiskAnalysisToolkit : Toolkit
     #endregion
 
     #region Timeline
-    public async Task<MactimeEntry[]?> MactimeAsync(string bodyfile, string timezone = "UTC") =>
-        await ExecuteToolTextAsync("Mactime", $"-y -d -z {timezone} -b {Q(bodyfile)}") is { } o ? MactimeEntry.ParseAll(o) : null;
+    public Task<ToolResult<MactimeEntry[]>> MactimeAsync(string bodyfile, string timezone = "UTC") =>
+        TextResultAsync("Mactime", "mactime", $"-y -d -z {timezone} -b {Q(bodyfile)}", MactimeEntry.ParseAll);
 
     /// <summary>
     /// Runs <c>mactime</c> over <paramref name="bodyfile"/> and writes the sorted timeline to
@@ -513,14 +532,29 @@ public class DiskAnalysisToolkit : Toolkit
     private static string Q(string path) => $"'{path}'";
     private static string Offset(int? offset) => offset is not null ? $"-o {offset} " : "";
 
+    // Runs an ExecuteToolText-based tool and maps its stdout with `parse`, wrapping the result as a ToolResult: a
+    // failed result names the tool when unavailable on the platform, or reports the command failure otherwise (the
+    // tool-not-installed vs. command-failed distinction a bare null hid — now it matters across platforms).
+    private async Task<ToolResult<T>> TextResultAsync<T>(string tool, string label, string args, Func<string, T> parse)
+    {
+        if (!IsToolAvailable(tool)) return ToolResult<T>.Fail($"{label} is not available on platform '{platform}'.");
+        var o = await ExecuteToolTextAsync(tool, args);
+        return o is null ? ToolResult<T>.Fail($"{label} command failed on platform '{platform}' (see server log).") : parse(o);
+    }
+
+    // Condenses tool error output into a single-line reason for a failed ToolResult.
+    private static string Short(string? s) =>
+        string.IsNullOrWhiteSpace(s) ? "(no output)" : (s.Length > 200 ? s[..200] + "…" : s).Replace("\r", " ").Replace("\n", " ").Trim();
+
     #region Carving helpers
     /// <summary>
     /// Runs tool <paramref name="name"/>, elevating when the per-call <paramref name="sudo"/> or config default is
     /// set. When <paramref name="workingDir"/> is given the command runs inside it (for tools like extundelete
     /// that write into the CWD). Returns stdout, or null (with an error logged) on failure.
     /// </summary>
-    private async Task<string?> RunAsync(string name, string args, bool sudo, string? workingDir = null)
+    private async Task<ToolResult<string>> RunAsync(string name, string args, bool sudo, string? workingDir = null)
     {
+        if (!Tools[name].Available) return ToolResult<string>.Fail($"{name} is not available on platform '{platform}'.");
         var cmd = Tools[name].Command;
         var elevate = Tools[name].Sudo || sudo;
         CommandResult r;
@@ -530,9 +564,9 @@ public class DiskAnalysisToolkit : Toolkit
             r = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"echo {b64} | base64 -d | bash\"", elevate);
         }
         else r = await auditEnvironment.ExecuteCommandAsync(cmd, args, elevate);
-        if (r.IsCompleted) return r.Output;
+        if (r.IsCompleted) return r.Output ?? "";
         Error($"Failed to execute tool command {cmd} {args}: {r.Output}.");
-        return null;
+        return ToolResult<string>.Fail($"{name} command failed: {Short(r.Output)}");
     }
 
     // Hand a tool's output tree back to the login user when the tool ran under sudo (would otherwise be root-owned).

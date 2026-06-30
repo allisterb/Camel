@@ -28,8 +28,8 @@ public partial class LinuxAnalysisWorkflow
         using var _audit = AuditScope();
         using var op = Begin("Analyzing Linux login records under {0}", rootDir);
 
-        var successful = await LinuxAnalysis.LastLoginsAsync(Combine(rootDir, "var/log/wtmp"));
-        var failed = await LinuxAnalysis.FailedLoginsAsync(Combine(rootDir, "var/log/btmp")) ?? [];
+        var successful = (await LinuxAnalysis.LastLoginsAsync(Combine(rootDir, "var/log/wtmp"))).Value;
+        var failed = (await LinuxAnalysis.FailedLoginsAsync(Combine(rootDir, "var/log/btmp"))).Value ?? [];
         if (successful is null)
             return WorkflowResult<LoginActivityReport>.Failure(
                 $"Could not read '{Combine(rootDir, "var/log/wtmp")}'; the path may be wrong or the volume not mounted.");
@@ -104,7 +104,7 @@ public partial class LinuxAnalysisWorkflow
         string[]? lines = null;
         foreach (var c in candidates)
         {
-            lines = await DiskAnalysis.GrepLinesAsync(c, AuthPatterns, ignoreCase: false, maxMatches: 50000);
+            lines = (await DiskAnalysis.GrepLinesAsync(c, AuthPatterns, ignoreCase: false, maxMatches: 50000)).Value;
             if (lines is not null) { logPath = c; break; }
         }
         if (lines is null || logPath is null)

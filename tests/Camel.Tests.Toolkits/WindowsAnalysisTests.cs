@@ -45,7 +45,7 @@ public class WindowsAnalysisTests : TestsRuntime
         const string mft = "/tmp/camel_mft_head";
         sshenv.ExecuteCommand("head", $"-c 16000000 '{Modern}/$MFT' > {mft}", out _, false);
 
-        var r = await toolkit.MFTECmdAsync(mft);
+        var r = (await toolkit.MFTECmdAsync(mft)).Value;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => e.FileName == "$MFT"); // entry 0 is always $MFT
@@ -59,7 +59,7 @@ public class WindowsAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("head", $"-c 16000000 '{Modern}/$MFT' > {mft}", out _, false); // record-aligned extract
         sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, false);
 
-        var r = await toolkit.MFTECmdCsvAsync(mft, outputDir: dir, outputFile: "mft.csv", allTimestamps: true);
+        var r = (await toolkit.MFTECmdCsvAsync(mft, outputDir: dir, outputFile: "mft.csv", allTimestamps: true)).Value;
 
         Assert.NotNull(r);
         Assert.True(r.FileRecords > 0);
@@ -77,7 +77,7 @@ public class WindowsAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("head", $"-c 16000000 '{Modern}/$MFT' > {mft}", out _, false);
         sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, false);
 
-        var r = await toolkit.MFTECmdBodyfileAsync(mft, outputDir: dir, outputFile: "mft.body", driveLetter: "C");
+        var r = (await toolkit.MFTECmdBodyfileAsync(mft, outputDir: dir, outputFile: "mft.body", driveLetter: "C")).Value;
 
         Assert.NotNull(r);
         Assert.True(r.FileRecords > 0);
@@ -104,7 +104,7 @@ public class WindowsAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunLECmd()
     {
-        var r = await toolkit.LECmdAsync($"{Modern}/Users/fredr/AppData/Roaming/Microsoft/Windows/Recent/10l_brianlaiphotography-northcotepoint.lnk");
+        var r = (await toolkit.LECmdAsync($"{Modern}/Users/fredr/AppData/Roaming/Microsoft/Windows/Recent/10l_brianlaiphotography-northcotepoint.lnk")).Value;
         Assert.NotNull(r);
         var lnk = Assert.Single(r);
         Assert.NotEmpty(lnk.SourceFile);
@@ -115,7 +115,7 @@ public class WindowsAnalysisTests : TestsRuntime
     public async Task CanRunSBECmd()
     {
         // This image records no parseable shellbags, so just verify the call path returns a (possibly empty) set.
-        var r = await toolkit.SBECmdAsync($"{Modern}/Users/fredr");
+        var r = (await toolkit.SBECmdAsync($"{Modern}/Users/fredr")).Value;
         Assert.NotNull(r);
     }
 
@@ -126,7 +126,7 @@ public class WindowsAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, false); // clean slate
 
         // The Greg Schardt image's "Mr. Evil" profile NTUSER.DAT has parseable shellbags.
-        var r = await toolkit.SBECmdCsvAsync($"{GregSchardt}/Documents and Settings/Mr. Evil", dir);
+        var r = (await toolkit.SBECmdCsvAsync($"{GregSchardt}/Documents and Settings/Mr. Evil", dir)).Value;
 
         Assert.NotNull(r);
         Assert.True(r.TotalShellBags > 0);
@@ -140,7 +140,7 @@ public class WindowsAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunAppCompatCacheParser()
     {
-        var r = await toolkit.AppCompatCacheParserAsync($"{Modern}/Windows/System32/config/SYSTEM");
+        var r = (await toolkit.AppCompatCacheParserAsync($"{Modern}/Windows/System32/config/SYSTEM")).Value;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => e.Path.Contains(".exe"));
@@ -149,7 +149,7 @@ public class WindowsAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunRBCmd()
     {
-        var r = await toolkit.RBCmdAsync($"{Modern}/$Recycle.Bin/S-1-5-21-528816539-567677750-276746561-1002/$I0JIS5M.lnk");
+        var r = (await toolkit.RBCmdAsync($"{Modern}/$Recycle.Bin/S-1-5-21-528816539-567677750-276746561-1002/$I0JIS5M.lnk")).Value;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => !string.IsNullOrEmpty(e.FileName));
@@ -158,7 +158,7 @@ public class WindowsAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunBstrings()
     {
-        var r = await toolkit.BstringsAsync($"{Modern}/Users/fredr/AppData/Roaming/Microsoft/Windows/Recent/10l_brianlaiphotography-northcotepoint.lnk", minLength: 5);
+        var r = (await toolkit.BstringsAsync($"{Modern}/Users/fredr/AppData/Roaming/Microsoft/Windows/Recent/10l_brianlaiphotography-northcotepoint.lnk", minLength: 5)).Value;
         Assert.NotNull(r);
         Assert.Contains(r, s => s.Contains(".jpg"));
     }
@@ -166,7 +166,7 @@ public class WindowsAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunAmcacheParser()
     {
-        var r = await toolkit.AmcacheParserAsync($"{Modern}/Windows/appcompat/Programs/Amcache.hve");
+        var r = (await toolkit.AmcacheParserAsync($"{Modern}/Windows/appcompat/Programs/Amcache.hve")).Value;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => !string.IsNullOrEmpty(e.SHA1) && !string.IsNullOrEmpty(e.FullPath));
@@ -175,7 +175,7 @@ public class WindowsAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunEvtxECmd()
     {
-        var r = await toolkit.EvtxECmdAsync($"{Modern}/Windows/System32/winevt/Logs/Setup.evtx");
+        var r = (await toolkit.EvtxECmdAsync($"{Modern}/Windows/System32/winevt/Logs/Setup.evtx")).Value;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.All(r, e => Assert.Equal("Setup", e.Channel));
@@ -186,13 +186,13 @@ public class WindowsAnalysisTests : TestsRuntime
     public async Task CanRunEvtxECmdWithIncludeFilter()
     {
         string log = $"{Modern}/Windows/System32/winevt/Logs/Setup.evtx";
-        var all = await toolkit.EvtxECmdAsync(file: log);
+        var all = (await toolkit.EvtxECmdAsync(file: log)).Value;
         Assert.NotNull(all);
         Assert.NotEmpty(all);
 
         // Filtering to a single known-present Event ID (--inc) returns only that ID.
         int id = all[0].EventId;
-        var filtered = await toolkit.EvtxECmdAsync(file: log, includeIds: id.ToString());
+        var filtered = (await toolkit.EvtxECmdAsync(file: log, includeIds: id.ToString())).Value;
         Assert.NotNull(filtered);
         Assert.NotEmpty(filtered);
         Assert.All(filtered, e => Assert.Equal(id, e.EventId));
@@ -212,9 +212,9 @@ public class WindowsAnalysisTests : TestsRuntime
         const string dir = "/tmp/camel_evtx_csv";
         sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, false); // clean slate
 
-        var r = await toolkit.EvtxECmdCsvAsync(
+        var r = (await toolkit.EvtxECmdCsvAsync(
             file: $"{Modern}/Windows/System32/winevt/Logs/Setup.evtx",
-            outputDir: dir, outputFile: "setup.csv");
+            outputDir: dir, outputFile: "setup.csv")).Value;
 
         Assert.NotNull(r);
         Assert.True(r.RecordsIncluded > 0);
@@ -241,7 +241,7 @@ public class WindowsAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunJLECmd()
     {
-        var r = await toolkit.JLECmdAsync($"{Modern}/Users/fredr/AppData/Roaming/Microsoft/Windows/Recent/AutomaticDestinations");
+        var r = (await toolkit.JLECmdAsync($"{Modern}/Users/fredr/AppData/Roaming/Microsoft/Windows/Recent/AutomaticDestinations")).Value;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => !string.IsNullOrEmpty(e.Path));
@@ -251,7 +251,7 @@ public class WindowsAnalysisTests : TestsRuntime
     public async Task CanRunWxTCmd()
     {
         // This image's ActivitiesCache.db files contain no activities; verify the call path returns non-null.
-        var r = await toolkit.WxTCmdAsync($"{Modern}/Users/fredr/AppData/Local/ConnectedDevicesPlatform/e431499dada298ba/ActivitiesCache.db");
+        var r = (await toolkit.WxTCmdAsync($"{Modern}/Users/fredr/AppData/Local/ConnectedDevicesPlatform/e431499dada298ba/ActivitiesCache.db")).Value;
         Assert.NotNull(r);
     }
 
@@ -259,7 +259,7 @@ public class WindowsAnalysisTests : TestsRuntime
     public async Task CanRunRECmd()
     {
         // Batch-parse the mount's registry hives with the bundled DFIR batch file (--bn).
-        var r = await toolkit.RECmdAsync($"{Modern}/Windows/System32/config", DfirBatch);
+        var r = (await toolkit.RECmdAsync($"{Modern}/Windows/System32/config", DfirBatch)).Value;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => !string.IsNullOrEmpty(e.KeyPath) && !string.IsNullOrEmpty(e.HivePath));
@@ -275,7 +275,7 @@ public class WindowsAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("mkdir", $"-p {dir}", out _, false);
         sshenv.ExecuteCommand("cp", $"'{Modern}/Users/fredr/AppData/Local/Google/Chrome/User Data/Default/History' {dir}/", out _, false);
 
-        var r = await toolkit.SQLECmdAsync(dir);
+        var r = (await toolkit.SQLECmdAsync(dir)).Value;
         Assert.NotNull(r);
     }
 
@@ -283,7 +283,7 @@ public class WindowsAnalysisTests : TestsRuntime
     public async Task CanRunRegRipper()
     {
         // The 'run' plugin lists the autostart Run/RunOnce keys from the SOFTWARE hive.
-        var r = await toolkit.RegRipperAsync($"{Modern}/Windows/System32/config/SOFTWARE", "run");
+        var r = (await toolkit.RegRipperAsync($"{Modern}/Windows/System32/config/SOFTWARE", "run")).Value;
         Assert.NotNull(r);
         Assert.Equal("run", r.Plugin);
         Assert.NotEmpty(r.Lines);
@@ -295,7 +295,7 @@ public class WindowsAnalysisTests : TestsRuntime
     public async Task CanParseScheduledTasks()
     {
         // Parse the on-disk Task Scheduler XML tree (UTF-16 files) into typed entries with recovered actions.
-        var r = await toolkit.ScheduledTasksAsync($"{Modern}/Windows/System32/Tasks");
+        var r = (await toolkit.ScheduledTasksAsync($"{Modern}/Windows/System32/Tasks")).Value;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.All(r, t => Assert.NotEmpty(t.TaskFile));
@@ -308,7 +308,7 @@ public class WindowsAnalysisTests : TestsRuntime
     public async Task CanLoadLolbas()
     {
         // The toolkit constructor installs lolbas.json; load it into the queryable index.
-        var lolbas = await toolkit.LoadLolbasAsync();
+        var lolbas = (await toolkit.LoadLolbasAsync()).Value;
         Assert.NotNull(lolbas);
         Assert.True(lolbas.Count > 100, $"expected the full LOLBAS list, got {lolbas.Count}");
         Assert.True(lolbas.IsLolbin("rundll32.exe"));
@@ -336,7 +336,7 @@ public class WindowsAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("mkdir", $"-p {dir}", out _, false);
         sshenv.ExecuteCommand("echo", $"{b64} | base64 -d > {dir}/OBJECTS.DATA", out _, false);
 
-        var r = await toolkit.WmiSubscriptionsAsync($"{dir}/OBJECTS.DATA");
+        var r = (await toolkit.WmiSubscriptionsAsync($"{dir}/OBJECTS.DATA")).Value;
 
         Assert.NotNull(r);
         var c = Assert.Single(r.Consumers);
@@ -354,7 +354,7 @@ public class WindowsAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanGetPstStoreInfo()
     {
-        var r = await toolkit.PffInfoAsync(DlpcOst);
+        var r = (await toolkit.PffInfoAsync(DlpcOst)).Value;
         Assert.NotNull(r);
         Assert.Contains("OST", r!.ContentType ?? "");            // iaman.informant@nist.gov.ost is an Exchange OST
         Assert.True(r.FileSize > 0);
@@ -363,7 +363,7 @@ public class WindowsAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanReadPstMessages()
     {
-        var r = await toolkit.ReadPstAsync(DlpcOst);
+        var r = (await toolkit.ReadPstAsync(DlpcOst)).Value;
         Assert.NotNull(r);
         Assert.NotEmpty(r!.Messages);
         // The Data-Leakage scenario seeds a conversation with spy.conspirator@nist.gov.
@@ -374,11 +374,11 @@ public class WindowsAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanListEseTablesAndParseWebCacheHistory()
     {
-        var info = await toolkit.EsedbInfoAsync(DlpcWebCache);
+        var info = (await toolkit.EsedbInfoAsync(DlpcWebCache)).Value;
         Assert.NotNull(info);
         Assert.Contains("Containers", info!.Tables);
 
-        var entries = await toolkit.WebCacheHistoryAsync(DlpcWebCache);
+        var entries = (await toolkit.WebCacheHistoryAsync(DlpcWebCache)).Value;
         Assert.NotNull(entries);
         Assert.NotEmpty(entries!);
         // Every recovered record is a real URL (http/https/file/…), not a content header or "Host:" marker.
@@ -388,7 +388,7 @@ public class WindowsAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanProfileUsbDevices()
     {
-        var r = await toolkit.UsbDeviceForensicsAsync(DlpcSystem, DlpcSoftware);
+        var r = (await toolkit.UsbDeviceForensicsAsync(DlpcSystem, DlpcSoftware)).Value;
         Assert.NotNull(r);
         Assert.NotEmpty(r!);
         // The case features a SanDisk Cruzer Fit thumb drive used to exfiltrate data.
@@ -398,8 +398,8 @@ public class WindowsAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanQueryBrowserSqlite()
     {
-        var rows = await toolkit.SqliteQueryAsync(DlpcChromeHistory,
-            "SELECT url,title,visit_count,last_visit_time FROM urls ORDER BY last_visit_time DESC LIMIT 10");
+        var rows = (await toolkit.SqliteQueryAsync(DlpcChromeHistory,
+            "SELECT url,title,visit_count,last_visit_time FROM urls ORDER BY last_visit_time DESC LIMIT 10")).Value;
         Assert.NotNull(rows);
         Assert.NotEmpty(rows!);
         Assert.Contains(rows!, r => r.ContainsKey("url"));
@@ -408,7 +408,7 @@ public class WindowsAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanParseLnkDirectory()
     {
-        var r = await toolkit.LECmdDirectoryAsync($"{DlpcUser}/AppData/Roaming/Microsoft/Windows/Recent");
+        var r = (await toolkit.LECmdDirectoryAsync($"{DlpcUser}/AppData/Roaming/Microsoft/Windows/Recent")).Value;
         Assert.NotNull(r);   // an empty Recent folder yields [] (not null); a parse failure yields null
     }
 

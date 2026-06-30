@@ -102,7 +102,7 @@ public class AnomalySpineTests : TestsRuntime
     {
         if (!sshenv.ExecuteCommand("test", $"-f {RegPlaso}", out _, false))
             Assert.True(await api.Timeline.Log2TimelineAsync(SystemHive, RegPlaso, parsers: "winreg"));
-        var events = await api.Timeline.PsortAsync(RegPlaso, "data_type contains 'appcompatcache'");
+        var events = (await api.Timeline.PsortAsync(RegPlaso, "data_type contains 'appcompatcache'")).Value;
         Assert.NotNull(events);
         var canon = EventCanonicalizer.Canonicalize(events);
         Assert.True(canon.Length >= 20);

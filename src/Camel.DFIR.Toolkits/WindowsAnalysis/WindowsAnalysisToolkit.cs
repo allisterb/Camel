@@ -36,19 +36,20 @@ public class WindowsAnalysisToolkit : Toolkit
     /// <see cref="LolbasReference"/> index. Returns null if the dataset is unavailable or unparseable, so callers
     /// degrade gracefully (skip living-off-the-land checks) rather than fail.
     /// </summary>
-    public async Task<LolbasReference?> LoadLolbasAsync()
+    public async Task<ToolResult<LolbasReference>> LoadLolbasAsync()
     {
         var r = await auditEnvironment.ExecuteCommandAsync("cat", Q(LolbasPath), false);
-        return r.IsCompleted ? LolbasReference.Parse(r.Output) : null;
+        return r.IsCompleted ? LolbasReference.Parse(r.Output) : ToolResult<LolbasReference>.Fail($"LOLBAS dataset not available at '{LolbasPath}'.");
     }
 
     #region JSON tools
-    public Task<MFTEntry[]?> MFTECmdAsync(string file) => ExecuteToolJsonAsync<MFTEntry>("MFTECmd", $"-f {Q(file)}");
+    public async Task<ToolResult<MFTEntry[]>> MFTECmdAsync(string file) =>
+        Wrap("MFTECmd", "MFTECmd", await ExecuteToolJsonAsync<MFTEntry>("MFTECmd", $"-f {Q(file)}"));
 
     /// <summary>Parses a USN change journal (<c>$UsnJrnl:$J</c>) with MFTECmd and returns the update records
     /// (file create/delete/rename/data-change events). MFTECmd auto-detects the $J format from the input file.</summary>
-    public Task<UsnJournalEntry[]?> MFTECmdUsnAsync(string usnFile) =>
-        ExecuteToolCsvAsync<UsnJournalEntry>("MFTECmd", $"-f {Q(usnFile)}", UsnJournalEntry.FromRow);
+    public async Task<ToolResult<UsnJournalEntry[]>> MFTECmdUsnAsync(string usnFile) =>
+        Wrap("MFTECmd", "MFTECmd", await ExecuteToolCsvAsync<UsnJournalEntry>("MFTECmd", $"-f {Q(usnFile)}", UsnJournalEntry.FromRow));
 
     /// <summary>
     /// Parses an NTFS metadata file (<paramref name="file"/>: <c>$MFT</c>, <c>$J</c>, <c>$Boot</c>, <c>$SDS</c>,
@@ -58,7 +59,7 @@ public class WindowsAnalysisToolkit : Toolkit
     /// slack-space entries; <paramref name="vss"/> (<c>--vss</c>) processes Volume Shadow Copy entries (for
     /// <c>$J</c>). Returns an <see cref="MFTECmdResult"/> describing the output, or null on failure.
     /// </summary>
-    public async Task<MFTECmdResult?> MFTECmdCsvAsync(
+    public async Task<ToolResult<MFTECmdResult>> MFTECmdCsvAsync(
         string file, string? outputFile = null, string? outputDir = null,
         bool allTimestamps = false, bool recoverSlack = false, bool vss = false)
     {
@@ -74,7 +75,7 @@ public class WindowsAnalysisToolkit : Toolkit
             (outputDir is not null ? $"--csv {Q(outputDir)} " : "") +
             (outputFile is not null ? $"--csvf {Q(outputFile)} " : "");
         var stdout = await ExecuteToolTextAsync("MFTECmd", args.TrimEnd());
-        return stdout is null ? null : MFTECmdResult.Parse(stdout, outputDir, outputFile);
+        return stdout is null ? ToolResult<MFTECmdResult>.Fail($"MFTECmd failed for '{file}' (see server log).") : MFTECmdResult.Parse(stdout, outputDir, outputFile);
     }
 
     /// <summary>
@@ -84,7 +85,7 @@ public class WindowsAnalysisToolkit : Toolkit
     /// letter prepended to bodyfile paths (e.g. <c>C</c>); <paramref name="vss"/> (<c>--vss</c>) processes Volume
     /// Shadow Copy entries. Returns an <see cref="MFTECmdResult"/> describing the output, or null on failure.
     /// </summary>
-    public async Task<MFTECmdResult?> MFTECmdBodyfileAsync(
+    public async Task<ToolResult<MFTECmdResult>> MFTECmdBodyfileAsync(
         string file, string? outputFile = null, string? outputDir = null,
         string? driveLetter = null, bool vss = false)
     {
@@ -99,16 +100,19 @@ public class WindowsAnalysisToolkit : Toolkit
             (driveLetter is not null ? $"--bdl {driveLetter} " : "") +
             (outputFile is not null ? $"--bodyf {Q(outputFile)} " : "");
         var stdout = await ExecuteToolTextAsync("MFTECmd", args.TrimEnd());
-        return stdout is null ? null : MFTECmdResult.Parse(stdout, outputDir, outputFile);
+        return stdout is null ? ToolResult<MFTECmdResult>.Fail($"MFTECmd failed for '{file}' (see server log).") : MFTECmdResult.Parse(stdout, outputDir, outputFile);
     }
 
-    public Task<LnkFile[]?> LECmdAsync(string file) => ExecuteToolJsonAsync<LnkFile>("LECmd", $"-f {Q(file)}");
+    public async Task<ToolResult<LnkFile[]>> LECmdAsync(string file) =>
+        Wrap("LECmd", "LECmd", await ExecuteToolJsonAsync<LnkFile>("LECmd", $"-f {Q(file)}"));
 
     /// <summary>Parses every <c>.lnk</c> under <paramref name="directory"/> (<c>-d</c>, recursive) with LECmd —
     /// the directory variant of <see cref="LECmdAsync"/>, used to sweep a Recent folder / Desktop in one pass.</summary>
-    public Task<LnkFile[]?> LECmdDirectoryAsync(string directory) => ExecuteToolJsonAsync<LnkFile>("LECmd", $"-d {Q(directory)}");
+    public async Task<ToolResult<LnkFile[]>> LECmdDirectoryAsync(string directory) =>
+        Wrap("LECmd", "LECmd", await ExecuteToolJsonAsync<LnkFile>("LECmd", $"-d {Q(directory)}"));
 
-    public Task<ShellBag[]?> SBECmdAsync(string hiveDirectory) => ExecuteToolJsonAsync<ShellBag>("SBECmd", $"-d {Q(hiveDirectory)}");
+    public async Task<ToolResult<ShellBag[]>> SBECmdAsync(string hiveDirectory) =>
+        Wrap("SBECmd", "SBECmd", await ExecuteToolJsonAsync<ShellBag>("SBECmd", $"-d {Q(hiveDirectory)}"));
 
     /// <summary>
     /// Parses the shellbags in the registry hives under <paramref name="directory"/> (<c>-d</c>) with SBECmd,
@@ -116,11 +120,11 @@ public class WindowsAnalysisToolkit : Toolkit
     /// <see cref="SBECmdCsvResult"/> describing the output directory, the CSV files produced, and the total
     /// shellbags found, or null on failure. (SBECmd takes a directory only — there is no single-file <c>-f</c>.)
     /// </summary>
-    public async Task<SBECmdCsvResult?> SBECmdCsvAsync(string directory, string outputDir)
+    public async Task<ToolResult<SBECmdCsvResult>> SBECmdCsvAsync(string directory, string outputDir)
     {
         auditEnvironment.FailIfEvidenceSpoliationRisk(outputDir);   // never write the shellbag CSVs onto evidence
         var stdout = await ExecuteToolTextAsync("SBECmd", $"-d {Q(directory)} --csv {Q(outputDir)}");
-        if (stdout is null) return null;
+        if (stdout is null) return ToolResult<SBECmdCsvResult>.Fail($"SBECmd failed for '{directory}' (see server log).");
 
         // SBECmd names each output CSV after its hive (and writes a !SBECmd_Messages.txt log); collect the CSVs.
         var find = await auditEnvironment.ExecuteCommandAsync("find", $"{Q(outputDir)} -maxdepth 1 -type f -name '*.csv'", false);
@@ -142,7 +146,7 @@ public class WindowsAnalysisToolkit : Toolkit
     /// <paramref name="startDate"/> / <paramref name="endDate"/> (<c>--sd</c>/<c>--ed</c>) bound the time
     /// range (UTC, e.g. <c>"2023-01-24 00:00:00"</c>).
     /// </summary>
-    public Task<EventLogEntry[]?> EvtxECmdAsync(
+    public async Task<ToolResult<EventLogEntry[]>> EvtxECmdAsync(
         string? file = null, string? directory = null,
         string? includeIds = null, string? excludeIds = null,
         string? startDate = null, string? endDate = null)
@@ -150,8 +154,8 @@ public class WindowsAnalysisToolkit : Toolkit
         if (file is null && directory is null)
             throw new ArgumentException("EvtxECmdAsync requires either a file (-f) or a directory (-d).");
 
-        return ExecuteToolJsonAsync<EventLogEntry>("EvtxECmd",
-            EvtxArgs(file, directory, includeIds, excludeIds, startDate, endDate) + $"--maps {Q(EvtxMapsDir)}");
+        return Wrap("EvtxECmd", "EvtxECmd", await ExecuteToolJsonAsync<EventLogEntry>("EvtxECmd",
+            EvtxArgs(file, directory, includeIds, excludeIds, startDate, endDate) + $"--maps {Q(EvtxMapsDir)}"));
     }
 
     /// <summary>
@@ -161,7 +165,7 @@ public class WindowsAnalysisToolkit : Toolkit
     /// payload signal (e.g. RC4 service tickets). The grep pattern is a fixed string passed to <c>grep -F</c>,
     /// matched against each whole JSON-lines record. Returns null if EvtxECmd failed; empty array on no matches.
     /// </summary>
-    public async Task<EventLogEntry[]?> EvtxECmdServerFilteredAsync(
+    public async Task<ToolResult<EventLogEntry[]>> EvtxECmdServerFilteredAsync(
         string payloadGrepPattern,
         string? file = null, string? directory = null,
         string? includeIds = null, string? excludeIds = null,
@@ -176,12 +180,15 @@ public class WindowsAnalysisToolkit : Toolkit
         {
             var args = EvtxArgs(file, directory, includeIds, excludeIds, startDate, endDate)
                 + $"--json {Q(dir)} --jsonf raw.json --maps {Q(EvtxMapsDir)}";
-            if (await ExecuteToolTextAsync("EvtxECmd", args) is null) return null;
+            if (await ExecuteToolTextAsync("EvtxECmd", args) is null)
+                return ToolResult<EventLogEntry[]>.Fail(IsToolAvailable("EvtxECmd")
+                    ? "EvtxECmd command failed (see server log)."
+                    : $"EvtxECmd is not available on platform '{platform}'.");
             // Server-side filter: emit only lines containing the pattern (grep -F = literal, no regex meta to escape).
             await auditEnvironment.ExecuteCommandAsync("bash",
                 $"-c \"grep -F {Q(payloadGrepPattern)} {dir}/raw.json > {dir}/filtered.json || true\"", false);
             var r = await auditEnvironment.ExecuteCommandAsync("cat", $"{dir}/filtered.json", false);
-            if (!r.IsCompleted) return [];
+            if (!r.IsCompleted) return ToolResult<EventLogEntry[]>.Pass([]);
             return ParseJsonLines<EventLogEntry>(r.Output);
         }
         finally { try { auditEnvironment.ExecuteCommand("rm", $"-rf {dir}", out _, false); } catch { } }
@@ -194,7 +201,7 @@ public class WindowsAnalysisToolkit : Toolkit
     /// bundled maps. Returns an <see cref="EvtxECmdCsvResult"/> describing the produced CSV (its path and the
     /// records-included / errors / dropped counts), or null if EvtxECmd failed.
     /// </summary>
-    public async Task<EvtxECmdCsvResult?> EvtxECmdCsvAsync(
+    public async Task<ToolResult<EvtxECmdCsvResult>> EvtxECmdCsvAsync(
         string? file = null, string? directory = null,
         string? includeIds = null, string? excludeIds = null,
         string? startDate = null, string? endDate = null,
@@ -213,7 +220,7 @@ public class WindowsAnalysisToolkit : Toolkit
             $"--maps {Q(EvtxMapsDir)}";
 
         var stdout = await ExecuteToolTextAsync("EvtxECmd", args);
-        return stdout is null ? null : EvtxECmdCsvResult.Parse(stdout, outputDir, outputFile);
+        return stdout is null ? ToolResult<EvtxECmdCsvResult>.Fail("EvtxECmd CSV export failed (see server log).") : EvtxECmdCsvResult.Parse(stdout, outputDir, outputFile);
     }
 
     // Shared EvtxECmd source/filter args (source + Event ID + date filters); callers append output args + --maps.
@@ -229,8 +236,8 @@ public class WindowsAnalysisToolkit : Toolkit
     /// Runs SQLECmd over the SQLite databases in <paramref name="directory"/>. Output is heterogeneous
     /// (one record shape per matched SQLECmd map), so rows are returned as raw key/value records.
     /// </summary>
-    public Task<Dictionary<string, System.Text.Json.JsonElement>[]?> SQLECmdAsync(string directory) =>
-        ExecuteToolJsonAsync<Dictionary<string, System.Text.Json.JsonElement>>("SQLECmd", $"-d {Q(directory)}");
+    public async Task<ToolResult<Dictionary<string, System.Text.Json.JsonElement>[]>> SQLECmdAsync(string directory) =>
+        Wrap("SQLECmd", "SQLECmd", await ExecuteToolJsonAsync<Dictionary<string, System.Text.Json.JsonElement>>("SQLECmd", $"-d {Q(directory)}"));
     #endregion
 
     #region CSV tools
@@ -239,33 +246,33 @@ public class WindowsAnalysisToolkit : Toolkit
     /// <see cref="ShimcacheEntry"/> rows. When <paramref name="ignoreTransactionLogs"/> is true the registry
     /// transaction logs are ignored (<c>--nl</c>) — faster, and appropriate when the hive is not dirty.
     /// </summary>
-    public Task<ShimcacheEntry[]?> AppCompatCacheParserAsync(string systemHive, bool ignoreTransactionLogs = false) =>
-        ExecuteToolCsvAsync("AppCompatCacheParser", $"-f {Q(systemHive)}" + (ignoreTransactionLogs ? " --nl" : ""), ShimcacheEntry.FromRow);
+    public async Task<ToolResult<ShimcacheEntry[]>> AppCompatCacheParserAsync(string systemHive, bool ignoreTransactionLogs = false) =>
+        Wrap("AppCompatCacheParser", "AppCompatCacheParser", await ExecuteToolCsvAsync("AppCompatCacheParser", $"-f {Q(systemHive)}" + (ignoreTransactionLogs ? " --nl" : ""), ShimcacheEntry.FromRow));
 
-    public Task<RecycleBinEntry[]?> RBCmdAsync(string file) =>
-        ExecuteToolCsvAsync("RBCmd", $"-f {Q(file)}", RecycleBinEntry.FromRow);
+    public async Task<ToolResult<RecycleBinEntry[]>> RBCmdAsync(string file) =>
+        Wrap("RBCmd", "RBCmd", await ExecuteToolCsvAsync("RBCmd", $"-f {Q(file)}", RecycleBinEntry.FromRow));
 
     /// <summary>
     /// Parses <paramref name="amcacheHive"/> (Amcache.hve) into <see cref="AmcacheEntry"/> rows — executed/
     /// present binaries with their SHA-1 and metadata. When <paramref name="ignoreTransactionLogs"/> is true
     /// the registry transaction logs are ignored (<c>--nl</c>) — faster, and appropriate when the hive is not dirty.
     /// </summary>
-    public Task<AmcacheEntry[]?> AmcacheParserAsync(string amcacheHive, bool ignoreTransactionLogs = false) =>
-        ExecuteToolCsvAsync("AmcacheParser", $"-f {Q(amcacheHive)}" + (ignoreTransactionLogs ? " --nl" : ""), AmcacheEntry.FromRow, "*UnassociatedFileEntries.csv");
+    public async Task<ToolResult<AmcacheEntry[]>> AmcacheParserAsync(string amcacheHive, bool ignoreTransactionLogs = false) =>
+        Wrap("AmcacheParser", "AmcacheParser", await ExecuteToolCsvAsync("AmcacheParser", $"-f {Q(amcacheHive)}" + (ignoreTransactionLogs ? " --nl" : ""), AmcacheEntry.FromRow, "*UnassociatedFileEntries.csv"));
 
-    public Task<JumpListEntry[]?> JLECmdAsync(string directory) =>
-        ExecuteToolCsvAsync("JLECmd", $"-d {Q(directory)}", JumpListEntry.FromRow, "*AutomaticDestinations.csv");
+    public async Task<ToolResult<JumpListEntry[]>> JLECmdAsync(string directory) =>
+        Wrap("JLECmd", "JLECmd", await ExecuteToolCsvAsync("JLECmd", $"-d {Q(directory)}", JumpListEntry.FromRow, "*AutomaticDestinations.csv"));
 
-    public Task<TimelineActivity[]?> WxTCmdAsync(string activitiesCacheDb) =>
-        ExecuteToolCsvAsync("WxTCmd", $"-f {Q(activitiesCacheDb)}", TimelineActivity.FromRow, "*Activity.csv");
+    public async Task<ToolResult<TimelineActivity[]>> WxTCmdAsync(string activitiesCacheDb) =>
+        Wrap("WxTCmd", "WxTCmd", await ExecuteToolCsvAsync("WxTCmd", $"-f {Q(activitiesCacheDb)}", TimelineActivity.FromRow, "*Activity.csv"));
 
     /// <summary>
     /// Runs RECmd in batch mode over the registry hives in <paramref name="hiveDirectory"/> using the
     /// <c>.reb</c> batch file <paramref name="batchFile"/> (the <c>--bn</c> argument), returning one
     /// <see cref="RegistryEntry"/> per key/value the batch's plugins matched.
     /// </summary>
-    public Task<RegistryEntry[]?> RECmdAsync(string hiveDirectory, string batchFile) =>
-        ExecuteToolCsvAsync("RECmd", $"-d {Q(hiveDirectory)} --bn {Q(batchFile)}", RegistryEntry.FromRow, "*Output.csv");
+    public async Task<ToolResult<RegistryEntry[]>> RECmdAsync(string hiveDirectory, string batchFile) =>
+        Wrap("RECmd", "RECmd", await ExecuteToolCsvAsync("RECmd", $"-d {Q(hiveDirectory)} --bn {Q(batchFile)}", RegistryEntry.FromRow, "*Output.csv"));
 
     /// <summary>
     /// Runs the RECmd batch over a <em>single</em> hive <paramref name="hiveFile"/>. RECmd batch mode (<c>--bn</c>)
@@ -273,7 +280,7 @@ public class WindowsAnalysisToolkit : Toolkit
     /// first — which means RECmd replays the logs (recovering dirty-hive data, e.g. MRU keys wiped by anti-forensic
     /// tools) without the cost of parsing every hive in a user profile.
     /// </summary>
-    public async Task<RegistryEntry[]?> RECmdSingleHiveAsync(string hiveFile, string batchFile)
+    public async Task<ToolResult<RegistryEntry[]>> RECmdSingleHiveAsync(string hiveFile, string batchFile)
     {
         string dir = "/tmp/camel_recmd_" + Guid.NewGuid().ToString("N");
         await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {dir}", false);
@@ -292,9 +299,14 @@ public class WindowsAnalysisToolkit : Toolkit
     /// Extracts ASCII/Unicode strings from <paramref name="file"/> using bstrings. This build of
     /// bstrings reads from stdin only, so the file is fed via shell redirection.
     /// </summary>
-    public async Task<string[]?> BstringsAsync(string file, int minLength = 3) =>
-        (await ExecuteToolTextAsync("Bstrings", $"-q -m {minLength} < {Q(file)}"))
-            ?.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    public async Task<ToolResult<string[]>> BstringsAsync(string file, int minLength = 3)
+    {
+        if (!IsToolAvailable("Bstrings")) return ToolResult<string[]>.Fail($"bstrings is not available on platform '{platform}'.");
+        var o = await ExecuteToolTextAsync("Bstrings", $"-q -m {minLength} < {Q(file)}");
+        return o is null
+            ? ToolResult<string[]>.Fail($"bstrings failed for '{file}' (see server log).")
+            : o.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
 
     /// <summary>
     /// Runs a single RegRipper (<c>rip.pl</c>) <paramref name="plugin"/> against the registry hive
@@ -306,10 +318,10 @@ public class WindowsAnalysisToolkit : Toolkit
     /// processed) hive when the source is dirty. Each plugin emits its own text format — callers parse the
     /// plugin output they requested.
     /// </summary>
-    public async Task<RegRipperResult?> RegRipperAsync(string hive, string plugin)
+    public async Task<ToolResult<RegRipperResult>> RegRipperAsync(string hive, string plugin)
     {
         var stdout = await ExecuteToolTextAsync("RegRipper", $"-r {Q(hive)} -p {plugin}");
-        return stdout is null ? null : RegRipperResult.Parse(plugin, hive, stdout);
+        return stdout is null ? ToolResult<RegRipperResult>.Fail($"RegRipper plugin '{plugin}' failed on '{hive}' (see server log).") : RegRipperResult.Parse(plugin, hive, stdout);
     }
 
     // Delimiter prefixing each task file in the bulk-extraction stream (see ScheduledTasksAsync).
@@ -323,14 +335,14 @@ public class WindowsAnalysisToolkit : Toolkit
     /// TaskCache does not store. Returns an empty array when the directory holds no tasks, or null if it could
     /// not be read.
     /// </summary>
-    public async Task<ScheduledTaskEntry[]?> ScheduledTasksAsync(string tasksDirectory)
+    public async Task<ToolResult<ScheduledTaskEntry[]>> ScheduledTasksAsync(string tasksDirectory)
     {
         // For each task file: emit "<delim><path>\n" then the file transcoded UTF-16 -> UTF-8 (|| cat as fallback).
         var args = $"{Q(tasksDirectory)} -type f -exec sh -c '" +
             $"printf \"{TaskDelimiter}%s\\n\" \"$1\"; iconv -f UTF-16 -t UTF-8 \"$1\" 2>/dev/null || cat \"$1\"" +
             "' _ {} \\;";
         var r = await auditEnvironment.ExecuteCommandAsync("find", args, false);
-        return r.IsCompleted ? ScheduledTaskEntry.ParseMany(r.Output, TaskDelimiter) : null;
+        return r.IsCompleted ? ScheduledTaskEntry.ParseMany(r.Output, TaskDelimiter) : ToolResult<ScheduledTaskEntry[]>.Fail($"Could not read scheduled-tasks directory '{tasksDirectory}'.");
     }
 
     /// <summary>
@@ -340,10 +352,10 @@ public class WindowsAnalysisToolkit : Toolkit
     /// ASCII and a UTF-16LE <c>strings</c> pass (each offset-tagged so they can be merged in file order) and
     /// parses out the subscriptions. Returns null only if the file could not be read.
     /// </summary>
-    public async Task<WmiSubscriptions?> WmiSubscriptionsAsync(string objectsDataPath)
+    public async Task<ToolResult<WmiSubscriptions>> WmiSubscriptionsAsync(string objectsDataPath)
     {
         var ascii = await auditEnvironment.ExecuteCommandAsync("strings", $"-t d -n 6 {Q(objectsDataPath)}", false);
-        if (!ascii.IsCompleted) return null;
+        if (!ascii.IsCompleted) return ToolResult<WmiSubscriptions>.Fail($"Could not read WMI repository '{objectsDataPath}'.");
         var unicode = await auditEnvironment.ExecuteCommandAsync("strings", $"-t d -e l -n 6 {Q(objectsDataPath)}", false);
         return WmiSubscriptions.Parse(ascii.Output, unicode.IsCompleted ? unicode.Output : "");
     }
@@ -352,10 +364,10 @@ public class WindowsAnalysisToolkit : Toolkit
     #region Email / ESE / USB tools (FOR500.3+4)
     /// <summary>Reads PST/OST store metadata (content type PST vs OST, file format, encryption) with pffinfo
     /// (libpff). Returns null if the file could not be read.</summary>
-    public async Task<PstStoreInfo?> PffInfoAsync(string pstFile)
+    public async Task<ToolResult<PstStoreInfo>> PffInfoAsync(string pstFile)
     {
         var stdout = await ExecuteToolTextAsync("Pffinfo", Q(pstFile));
-        return stdout is null ? null : PstStoreInfo.Parse(stdout, pstFile);
+        return stdout is null ? ToolResult<PstStoreInfo>.Fail($"pffinfo failed for '{pstFile}' (see server log).") : PstStoreInfo.Parse(stdout, pstFile);
     }
 
     /// <summary>
@@ -363,14 +375,17 @@ public class WindowsAnalysisToolkit : Toolkit
     /// folder, then parses each mbox's messages at the header/metadata level (From/To/Subject/Date/X-Originating-IP
     /// + attachment names). The export directory is cleaned up before returning. Returns null on failure.
     /// </summary>
-    public async Task<EmailExportResult?> ReadPstAsync(string pstFile, int maxMessagesPerFolder = 5000)
+    public async Task<ToolResult<EmailExportResult>> ReadPstAsync(string pstFile, int maxMessagesPerFolder = 5000)
     {
         string dir = "/tmp/camel_pst_" + Guid.NewGuid().ToString("N");
         await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {dir}", false);
         try
         {
             // -t e: e-mail items only; -q quiet; default output is mbox-per-folder.
-            if (await ExecuteToolTextAsync("ReadPst", $"-o {Q(dir)} -t e -q {Q(pstFile)}") is null) return null;
+            if (await ExecuteToolTextAsync("ReadPst", $"-o {Q(dir)} -t e -q {Q(pstFile)}") is null)
+                return ToolResult<EmailExportResult>.Fail(IsToolAvailable("ReadPst")
+                    ? $"readpst failed for '{pstFile}' (see server log)."
+                    : $"readpst is not available on platform '{platform}'.");
             var find = await auditEnvironment.ExecuteCommandAsync("find", $"{Q(dir)} -type f", false);
             var files = find.IsCompleted
                 ? find.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -383,17 +398,17 @@ public class WindowsAnalysisToolkit : Toolkit
                 var folder = System.IO.Path.GetFileNameWithoutExtension(f);
                 messages.AddRange(EmailMessage.ParseMbox(r.Output, folder).Take(maxMessagesPerFolder));
             }
-            return new EmailExportResult { OutputDirectory = dir, MboxFiles = files, Messages = messages.ToArray() };
+            return (ToolResult<EmailExportResult>)new EmailExportResult { OutputDirectory = dir, MboxFiles = files, Messages = messages.ToArray() };
         }
         finally { try { auditEnvironment.ExecuteCommand("rm", $"-rf {dir}", out _, false); } catch { } }
     }
 
     /// <summary>Lists the tables in an ESE (EDB) database — e.g. <c>WebCacheV01.dat</c> or <c>Windows.edb</c> —
     /// with esedbinfo (libesedb). Returns null if the file could not be read.</summary>
-    public async Task<EseDatabaseInfo?> EsedbInfoAsync(string edbFile)
+    public async Task<ToolResult<EseDatabaseInfo>> EsedbInfoAsync(string edbFile)
     {
         var stdout = await ExecuteToolTextAsync("EsedbInfo", Q(edbFile));
-        return stdout is null ? null : EseDatabaseInfo.Parse(stdout, edbFile);
+        return stdout is null ? ToolResult<EseDatabaseInfo>.Fail($"esedbinfo failed for '{edbFile}' (see server log).") : EseDatabaseInfo.Parse(stdout, edbFile);
     }
 
     /// <summary>
@@ -402,19 +417,22 @@ public class WindowsAnalysisToolkit : Toolkit
     /// parsing the URL/AccessedTime rows. The temp export directory is cleaned up before returning. Returns null
     /// on failure (e.g. a dirty database that needs <c>esentutl</c> recovery first).
     /// </summary>
-    public async Task<WebCacheEntry[]?> WebCacheHistoryAsync(string webCacheDbFile)
+    public async Task<ToolResult<WebCacheEntry[]>> WebCacheHistoryAsync(string webCacheDbFile)
     {
         string target = "/tmp/camel_ese_" + Guid.NewGuid().ToString("N");
         string exportDir = target + ".export";
         try
         {
-            if (await ExecuteToolTextAsync("EsedbExport", $"-t {Q(target)} {Q(webCacheDbFile)}") is null) return null;
+            if (await ExecuteToolTextAsync("EsedbExport", $"-t {Q(target)} {Q(webCacheDbFile)}") is null)
+                return ToolResult<WebCacheEntry[]>.Fail(IsToolAvailable("EsedbExport")
+                    ? $"esedbexport failed for '{webCacheDbFile}' (a dirty DB may need esentutl recovery first)."
+                    : $"esedbexport is not available on platform '{platform}'.");
             // Containers index: ContainerId -> friendly name (History / Content / Cookies / …).
             var idx = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"cat {exportDir}/Containers.* 2>/dev/null\"", false);
             var nameById = WebCacheParse.ContainerNames(idx.IsCompleted ? idx.Output : "");
             // Each Container_<id>.<table> file holds that container's URL records.
             var ls = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"ls -1 {exportDir}/Container_*.* 2>/dev/null\"", false);
-            if (!ls.IsCompleted) return [];
+            if (!ls.IsCompleted) return ToolResult<WebCacheEntry[]>.Pass([]);
             var entries = new List<WebCacheEntry>();
             foreach (var file in ls.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
@@ -433,7 +451,7 @@ public class WindowsAnalysisToolkit : Toolkit
     /// optional NTUSER) hives are staged into a writable temp directory first, because the tool fails to open
     /// hives directly off a read-only forensic mount. Returns the per-device records, or null on failure.
     /// </summary>
-    public async Task<UsbDeviceRecord[]?> UsbDeviceForensicsAsync(string systemHive, string softwareHive, string? ntuserHive = null)
+    public async Task<ToolResult<UsbDeviceRecord[]>> UsbDeviceForensicsAsync(string systemHive, string softwareHive, string? ntuserHive = null)
     {
         string dir = "/tmp/camel_usb_" + Guid.NewGuid().ToString("N");
         string outFile = $"{dir}/usb.tsv";
@@ -443,9 +461,12 @@ public class WindowsAnalysisToolkit : Toolkit
             await auditEnvironment.ExecuteCommandAsync("cp", $"{Q(systemHive)} {dir}/SYSTEM", false);
             await auditEnvironment.ExecuteCommandAsync("cp", $"{Q(softwareHive)} {dir}/SOFTWARE", false);
             if (ntuserHive is not null) await auditEnvironment.ExecuteCommandAsync("cp", $"{Q(ntuserHive)} {dir}/NTUSER.DAT", false);
-            if (await ExecuteToolTextAsync("UsbDeviceForensics", $"-r {Q(dir)} -f tsv -o {Q(outFile)} -q") is null) return null;
+            if (await ExecuteToolTextAsync("UsbDeviceForensics", $"-r {Q(dir)} -f tsv -o {Q(outFile)} -q") is null)
+                return ToolResult<UsbDeviceRecord[]>.Fail(IsToolAvailable("UsbDeviceForensics")
+                    ? "usbdeviceforensics failed (see server log)."
+                    : $"usbdeviceforensics is not available on platform '{platform}'.");
             var r = await auditEnvironment.ExecuteCommandAsync("cat", Q(outFile), false);
-            return r.IsCompleted ? UsbDeviceRecord.ParseTsv(r.Output) : [];
+            return r.IsCompleted ? UsbDeviceRecord.ParseTsv(r.Output) : System.Array.Empty<UsbDeviceRecord>();
         }
         finally { try { auditEnvironment.ExecuteCommand("rm", $"-rf {dir}", out _, false); } catch { } }
     }
@@ -458,7 +479,7 @@ public class WindowsAnalysisToolkit : Toolkit
     /// <c>-readonly</c>. SQLECmd's EZ build is unusable on SIFT (missing <c>SQLite.Interop.dll</c>), so browser
     /// SQLite parsing goes through this. Returns null on failure.
     /// </summary>
-    public async Task<Dictionary<string, System.Text.Json.JsonElement>[]?> SqliteQueryAsync(string dbFile, string sql)
+    public async Task<ToolResult<Dictionary<string, System.Text.Json.JsonElement>[]>> SqliteQueryAsync(string dbFile, string sql)
     {
         string dir = "/tmp/camel_sqlite_" + Guid.NewGuid().ToString("N");
         await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {dir}", false);
@@ -471,12 +492,12 @@ public class WindowsAnalysisToolkit : Toolkit
             // Ship the SQL base64-encoded to dodge all shell quoting of quotes/semicolons in the query.
             var r = await auditEnvironment.ExecuteCommandAsync("bash",
                 $"-c \"sqlite3 -readonly -json {Q(staged)} \\\"$(echo {b64} | base64 -d)\\\"\"", false);
-            if (!r.IsCompleted) return null;
+            if (!r.IsCompleted) return ToolResult<Dictionary<string, System.Text.Json.JsonElement>[]>.Fail($"sqlite3 query failed on '{dbFile}'.");
             var json = r.Output.Trim();
-            if (json.Length == 0) return [];   // sqlite3 prints nothing for an empty result set
-            return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>[]>(json, JsonLineOptionsPublic) ?? [];
+            if (json.Length == 0) return System.Array.Empty<Dictionary<string, System.Text.Json.JsonElement>>();   // sqlite3 prints nothing for an empty result set
+            return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>[]>(json, JsonLineOptionsPublic) ?? System.Array.Empty<Dictionary<string, System.Text.Json.JsonElement>>();
         }
-        catch { return []; }
+        catch { return System.Array.Empty<Dictionary<string, System.Text.Json.JsonElement>>(); }
         finally { try { auditEnvironment.ExecuteCommand("rm", $"-rf {dir}", out _, false); } catch { } }
     }
 
@@ -487,14 +508,17 @@ public class WindowsAnalysisToolkit : Toolkit
     /// timeline. Output is requested as JSON-lines and returned as raw key/value records (heterogeneous row
     /// shapes, like SQLECmd). Returns null on failure. Optional — SQLECmd already covers Chromium history/downloads.
     /// </summary>
-    public async Task<Dictionary<string, System.Text.Json.JsonElement>[]?> HindsightAsync(string chromeProfileDir)
+    public async Task<ToolResult<Dictionary<string, System.Text.Json.JsonElement>[]>> HindsightAsync(string chromeProfileDir)
     {
         string outBase = "/tmp/camel_hs_" + Guid.NewGuid().ToString("N");
         try
         {
-            if (await ExecuteToolTextAsync("Hindsight", $"-i {Q(chromeProfileDir)} -o {Q(outBase)} -f jsonl") is null) return null;
+            if (await ExecuteToolTextAsync("Hindsight", $"-i {Q(chromeProfileDir)} -o {Q(outBase)} -f jsonl") is null)
+                return ToolResult<Dictionary<string, System.Text.Json.JsonElement>[]>.Fail(IsToolAvailable("Hindsight")
+                    ? "hindsight failed (see server log)."
+                    : $"hindsight is not available on platform '{platform}'.");
             var r = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"cat {outBase}*.jsonl 2>/dev/null\"", false);
-            return r.IsCompleted ? ParseJsonLines<Dictionary<string, System.Text.Json.JsonElement>>(r.Output) : [];
+            return r.IsCompleted ? ParseJsonLines<Dictionary<string, System.Text.Json.JsonElement>>(r.Output) : System.Array.Empty<Dictionary<string, System.Text.Json.JsonElement>>();
         }
         finally { try { auditEnvironment.ExecuteCommand("rm", $"-rf {outBase}*", out _, false); } catch { } }
     }
@@ -502,6 +526,22 @@ public class WindowsAnalysisToolkit : Toolkit
 
     // Single-quote a path so spaces and NTFS '$' names (e.g. $MFT) survive the shell literally.
     private static string Q(string path) => $"'{path}'";
+
+    // Wraps a base-helper result (null = the tool was unavailable on the platform OR its command failed) as a
+    // ToolResult, naming the tool — the tool-not-installed vs. command-failed distinction a bare null hid.
+    private ToolResult<T[]> Wrap<T>(string toolKey, string label, T[]? r) =>
+        r is not null ? r
+        : ToolResult<T[]>.Fail(IsToolAvailable(toolKey)
+            ? $"{label} command failed on platform '{platform}' (see server log)."
+            : $"{label} is not available on platform '{platform}'.");
+
+    // Runs an ExecuteToolText-based tool and maps its stdout with `parse`, wrapping the result as a ToolResult.
+    private async Task<ToolResult<T>> TextResultAsync<T>(string tool, string label, string args, Func<string, T> parse)
+    {
+        if (!IsToolAvailable(tool)) return ToolResult<T>.Fail($"{label} is not available on platform '{platform}'.");
+        var o = await ExecuteToolTextAsync(tool, args);
+        return o is null ? ToolResult<T>.Fail($"{label} command failed on platform '{platform}' (see server log).") : parse(o);
+    }
 
     public override string[] ToolList { get; } =
     [

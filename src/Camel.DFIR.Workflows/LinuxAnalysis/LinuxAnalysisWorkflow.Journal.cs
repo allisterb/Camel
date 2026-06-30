@@ -24,7 +24,7 @@ public partial class LinuxAnalysisWorkflow
         var journalDir = Combine(rootDir, "var/log/journal");
         using var op = Begin("Analyzing systemd journal at {0}", journalDir);
 
-        var entries = await LinuxAnalysis.JournalAsync(journalDir, maxEntries: maxEntries);
+        var entries = (await LinuxAnalysis.JournalAsync(journalDir, maxEntries: maxEntries)).Value;
         if (entries is null)
             return WorkflowResult<JournalReport>.Failure(
                 $"Could not read the systemd journal at '{journalDir}'; the path may be wrong or the host used syslog only.");

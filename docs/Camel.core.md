@@ -30,8 +30,11 @@ nullish coalescing `??`, `Array`/`Map`/`Set`/`JSON`, etc.). Tailor generated cod
 - **Returned objects expose properties in PascalCase**, e.g. `result.IsSuccess`, `event.Timestamp`.
 - **Parameters are positional** (JS has no named args). Omit *trailing* optional params; pass earlier defaults
   explicitly (use `null` for nullable types) to reach a later one.
-- **Toolkit methods return their payload or `null` on tool failure; workflow methods return `WorkflowResult<T>`.**
-  Always check before using the value.
+- **Toolkit data methods return a `ToolResult<T>` (check `.Ok`, read `.Value` or `.FailureReason`); a handful of
+  pure-action methods (mount / dump / extract) return `bool`; workflow methods return `WorkflowResult<T>`.** A
+  failed `ToolResult` distinguishes "the tool isn't installed on this platform" from "the command ran but failed";
+  an empty `.Value` collection means "ran clean, found nothing" — not a failure. Always check `.Ok`/`.IsSuccess`
+  before reading the payload. (See the `ToolResult` schema in `camel-sdk-schema`.)
 - Output via the globals `log` / `error` / `table`. The `audit*` family additionally persists to the per-case
   audit log: `auditInfo`/`auditError` (notes), `auditFinding`/`auditReviewRec` (a structured finding / a review
   flag), and `auditFalsePositive`/`auditMissingEvidence`/`auditHallucination` (IR-accuracy events). There is no
@@ -160,8 +163,9 @@ if (!r.IsSuccess) error(r.Message); else log(r.Message);  // inspect r.Result �
 
 # Toolkits
 
-Toolkit methods execute a SIFT tool on the workstation and return a parsed model — an array or object — or `null`
-if the command failed. The toolkit objects are `MemoryAnalysisToolkit`, `DiskAnalysisToolkit`,
+Toolkit methods execute a SIFT tool on the workstation and return a parsed model wrapped in a `ToolResult<T>`
+(check `.Ok`, read `.Value`, or `.FailureReason` when the tool is unavailable or the command failed); a few
+pure-action methods (mount / dump / extract) return `bool`. The toolkit objects are `MemoryAnalysisToolkit`, `DiskAnalysisToolkit`,
 `WindowsAnalysisToolkit`, `TimelineAnalysisToolkit`, `YaraToolkit`, `UnixToolsToolkit`, `LinuxAnalysisToolkit`,
 `PacketAnalysisToolkit`, and `AnomalyDetectionToolkit`. The JSON schema for each return type named below is in the
 `camel-sdk-schema` resource.
@@ -171,83 +175,87 @@ if the command failed. The toolkit objects are `MemoryAnalysisToolkit`, `DiskAna
 ## MemoryAnalysisToolkit
 
 Volatility 3 wrapper for Windows memory-image analysis. `filename` is the memory image path. Methods taking an
-optional `pid: int` restrict output to one process.
+optional `pid: int` restrict output to one process. Each plugin method returns a **`ToolResult<T>`** — check
+`.Ok`, read `.Value` or `.FailureReason`. An empty `.Value` array means "ran clean, nothing found"; a *failed*
+result means the plugin could not run (Volatility absent, or — for a Linux plugin — no ISF symbol table for the
+kernel). The `ExtractStringsAsync` helper stays a plain `bool` (true on success).
 
-- `WindowsInfoAsync(filename: string)` → `WindowsInfo[]` — OS/build metadata.
-- `WindowsPsListAsync(filename: string)` → `WindowsPsList[]` — active EPROCESS list walk.
-- `WindowsPsScanAsync(filename: string)` → `WindowsPsScan[]` — pool-tag process scan (finds hidden/exited).
-- `WindowsPsTreeAsync(filename: string, pid?: int)` → `WindowsPsTree[]` — process tree (nodes carry `__children`).
-- `WindowsSvcScanAsync(filename: string)` → `WindowsSvcScan[]` — service records (incl. hidden/deleted).
-- `WindowsCmdLineAsync(filename: string, pid?: int)` → `WindowsCmdLine[]` — per-process command lines.
-- `WindowsEnvVarsAsync(filename: string, pid?: int)` → `WindowsEnvVars[]` — per-process environment variables.
-- `WindowsGetSidsAsync(filename: string, pid?: int)` → `WindowsGetSids[]` — per-process owning SIDs.
-- `WindowsPrivsAsync(filename: string, pid?: int)` → `WindowsPrivs[]` — per-process privileges.
-- `WindowsHandlesAsync(filename: string, pid?: int, objectType?: string)` → `WindowsHandles[]` — open handles;
+- `WindowsInfoAsync(filename: string)` → `ToolResult<WindowsInfo[]>` — OS/build metadata.
+- `WindowsPsListAsync(filename: string)` → `ToolResult<WindowsPsList[]>` — active EPROCESS list walk.
+- `WindowsPsScanAsync(filename: string)` → `ToolResult<WindowsPsScan[]>` — pool-tag process scan (finds hidden/exited).
+- `WindowsPsTreeAsync(filename: string, pid?: int)` → `ToolResult<WindowsPsTree[]>` — process tree (nodes carry `__children`).
+- `WindowsSvcScanAsync(filename: string)` → `ToolResult<WindowsSvcScan[]>` — service records (incl. hidden/deleted).
+- `WindowsCmdLineAsync(filename: string, pid?: int)` → `ToolResult<WindowsCmdLine[]>` — per-process command lines.
+- `WindowsEnvVarsAsync(filename: string, pid?: int)` → `ToolResult<WindowsEnvVars[]>` — per-process environment variables.
+- `WindowsGetSidsAsync(filename: string, pid?: int)` → `ToolResult<WindowsGetSids[]>` — per-process owning SIDs.
+- `WindowsPrivsAsync(filename: string, pid?: int)` → `ToolResult<WindowsPrivs[]>` — per-process privileges.
+- `WindowsHandlesAsync(filename: string, pid?: int, objectType?: string)` → `ToolResult<WindowsHandles[]>` — open handles;
   `objectType` filters by type (e.g. `"File"`, `"Mutant"`, case-insensitive).
-- `WindowsDllListAsync(filename: string, pid?: int)` → `WindowsDllList[]` — loaded DLLs.
-- `WindowsModulesAsync(filename: string)` → `WindowsModules[]` — kernel modules (list).
-- `WindowsModScanAsync(filename: string)` → `WindowsModScan[]` — kernel modules (pool scan).
-- `WindowsGetServiceSidsAsync(filename: string)` → `WindowsGetServiceSids[]` — service SIDs.
-- `WindowsNetStatAsync(filename: string)` → `WindowsNetStat[]` — active network connections.
-- `WindowsNetScanAsync(filename: string)` → `WindowsNetScan[]` — pool-scan of connections (incl. closed/historical).
-- `WindowsMalFindAsync(filename: string)` → `WindowsMalFind[]` — private executable regions with no file backing.
-- `WindowsLdrModulesAsync(filename: string, pid?: int)` → `WindowsLdrModules[]` — PEB-list vs VAD DLL presence.
-- `WindowsHollowProcessesAsync(filename: string)` → `WindowsHollowProcesses[]` — process-hollowing victims.
-- `WindowsThreadsAsync(filename: string, pid?: int)` → `WindowsThreads[]` — thread start addresses.
-- `WindowsSsdtAsync(filename: string)` → `WindowsSsdt[]` — SSDT entries (foreign module = hook).
-- `WindowsCallbacksAsync(filename: string)` → `WindowsCallbacks[]` — registered kernel callbacks.
-- `WindowsDriverIrpAsync(filename: string)` → `WindowsDriverIrp[]` — driver IRP major-function tables.
-- `WindowsPsxViewAsync(filename: string)` → `WindowsPsxView[]` — cross-view process visibility.
-- `WindowsMutantScanAsync(filename: string)` → `WindowsMutantScan[]` — named mutex IOCs.
-- `WindowsCmdScanAsync(filename: string)` → `WindowsCmdScan[]` — typed command lines (COMMAND_HISTORY).
-- `WindowsConsolesAsync(filename: string)` → `WindowsConsoles[]` — console buffers (commands + output).
-- `WindowsFileScanAsync(filename: string)` → `WindowsFileScan[]` — FILE_OBJECTs (with offsets).
-- `WindowsVadInfoAsync(filename: string, pid?: int)` → `WindowsVadInfo[]` — VAD regions.
-- `WindowsRegistryHiveListAsync(filename: string)` → `WindowsRegistryHiveList[]` — loaded registry hives.
-- `WindowsRegistryPrintKeyAsync(filename: string, key: string)` → `WindowsRegistryPrintKey[]` — values under a key.
-- `WindowsRegistryUserAssistAsync(filename: string)` → `WindowsRegistryUserAssist[]` — UserAssist entries.
-- `WindowsShimcacheMemAsync(filename: string)` → `WindowsShimcacheMem[]` — AppCompatCache from kernel memory.
-- `WindowsHashdumpAsync(filename: string)` → `WindowsHashdump[]` — local NTLM hashes (SAM).
-- `WindowsLsadumpAsync(filename: string)` → `WindowsLsadump[]` — LSA secrets.
-- `WindowsCachedumpAsync(filename: string)` → `WindowsCachedump[]` — cached domain creds (mscash2).
-- `WindowsSkeletonKeyCheckAsync(filename: string)` → `WindowsSkeletonKeyCheck[]` — DC Skeleton Key (empty = clean).
-- `WindowsProcessGhostingAsync(filename: string)` → `WindowsProcessGhosting[]` — Process Ghosting (empty = clean).
-- `WindowsVerInfoAsync(filename: string, pid?: int)` → `WindowsVerInfo[]` — PE version-info strings.
-- `WindowsVadYaraScanAsync(filename: string, yaraRulesFile: string, pid?: int, wide?: bool)` → `WindowsVadYaraScan[]`
+- `WindowsDllListAsync(filename: string, pid?: int)` → `ToolResult<WindowsDllList[]>` — loaded DLLs.
+- `WindowsModulesAsync(filename: string)` → `ToolResult<WindowsModules[]>` — kernel modules (list).
+- `WindowsModScanAsync(filename: string)` → `ToolResult<WindowsModScan[]>` — kernel modules (pool scan).
+- `WindowsGetServiceSidsAsync(filename: string)` → `ToolResult<WindowsGetServiceSids[]>` — service SIDs.
+- `WindowsNetStatAsync(filename: string)` → `ToolResult<WindowsNetStat[]>` — active network connections.
+- `WindowsNetScanAsync(filename: string)` → `ToolResult<WindowsNetScan[]>` — pool-scan of connections (incl. closed/historical).
+- `WindowsMalFindAsync(filename: string)` → `ToolResult<WindowsMalFind[]>` — private executable regions with no file backing.
+- `WindowsLdrModulesAsync(filename: string, pid?: int)` → `ToolResult<WindowsLdrModules[]>` — PEB-list vs VAD DLL presence.
+- `WindowsHollowProcessesAsync(filename: string)` → `ToolResult<WindowsHollowProcesses[]>` — process-hollowing victims.
+- `WindowsThreadsAsync(filename: string, pid?: int)` → `ToolResult<WindowsThreads[]>` — thread start addresses.
+- `WindowsSsdtAsync(filename: string)` → `ToolResult<WindowsSsdt[]>` — SSDT entries (foreign module = hook).
+- `WindowsCallbacksAsync(filename: string)` → `ToolResult<WindowsCallbacks[]>` — registered kernel callbacks.
+- `WindowsDriverIrpAsync(filename: string)` → `ToolResult<WindowsDriverIrp[]>` — driver IRP major-function tables.
+- `WindowsPsxViewAsync(filename: string)` → `ToolResult<WindowsPsxView[]>` — cross-view process visibility.
+- `WindowsMutantScanAsync(filename: string)` → `ToolResult<WindowsMutantScan[]>` — named mutex IOCs.
+- `WindowsCmdScanAsync(filename: string)` → `ToolResult<WindowsCmdScan[]>` — typed command lines (COMMAND_HISTORY).
+- `WindowsConsolesAsync(filename: string)` → `ToolResult<WindowsConsoles[]>` — console buffers (commands + output).
+- `WindowsFileScanAsync(filename: string)` → `ToolResult<WindowsFileScan[]>` — FILE_OBJECTs (with offsets).
+- `WindowsVadInfoAsync(filename: string, pid?: int)` → `ToolResult<WindowsVadInfo[]>` — VAD regions.
+- `WindowsRegistryHiveListAsync(filename: string)` → `ToolResult<WindowsRegistryHiveList[]>` — loaded registry hives.
+- `WindowsRegistryPrintKeyAsync(filename: string, key: string)` → `ToolResult<WindowsRegistryPrintKey[]>` — values under a key.
+- `WindowsRegistryUserAssistAsync(filename: string)` → `ToolResult<WindowsRegistryUserAssist[]>` — UserAssist entries.
+- `WindowsShimcacheMemAsync(filename: string)` → `ToolResult<WindowsShimcacheMem[]>` — AppCompatCache from kernel memory.
+- `WindowsHashdumpAsync(filename: string)` → `ToolResult<WindowsHashdump[]>` — local NTLM hashes (SAM).
+- `WindowsLsadumpAsync(filename: string)` → `ToolResult<WindowsLsadump[]>` — LSA secrets.
+- `WindowsCachedumpAsync(filename: string)` → `ToolResult<WindowsCachedump[]>` — cached domain creds (mscash2).
+- `WindowsSkeletonKeyCheckAsync(filename: string)` → `ToolResult<WindowsSkeletonKeyCheck[]>` — DC Skeleton Key (empty = clean).
+- `WindowsProcessGhostingAsync(filename: string)` → `ToolResult<WindowsProcessGhosting[]>` — Process Ghosting (empty = clean).
+- `WindowsVerInfoAsync(filename: string, pid?: int)` → `ToolResult<WindowsVerInfo[]>` — PE version-info strings.
+- `WindowsVadYaraScanAsync(filename: string, yaraRulesFile: string, pid?: int, wide?: bool)` → `ToolResult<WindowsVadYaraScan[]>`
   — YARA-scan VAD regions (`wide` also matches UTF-16).
 - `DumpFilesAsync(filename: string, outputDir: string, virtualAddress?: long, physicalAddress?: long, pid?: int, filterRegex?: string)`
-  → `string[]` — extract cached files; returns workstation paths of the dumped files.
-- `DumpProcessExecutableAsync(filename: string, pid: int, outputDir: string)` → `string[]` — dump a process's PE image.
-- `DumpProcessMemoryAsync(filename: string, pid: int, outputDir: string)` → `string[]` — dump all mapped memory.
+  → `ToolResult<string[]>` — extract cached files; returns workstation paths of the dumped files.
+- `DumpProcessExecutableAsync(filename: string, pid: int, outputDir: string)` → `ToolResult<string[]>` — dump a process's PE image.
+- `DumpProcessMemoryAsync(filename: string, pid: int, outputDir: string)` → `ToolResult<string[]>` — dump all mapped memory.
 - `ExtractStringsAsync(inputFile: string, outputFile: string, unicode?: bool, minLength?: int)` → `bool` —
   run `strings` (ASCII, or UTF-16LE when `unicode=true`; `minLength` default 8) into `outputFile`.
-- `TimelinerBodyfileAsync(image: string, outputDir: string)` → `string` (path) — mactime bodyfile of all
-  timestamped artifacts (`volatility.body`), or null.
+- `TimelinerBodyfileAsync(image: string, outputDir: string)` → `ToolResult<string>` (path) — mactime bodyfile of all
+  timestamped artifacts (`volatility.body`).
 
 ### Linux memory plugins
 
 For a **Linux** memory image. Same call shape as the Windows methods. **Symbols caveat:** every Linux plugin
 needs an ISF symbol table matching the captured kernel's banner (none ship with Volatility); `vol` auto-fetches
 known kernels from the public symbol server, otherwise generate symbols with `dwarf2json`. With no symbols the
-method returns `null` (≠ empty result).
+method returns a *failed* `ToolResult` (`.FailureReason` names the symbol-table need) — distinct from a successful
+empty `.Value` (ran clean, nothing found).
 
-- `LinuxPsListAsync(filename: string, pid?: int)` → `LinuxPsList[]` — task-list processes (live view).
-- `LinuxPsScanAsync(filename: string)` → `LinuxPsScan[]` — pool-scan processes (finds unlinked/hidden).
-- `LinuxPsTreeAsync(filename: string, pid?: int)` → `LinuxPsTree[]` — process tree (`__children`).
-- `LinuxPsAuxAsync(filename: string, pid?: int)` → `LinuxPsAux[]` — processes with full argument vectors.
-- `LinuxBashAsync(filename: string, pid?: int)` → `LinuxBash[]` — bash history recovered from process memory.
-- `LinuxLsofAsync(filename: string, pid?: int)` → `LinuxLsof[]` — open file descriptors per process.
-- `LinuxSockstatAsync(filename: string)` → `LinuxSockstat[]` — sockets with owning process/endpoints (netstat view).
-- `LinuxLsmodAsync(filename: string)` → `LinuxModule[]` — loaded kernel modules.
-- `LinuxCheckModulesAsync(filename: string)` → `LinuxModule[]` — modules in memory but missing from the list (hidden).
-- `LinuxHiddenModulesAsync(filename: string)` → `LinuxModule[]` — modules carved from memory (empty = none hidden).
-- `LinuxCheckSyscallAsync(filename: string)` → `LinuxCheckSyscall[]` — hooked syscall-table entries (empty = clean).
-- `LinuxCheckAfinfoAsync(filename: string)` → `LinuxCheckAfinfo[]` — overwritten protocol handlers (empty = clean).
-- `LinuxCheckCredsAsync(filename: string)` → `LinuxCheckCreds[]` — processes sharing one cred struct (empty = clean).
-- `LinuxTtyCheckAsync(filename: string)` → `LinuxTtyCheck[]` — hooked TTY handlers / keyloggers (empty = clean).
-- `LinuxMalfindAsync(filename: string, pid?: int)` → `LinuxMalfind[]` — injected WX regions (empty = clean).
-- `LinuxNetfilterAsync(filename: string)` → `LinuxNetfilter[]` — registered netfilter hooks (foreign = backdoor).
-- `LinuxKmsgAsync(filename: string)` → `LinuxKmsg[]` — kernel ring buffer (dmesg) from memory.
+- `LinuxPsListAsync(filename: string, pid?: int)` → `ToolResult<LinuxPsList[]>` — task-list processes (live view).
+- `LinuxPsScanAsync(filename: string)` → `ToolResult<LinuxPsScan[]>` — pool-scan processes (finds unlinked/hidden).
+- `LinuxPsTreeAsync(filename: string, pid?: int)` → `ToolResult<LinuxPsTree[]>` — process tree (`__children`).
+- `LinuxPsAuxAsync(filename: string, pid?: int)` → `ToolResult<LinuxPsAux[]>` — processes with full argument vectors.
+- `LinuxBashAsync(filename: string, pid?: int)` → `ToolResult<LinuxBash[]>` — bash history recovered from process memory.
+- `LinuxLsofAsync(filename: string, pid?: int)` → `ToolResult<LinuxLsof[]>` — open file descriptors per process.
+- `LinuxSockstatAsync(filename: string)` → `ToolResult<LinuxSockstat[]>` — sockets with owning process/endpoints (netstat view).
+- `LinuxLsmodAsync(filename: string)` → `ToolResult<LinuxModule[]>` — loaded kernel modules.
+- `LinuxCheckModulesAsync(filename: string)` → `ToolResult<LinuxModule[]>` — modules in memory but missing from the list (hidden).
+- `LinuxHiddenModulesAsync(filename: string)` → `ToolResult<LinuxModule[]>` — modules carved from memory (empty = none hidden).
+- `LinuxCheckSyscallAsync(filename: string)` → `ToolResult<LinuxCheckSyscall[]>` — hooked syscall-table entries (empty = clean).
+- `LinuxCheckAfinfoAsync(filename: string)` → `ToolResult<LinuxCheckAfinfo[]>` — overwritten protocol handlers (empty = clean).
+- `LinuxCheckCredsAsync(filename: string)` → `ToolResult<LinuxCheckCreds[]>` — processes sharing one cred struct (empty = clean).
+- `LinuxTtyCheckAsync(filename: string)` → `ToolResult<LinuxTtyCheck[]>` — hooked TTY handlers / keyloggers (empty = clean).
+- `LinuxMalfindAsync(filename: string, pid?: int)` → `ToolResult<LinuxMalfind[]>` — injected WX regions (empty = clean).
+- `LinuxNetfilterAsync(filename: string)` → `ToolResult<LinuxNetfilter[]>` — registered netfilter hooks (foreign = backdoor).
+- `LinuxKmsgAsync(filename: string)` → `ToolResult<LinuxKmsg[]>` — kernel ring buffer (dmesg) from memory.
 
 > Most Volatility plugins are independent — fan out multiple `Windows*Async`/`Linux*Async` calls and `await` them
 > together (e.g. `Promise.all`); the environment bounds SSH concurrency.
@@ -260,104 +268,111 @@ The Sleuth Kit (TSK), libewf (EWF/E01), loopback/NTFS mounting, file recovery, *
 The optional `offset: int` argument is a **partition start sector** (from `MmlsAsync` / `ListPartitionsAsync`);
 omit it for a single-volume image. All carving/recovery tools ship with SIFT — no installs needed.
 
-- `EwfInfoAsync(image: string)` → `EwfInfo` — EWF metadata + acquisition hashes (null on failure).
-- `EwfVerifyAsync(image: string)` → `EwfVerify` — recompute & compare acquisition hash.
+The **data** methods return `ToolResult<T>` (check `.Ok`, read `.Value` or `.FailureReason`); the **mount/extract/
+recovery-action** methods return `bool` (true on success), and the two `FindFilesAsync` overloads return `FsFile[]`
+directly (empty when nothing matches).
+
+- `EwfInfoAsync(image: string)` → `ToolResult<EwfInfo>` — EWF metadata + acquisition hashes.
+- `EwfVerifyAsync(image: string)` → `ToolResult<EwfVerify>` — recompute & compare acquisition hash.
 - `EwfMountRawAsync(image: string, mountDir: string)` → `bool` — FUSE-mount E01 RO as `<mountDir>/ewf1`.
 - `EwfMountLoopbackAsync(rawPartition: string, mountDir: string, offset?: int)` → `bool` — kernel-NTFS loopback mount.
 - `EwfMountNtfsAsync(rawPartition: string, mountDir: string, offset?: int)` → `bool` — ntfs-3g `force` mount (dirty NTFS).
 - `DDMountAsync(imageFile: string, mountDir: string, offset?: int)` → `bool` — RO loopback mount of a raw `.dd`.
-- `MakeMountDirAsync(name: string)` → `string` (path) — create `/mnt/<name>`.
+- `MakeMountDirAsync(name: string)` → `ToolResult<string>` (path) — create `/mnt/<name>`.
 - `MakeDirAsync(path: string)` → `bool` — `mkdir -p` an absolute path.
 - `UnmountAsync(mountDir: string)` → `bool` — `umount`.
-- `ImgStatAsync(image: string)` → `ImgStat` — image format details.
-- `MmlsAsync(image: string)` → `MmlsEntry[]` — partition table (TSK).
-- `ListPartitionsAsync(disk: string)` → `PartitionInfo[]` — partition table (`fdisk -l`).
-- `FsStatAsync(image: string, offset?: int)` → `FsStat` — filesystem details.
-- `FlsAsync(image: string, offset?: int, inode?: long, recursive?: bool, deletedOnly?: bool)` → `FlsEntry[]` — directory listing.
-- `IstatAsync(image: string, inode: long, offset?: int)` → `Istat` — inode metadata.
-- `FfindAsync(image: string, inode: long, offset?: int)` → `string` — file name for an inode.
-- `IlsAsync(image: string, offset?: int)` → `IlsEntry[]` — inode listing.
+- `ImgStatAsync(image: string)` → `ToolResult<ImgStat>` — image format details.
+- `MmlsAsync(image: string)` → `ToolResult<MmlsEntry[]>` — partition table (TSK).
+- `ListPartitionsAsync(disk: string)` → `ToolResult<PartitionInfo[]>` — partition table (`fdisk -l`).
+- `FsStatAsync(image: string, offset?: int)` → `ToolResult<FsStat>` — filesystem details.
+- `FlsAsync(image: string, offset?: int, inode?: long, recursive?: bool, deletedOnly?: bool)` → `ToolResult<FlsEntry[]>` — directory listing.
+- `IstatAsync(image: string, inode: long, offset?: int)` → `ToolResult<Istat>` — inode metadata.
+- `FfindAsync(image: string, inode: long, offset?: int)` → `ToolResult<string>` — file name for an inode.
+- `IlsAsync(image: string, offset?: int)` → `ToolResult<IlsEntry[]>` — inode listing.
 - `IcatAsync(image: string, inode: long, outputFile: string, offset?: int)` → `bool` — extract an inode's content.
 - `FindFilesAsync(directory: string, namePattern?: string, maxDepth?: int)` → `FsFile[]` — find by one glob (default `"*"`).
   The search is **recursive** and the glob matches the file **name** (e.g. `*.evtx`), so you do *not* need a `**/` prefix.
   Conveniences are normalised: a leading `**/` is stripped, brace alternation (`*.{evtx,log}`) is expanded, and a glob
   containing `/` (e.g. `Users/*/NTUSER.DAT`) is matched against the whole path. Supports `*`, `?`, `[...]`. `maxDepth` 0 = unlimited.
 - `FindFilesAsync(directory: string, namePatterns: string[], maxDepth?: int)` → `FsFile[]` — find by any of several globs (one traversal).
-- `Sha256Async(path: string)` → `string` — SHA-256 of a mounted file.
-- `GrepLinesAsync(path: string, patterns: string[], ignoreCase?: bool, maxMatches?: int)` → `string[]` —
-  server-side `grep -E -f`; returns only matching lines (`[]` on no match, null on unreadable file).
-- `TskRecoverAsync(image: string, outputDir: string, all: bool, dirInode?: long, offset?: int)` → `int` —
-  bulk-recover files (count); `all=true` includes deleted/unallocated.
+- `Sha256Async(path: string)` → `ToolResult<string>` — SHA-256 of a mounted file.
+- `GrepLinesAsync(path: string, patterns: string[], ignoreCase?: bool, maxMatches?: int)` → `ToolResult<string[]>` —
+  server-side `grep -E -f`; `.Value` is the matching lines (`[]` on no match; failed result on an unreadable file).
+- `TskRecoverAsync(image: string, outputDir: string, all: bool, dirInode?: long, offset?: int)` → `ToolResult<int>` —
+  bulk-recover files (count in `.Value`); `all=true` includes deleted/unallocated.
 - `IcatByAddrAsync(image: string, inode: string, outputFile: string, offset?: int)` → `bool` — extract a file by
   TSK inode **address string** (plain ext inode, or NTFS `mft-type-id`, as `FlsEntry.Inode` carries).
-- `BlklsAsync(image: string, outputFile: string, offset?: int, slackOnly?: bool)` → `long` (bytes) — extract a
+- `BlklsAsync(image: string, outputFile: string, offset?: int, slackOnly?: bool)` → `ToolResult<long>` (bytes) — extract a
   filesystem's **unallocated** blocks (or `-s` slack) for carving.
-- `ForemostAsync(input: string, outputDir: string, fileTypes?: string)` → `CarvedFile[]` — signature-carve with
+- `ForemostAsync(input: string, outputDir: string, fileTypes?: string)` → `ToolResult<CarvedFile[]>` — signature-carve with
   foremost (`fileTypes` default `"all"`; `outputDir` must not pre-exist).
-- `ScalpelAsync(input: string, outputDir: string, confFile?: string)` → `CarvedFile[]` — signature-carve with scalpel.
-- `PhotoRecAsync(input: string, outputDir: string, fileTypes?: string)` → `string[]` — carve with photorec (recovered paths).
-- `BulkExtractorAsync(input: string, outputDir: string)` → `BulkFeatureFile[]` — extract features (email/url/domain/
+- `ScalpelAsync(input: string, outputDir: string, confFile?: string)` → `ToolResult<CarvedFile[]>` — signature-carve with scalpel.
+- `PhotoRecAsync(input: string, outputDir: string, fileTypes?: string)` → `ToolResult<string[]>` — carve with photorec (recovered paths).
+- `BulkExtractorAsync(input: string, outputDir: string)` → `ToolResult<BulkFeatureFile[]>` — extract features (email/url/domain/
   ccn/phone/ip) with counts + top values, regardless of filesystem.
-- `SigfindAsync(image: string, signature: string, offset?: int)` → `long[]` — block offsets of a hex byte signature.
-- `ExtundeleteAsync(image: string, outputDir: string, restoreAll?: bool)` → `int` — ext3/4 undelete (count recovered).
+- `SigfindAsync(image: string, signature: string, offset?: int)` → `ToolResult<long[]>` — block offsets of a hex byte signature.
+- `ExtundeleteAsync(image: string, outputDir: string, restoreAll?: bool)` → `ToolResult<int>` — ext3/4 undelete (count recovered).
 - `BdeInfoAsync(source: string, offset?: int, recoveryPassword?: string, password?: string, bekFile?: string, fullKey?: string)`
-  → `BitLockerInfo` — read BitLocker (BDE) volume metadata + key protectors via `bdeinfo` (`source` = a raw device
-  like `ewf1`, or a raw image; `offset` = partition start sector). No credential needed to read metadata. Returns
-  null when there is no BDE volume at the offset (i.e. not BitLocker-encrypted) — else check `IsBitLockerVolume`.
+  → `ToolResult<BitLockerInfo>` — read BitLocker (BDE) volume metadata + key protectors via `bdeinfo` (`source` = a raw device
+  like `ewf1`, or a raw image; `offset` = partition start sector). No credential needed to read metadata. A failed
+  result when there is no BDE volume at the offset (i.e. not BitLocker-encrypted) — else check `.Value.IsBitLockerVolume`.
 - `BdeMountAsync(volume: string, mountDir: string, recoveryPassword?: string, password?: string, bekFile?: string, fullKey?: string, offset?: int)`
   → `bool` — unlock + mount a BitLocker volume RO with `bdemount`, exposing the decrypted volume as `<mountDir>/bde1`
   (a raw device the TSK tools and a loopback mount use just like `ewf1`). Supply one credential. False on a wrong
   credential.
-- `SearchBitLockerRecoveryKeysAsync(input: string, maxMatches?: int)` → `string[]` — string-search `input` (image/
+- `SearchBitLockerRecoveryKeysAsync(input: string, maxMatches?: int)` → `ToolResult<string[]>` — string-search `input` (image/
   device/extract/memory dump) for 48-digit BitLocker recovery keys (`strings | grep`). The FOR508 "no key supplied"
-  fallback. Returns the distinct candidate keys (`[]` if none, null if unreadable).
+  fallback. `.Value` is the distinct candidate keys (`[]` if none; failed result if unreadable).
 - `DeleteFileAsync(path: string)` → `bool` — delete a non-evidence temp file (e.g. an unallocated extract).
 - `FlsBodyfileAsync(image: string, outputFile: string, offset?: int, mountPoint?: string)` → `bool` — `fls -r -m` bodyfile.
-- `MactimeAsync(bodyfile: string, timezone?: string)` → `MactimeEntry[]` — render a sorted timeline (default UTC).
+- `MactimeAsync(bodyfile: string, timezone?: string)` → `ToolResult<MactimeEntry[]>` — render a sorted timeline (default UTC).
 - `MactimeToFileAsync(bodyfile: string, outputFile: string, timezone?: string)` → `bool` — render a large timeline to a file.
 
 ---
 
 ## WindowsAnalysisToolkit
 
-Eric Zimmerman (EZ) tools, RegRipper, and bespoke parsers for Windows host artifacts.
+Eric Zimmerman (EZ) tools, RegRipper, and bespoke parsers for Windows host artifacts. Every method below returns a
+**`ToolResult<T>`** — check `.Ok`, read the payload from `.Value`, or read `.FailureReason` (it distinguishes "tool
+not installed on this platform" from "the command failed / the artifact was unreadable"). An empty `.Value`
+collection means "ran clean, found nothing", not a failure.
 
-- `LoadLolbasAsync()` → `LolbasReference` — the LOLBAS index (methods `IsLolbin`, `IsCanonicalPath`).
-- `MFTECmdAsync(file: string)` → `MFTEntry[]` — parse a `$MFT` to JSON rows.
-- `MFTECmdUsnAsync(usnFile: string)` → `UsnJournalEntry[]` — parse a `$UsnJrnl:$J` change journal.
+- `LoadLolbasAsync()` → `ToolResult<LolbasReference>` — the LOLBAS index (methods `IsLolbin`, `IsCanonicalPath`).
+- `MFTECmdAsync(file: string)` → `ToolResult<MFTEntry[]>` — parse a `$MFT` to JSON rows.
+- `MFTECmdUsnAsync(usnFile: string)` → `ToolResult<UsnJournalEntry[]>` — parse a `$UsnJrnl:$J` change journal.
 - `MFTECmdCsvAsync(file: string, outputFile?: string, outputDir?: string, allTimestamps?: bool, recoverSlack?: bool, vss?: bool)`
-  → `MFTECmdResult` — parse NTFS metadata to a CSV file (one of `outputFile`/`outputDir` required).
+  → `ToolResult<MFTECmdResult>` — parse NTFS metadata to a CSV file (one of `outputFile`/`outputDir` required).
 - `MFTECmdBodyfileAsync(file: string, outputFile?: string, outputDir?: string, driveLetter?: string, vss?: bool)`
-  → `MFTECmdResult` — parse to a mactime bodyfile.
-- `LECmdAsync(file: string)` → `LnkFile[]` — parse a LNK shortcut.
-- `LECmdDirectoryAsync(directory: string)` → `LnkFile[]` — parse every `.lnk` under a directory (e.g. a Recent folder).
-- `SBECmdAsync(hiveDirectory: string)` → `ShellBag[]` — shellbags (JSON).
-- `SBECmdCsvAsync(directory: string, outputDir: string)` → `SBECmdCsvResult` — shellbags to per-hive CSVs.
-- `AppCompatCacheParserAsync(systemHive: string, ignoreTransactionLogs?: bool)` → `ShimcacheEntry[]` — Shimcache.
-- `AmcacheParserAsync(amcacheHive: string, ignoreTransactionLogs?: bool)` → `AmcacheEntry[]` — Amcache (SHA-1 + metadata).
-- `RBCmdAsync(file: string)` → `RecycleBinEntry[]` — recycle-bin records.
-- `JLECmdAsync(directory: string)` → `JumpListEntry[]` — jump lists.
-- `WxTCmdAsync(activitiesCacheDb: string)` → `TimelineActivity[]` — Win10 Timeline activities.
-- `RECmdAsync(hiveDirectory: string, batchFile: string)` → `RegistryEntry[]` — RECmd batch over a hive directory.
-- `RECmdSingleHiveAsync(hiveFile: string, batchFile: string)` → `RegistryEntry[]` — RECmd over one hive (replays logs).
-- `SQLECmdAsync(directory: string)` → `object[]` — SQLECmd over SQLite DBs (heterogeneous key/value records).
+  → `ToolResult<MFTECmdResult>` — parse to a mactime bodyfile.
+- `LECmdAsync(file: string)` → `ToolResult<LnkFile[]>` — parse a LNK shortcut.
+- `LECmdDirectoryAsync(directory: string)` → `ToolResult<LnkFile[]>` — parse every `.lnk` under a directory (e.g. a Recent folder).
+- `SBECmdAsync(hiveDirectory: string)` → `ToolResult<ShellBag[]>` — shellbags (JSON).
+- `SBECmdCsvAsync(directory: string, outputDir: string)` → `ToolResult<SBECmdCsvResult>` — shellbags to per-hive CSVs.
+- `AppCompatCacheParserAsync(systemHive: string, ignoreTransactionLogs?: bool)` → `ToolResult<ShimcacheEntry[]>` — Shimcache.
+- `AmcacheParserAsync(amcacheHive: string, ignoreTransactionLogs?: bool)` → `ToolResult<AmcacheEntry[]>` — Amcache (SHA-1 + metadata).
+- `RBCmdAsync(file: string)` → `ToolResult<RecycleBinEntry[]>` — recycle-bin records.
+- `JLECmdAsync(directory: string)` → `ToolResult<JumpListEntry[]>` — jump lists.
+- `WxTCmdAsync(activitiesCacheDb: string)` → `ToolResult<TimelineActivity[]>` — Win10 Timeline activities.
+- `RECmdAsync(hiveDirectory: string, batchFile: string)` → `ToolResult<RegistryEntry[]>` — RECmd batch over a hive directory.
+- `RECmdSingleHiveAsync(hiveFile: string, batchFile: string)` → `ToolResult<RegistryEntry[]>` — RECmd over one hive (replays logs).
+- `SQLECmdAsync(directory: string)` → `ToolResult<object[]>` — SQLECmd over SQLite DBs (heterogeneous key/value records).
 - `EvtxECmdAsync(file?: string, directory?: string, includeIds?: string, excludeIds?: string, startDate?: string, endDate?: string)`
-  → `EventLogEntry[]` — parse EVTX to JSON (one of `file`/`directory` required; IDs comma-separated; dates UTC `"yyyy-MM-dd HH:mm:ss"`).
+  → `ToolResult<EventLogEntry[]>` — parse EVTX to JSON (one of `file`/`directory` required; IDs comma-separated; dates UTC `"yyyy-MM-dd HH:mm:ss"`).
 - `EvtxECmdServerFilteredAsync(payloadGrepPattern: string, file?: string, directory?: string, includeIds?: string, excludeIds?: string, startDate?: string, endDate?: string)`
-  → `EventLogEntry[]` — as above, server-side `grep -F` of the payload first (for huge event streams).
+  → `ToolResult<EventLogEntry[]>` — as above, server-side `grep -F` of the payload first (for huge event streams).
 - `EvtxECmdCsvAsync(file?: string, directory?: string, includeIds?: string, excludeIds?: string, startDate?: string, endDate?: string, outputFile?: string, outputDir?: string)`
-  → `EvtxECmdCsvResult` — parse EVTX to a CSV file.
-- `RegRipperAsync(hive: string, plugin: string)` → `RegRipperResult` — run one RegRipper plugin (raw text in `.Lines`).
-- `ScheduledTasksAsync(tasksDirectory: string)` → `ScheduledTaskEntry[]` — parse `\Windows\System32\Tasks` XML.
-- `WmiSubscriptionsAsync(objectsDataPath: string)` → `WmiSubscriptions` — recover WMI subscriptions from `OBJECTS.DATA`.
-- `BstringsAsync(file: string, minLength?: int)` → `string[]` — extract strings.
-- `PffInfoAsync(pstFile: string)` → `PstStoreInfo` — PST/OST store metadata (PST vs OST, encryption) via libpff.
-- `ReadPstAsync(pstFile: string, maxMessagesPerFolder?: int)` → `EmailExportResult` — export a PST/OST and parse messages (From/To/Subject/Date/attachments) via libpst.
-- `EsedbInfoAsync(edbFile: string)` → `EseDatabaseInfo` — list ESE (EDB) tables (WebCacheV01.dat, Windows.edb) via libesedb.
-- `WebCacheHistoryAsync(webCacheDbFile: string)` → `WebCacheEntry[]` — IE/Edge `WebCacheV01.dat` URL history (esedbexport).
-- `UsbDeviceForensicsAsync(systemHive: string, softwareHive: string, ntuserHive?: string)` → `UsbDeviceRecord[]` — profile USB devices from the registry (hives auto-staged to a writable temp dir).
-- `SqliteQueryAsync(dbFile: string, sql: string)` → `object[]` — read-only `sqlite3 -json` query of a browser/app SQLite DB (DB staged to a temp copy). Use this for browser History DBs (SQLECmd's EZ build is unusable on SIFT).
-- `HindsightAsync(chromeProfileDir: string)` → `object[]` — Chrome/Chromium activity timeline (JSON-lines), optional.
+  → `ToolResult<EvtxECmdCsvResult>` — parse EVTX to a CSV file.
+- `RegRipperAsync(hive: string, plugin: string)` → `ToolResult<RegRipperResult>` — run one RegRipper plugin (raw text in `.Lines`).
+- `ScheduledTasksAsync(tasksDirectory: string)` → `ToolResult<ScheduledTaskEntry[]>` — parse `\Windows\System32\Tasks` XML.
+- `WmiSubscriptionsAsync(objectsDataPath: string)` → `ToolResult<WmiSubscriptions>` — recover WMI subscriptions from `OBJECTS.DATA`.
+- `BstringsAsync(file: string, minLength?: int)` → `ToolResult<string[]>` — extract strings.
+- `PffInfoAsync(pstFile: string)` → `ToolResult<PstStoreInfo>` — PST/OST store metadata (PST vs OST, encryption) via libpff.
+- `ReadPstAsync(pstFile: string, maxMessagesPerFolder?: int)` → `ToolResult<EmailExportResult>` — export a PST/OST and parse messages (From/To/Subject/Date/attachments) via libpst.
+- `EsedbInfoAsync(edbFile: string)` → `ToolResult<EseDatabaseInfo>` — list ESE (EDB) tables (WebCacheV01.dat, Windows.edb) via libesedb.
+- `WebCacheHistoryAsync(webCacheDbFile: string)` → `ToolResult<WebCacheEntry[]>` — IE/Edge `WebCacheV01.dat` URL history (esedbexport).
+- `UsbDeviceForensicsAsync(systemHive: string, softwareHive: string, ntuserHive?: string)` → `ToolResult<UsbDeviceRecord[]>` — profile USB devices from the registry (hives auto-staged to a writable temp dir).
+- `SqliteQueryAsync(dbFile: string, sql: string)` → `ToolResult<object[]>` — read-only `sqlite3 -json` query of a browser/app SQLite DB (DB staged to a temp copy). Use this for browser History DBs (SQLECmd's EZ build is unusable on SIFT).
+- `HindsightAsync(chromeProfileDir: string)` → `ToolResult<object[]>` — Chrome/Chromium activity timeline (JSON-lines), optional.
 
 ---
 
@@ -369,21 +384,24 @@ Plaso (`log2timeline`/`psort`/`pinfo`/`psteal`/`image_export`) and `hayabusa`. T
 - `Log2TimelineAsync(source: string, storageFile: string, parsers?: string, hash?: bool, filterFile?: string, partitions?: string, vssStores?: string, timezone?: string)`
   → `bool` — parse `source` into `storageFile` (appends if it exists). Scope with `parsers` (preset/list, leading
   `-` negates), `filterFile`, `partitions`, `vssStores`; `hash=true` stores MD5/SHA-256.
-- `PsortAsync(storageFile: string, filter?: string, slice?: string, sliceSize?: int)` → `TimelineEvent[]` — export a
+- `PsortAsync(storageFile: string, filter?: string, slice?: string, sliceSize?: int)` → `ToolResult<TimelineEvent[]>` — export a
   sorted timeline. `filter` is a Plaso attribute filter; `slice` (ISO-8601) + `sliceSize` (minutes) = pivot mini-timeline.
-- `PsortReducedAsync(storageFile: string, filter?: string, maxMessageChars?: int)` → `TimelineEvent[]` — scale-safe
+- `PsortReducedAsync(storageFile: string, filter?: string, maxMessageChars?: int)` → `ToolResult<TimelineEvent[]>` — scale-safe
   export (strips bulky payloads, truncates `message` to `maxMessageChars`, default 1024). Prefer for whole-timeline triage.
-- `PsortSearchAsync(storageFile: string, grepPattern: string, filter?: string)` → `TimelineEvent[]` — keyword-search
+- `PsortSearchAsync(storageFile: string, grepPattern: string, filter?: string)` → `ToolResult<TimelineEvent[]>` — keyword-search
   the rendered timeline (server-side `grep -i -E`, incl. the human-readable `message`).
 - `PsortTagAsync(storageFile: string, taggingFile: string)` → `bool` — apply the `tagging` plugin (labels persisted into the .plaso).
-- `PinfoAsync(storageFile: string)` → `PlasoInfo` — parser-hit stats and total event count.
-- `PstealAsync(source: string, parsers?: string, timezone?: string)` → `TimelineEvent[]` — one-step ingest+export.
+- `PinfoAsync(storageFile: string)` → `ToolResult<PlasoInfo>` — parser-hit stats and total event count.
+- `PstealAsync(source: string, parsers?: string, timezone?: string)` → `ToolResult<TimelineEvent[]>` — one-step ingest+export.
 - `ImageExportAsync(source: string, outputDir: string, names?: string, extensions?: string)` → `bool` — extract files from an image.
-- `HayabusaJsonTimelineAsync(evtxPath: string, directory?: bool, minLevel?: string)` → `HayabusaAlert[]` — Sigma detections.
-- `HayabusaComputerMetricsAsync(evtxPath: string, directory?: bool)` → `ComputerMetric[]`.
-- `HayabusaEidMetricsAsync(evtxPath: string, directory?: bool)` → `EidMetric[]`.
-- `HayabusaLogMetricsAsync(evtxPath: string, directory?: bool)` → `LogMetric[]`.
-- `HayabusaLogonSummaryAsync(evtxPath: string, directory?: bool)` → `LogonSummaryEntry[]` (each flagged `.Successful`).
+- `HayabusaJsonTimelineAsync(evtxPath: string, directory?: bool, minLevel?: string)` → `ToolResult<HayabusaAlert[]>` — Sigma detections.
+- `HayabusaComputerMetricsAsync(evtxPath: string, directory?: bool)` → `ToolResult<ComputerMetric[]>`.
+- `HayabusaEidMetricsAsync(evtxPath: string, directory?: bool)` → `ToolResult<EidMetric[]>`.
+- `HayabusaLogMetricsAsync(evtxPath: string, directory?: bool)` → `ToolResult<LogMetric[]>`.
+- `HayabusaLogonSummaryAsync(evtxPath: string, directory?: bool)` → `ToolResult<LogonSummaryEntry[]>` (each flagged `.Successful`).
+
+(The data methods above return `ToolResult<T>` — check `.Ok`, read `.Value` or `.FailureReason`; the three
+`bool` methods report success directly. See the `ToolResult` schema.)
 
 ---
 
@@ -392,9 +410,10 @@ Plaso (`log2timeline`/`psort`/`pinfo`/`psteal`/`image_export`) and `hayabusa`. T
 Classic `yara` scanner + the bundled Yara-Rules community pack (at `/opt/yara-rules`, with aggregator indexes
 such as `malware_index.yar`, `webshells_index.yar`).
 
-- `ScanAsync(rules: string, scanPath: string, options?: YaraOptions)` → `YaraMatch[]` — scan a file or (with
-  `options.Recurse`) a directory; one match per rule/file hit.
-- `CompileAsync(rules: string, output: string)` → `bool` — compile rules to a binary file.
+- `ScanAsync(rules: string, scanPath: string, options?: YaraOptions)` → `ToolResult<YaraMatch[]>` — scan a file or
+  (with `options.Recurse`) a directory; one match per rule/file hit. Check `.Ok`, read `.Value` (empty = ran clean)
+  or `.FailureReason` (yara not installed vs. scan failed).
+- `CompileAsync(rules: string, output: string)` → `bool` — compile rules to a binary file (true on success).
 
 `options` is passed as a JS object literal (all fields optional), e.g. `{ Recurse: true, Timeout: 120 }`. See the
 `YaraOptions` schema for the full field set.
@@ -454,21 +473,24 @@ an explicit artifact path, and is read-only. Reads default to **sudo** (forensic
 in Bruce Nikkel, *Practical Linux Forensics*. Tooling note: everything here is satisfied by the base SIFT image —
 no installs are needed for the default Debian/Ubuntu (dpkg) path.
 
-- `SystemInfoAsync(rootDir: string, sudo?: bool)` → `LinuxSystemInfo` — os-release/hostname/timezone/machine-id.
-- `UserAccountsAsync(rootDir: string, sudo?: bool)` → `LinuxUserAccount[]` — passwd⋈shadow (hash-free `PasswordState`).
-- `SudoersAsync(rootDir: string, sudo?: bool)` → `SudoRule[]` — sudoers + sudoers.d grants.
-- `CronEntriesAsync(rootDir: string, sudo?: bool)` → `CronEntry[]` — every cron location (system/user/script dirs).
-- `LastLoginsAsync(wtmpPath?: string, rootDir?: string, sudo?: bool)` → `LinuxLogin[]` — successful logins (`last`).
-- `FailedLoginsAsync(btmpPath?: string, rootDir?: string, sudo?: bool)` → `LinuxLogin[]` — failed logins (`lastb`).
-- `UtmpDumpAsync(path: string, sudo?: bool)` → `UtmpRecord[]` — raw utmp/wtmp/btmp (boot records, tamper checks).
-- `JournalAsync(journalDir: string, maxEntries?: int, unit?: string, sudo?: bool)` → `JournalEntry[]` — systemd journal.
-- `InstalledPackagesAsync(rootDir: string, sudo?: bool)` → `LinuxPackage[]` — dpkg status inventory.
-- `PackageLogAsync(rootDir: string, sudo?: bool)` → `PackageEvent[]` — dpkg.log + apt history install timeline.
-- `ShellHistoryAsync(rootDir: string, sudo?: bool)` → `ShellHistoryEntry[]` — every user's bash/zsh/python history.
-- `ClamScanAsync(path: string, recurse?: bool, sudo?: bool)` → `ClamAvMatch[]` — ClamAV infected-file scan.
-- `SetuidFilesAsync(rootDir: string, sudo?: bool)` → `LinuxFile[]` — SUID/SGID binaries.
-- `WorldWritableFilesAsync(rootDir: string, sudo?: bool)` → `LinuxFile[]` — world-writable files.
-- `FilesInDirsAsync(dirs: string[], sudo?: bool)` → `LinuxFile[]` — files under given dirs (e.g. /tmp staging).
+(Each data method below returns `ToolResult<T>` — check `.Ok`, read `.Value` or `.FailureReason`; the reason
+distinguishes "tool not installed" / "artifact not readable under this root" from a real failure.)
+
+- `SystemInfoAsync(rootDir: string, sudo?: bool)` → `ToolResult<LinuxSystemInfo>` — os-release/hostname/timezone/machine-id.
+- `UserAccountsAsync(rootDir: string, sudo?: bool)` → `ToolResult<LinuxUserAccount[]>` — passwd⋈shadow (hash-free `PasswordState`).
+- `SudoersAsync(rootDir: string, sudo?: bool)` → `ToolResult<SudoRule[]>` — sudoers + sudoers.d grants.
+- `CronEntriesAsync(rootDir: string, sudo?: bool)` → `ToolResult<CronEntry[]>` — every cron location (system/user/script dirs).
+- `LastLoginsAsync(wtmpPath?: string, rootDir?: string, sudo?: bool)` → `ToolResult<LinuxLogin[]>` — successful logins (`last`).
+- `FailedLoginsAsync(btmpPath?: string, rootDir?: string, sudo?: bool)` → `ToolResult<LinuxLogin[]>` — failed logins (`lastb`).
+- `UtmpDumpAsync(path: string, sudo?: bool)` → `ToolResult<UtmpRecord[]>` — raw utmp/wtmp/btmp (boot records, tamper checks).
+- `JournalAsync(journalDir: string, maxEntries?: int, unit?: string, sudo?: bool)` → `ToolResult<JournalEntry[]>` — systemd journal.
+- `InstalledPackagesAsync(rootDir: string, sudo?: bool)` → `ToolResult<LinuxPackage[]>` — dpkg status inventory.
+- `PackageLogAsync(rootDir: string, sudo?: bool)` → `ToolResult<PackageEvent[]>` — dpkg.log + apt history install timeline.
+- `ShellHistoryAsync(rootDir: string, sudo?: bool)` → `ToolResult<ShellHistoryEntry[]>` — every user's bash/zsh/python history.
+- `ClamScanAsync(path: string, recurse?: bool, sudo?: bool)` → `ToolResult<ClamAvMatch[]>` — ClamAV infected-file scan.
+- `SetuidFilesAsync(rootDir: string, sudo?: bool)` → `ToolResult<LinuxFile[]>` — SUID/SGID binaries.
+- `WorldWritableFilesAsync(rootDir: string, sudo?: bool)` → `ToolResult<LinuxFile[]>` — world-writable files.
+- `FilesInDirsAsync(dirs: string[], sudo?: bool)` → `ToolResult<LinuxFile[]>` — files under given dirs (e.g. /tmp staging).
 - `ReadFilesAsync(paths: string[], sudo?: bool)` → array of `{ Path, Content }` — slurp arbitrary small artifact
   files/globs in one round trip (systemd units, rc files, authorized_keys, …).
 
@@ -520,9 +542,12 @@ methods are synchronous** (no `await`).
 - `Summarize(report: TriageReport, topN?: int)` → `string` — compact, agent-readable rendering (pass to `log`).
 
 ```js
-const events = await TimelineAnalysisToolkit.PsortReducedAsync("/cases/host.plaso");
-const report = AnomalyDetectionToolkit.TriageTimeline(events, 200, true);
-log(AnomalyDetectionToolkit.Summarize(report, 25));
+const ev = await TimelineAnalysisToolkit.PsortReducedAsync("/cases/host.plaso");
+if (!ev.Ok) { error(ev.FailureReason); }
+else {
+  const report = AnomalyDetectionToolkit.TriageTimeline(ev.Value, 200, true);
+  log(AnomalyDetectionToolkit.Summarize(report, 25));
+}
 ```
 
 ---

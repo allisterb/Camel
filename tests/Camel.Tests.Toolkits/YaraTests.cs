@@ -41,7 +41,7 @@ public class YaraTests : TestsRuntime
     [Fact]
     public async Task CanRunScanBasic()
     {
-        var r = await toolkit.ScanAsync($"{Dir}/test.yar", $"{Dir}/sample.txt");
+        var r = (await toolkit.ScanAsync($"{Dir}/test.yar", $"{Dir}/sample.txt")).Value;
         Assert.NotNull(r);
         var match = Assert.Single(r);
         Assert.Equal("CamelTest", match.Rule);
@@ -51,8 +51,8 @@ public class YaraTests : TestsRuntime
     [Fact]
     public async Task CanRunScanWithTagsMetaAndStrings()
     {
-        var r = await toolkit.ScanAsync($"{Dir}/test.yar", $"{Dir}/sample.txt",
-            new YaraOptions { PrintTags = true, PrintMeta = true, PrintStrings = true, PrintNamespace = true });
+        var r = (await toolkit.ScanAsync($"{Dir}/test.yar", $"{Dir}/sample.txt",
+            new YaraOptions { PrintTags = true, PrintMeta = true, PrintStrings = true, PrintNamespace = true })).Value;
         Assert.NotNull(r);
         var match = Assert.Single(r);
         Assert.Equal("CamelTest", match.Rule);
@@ -65,7 +65,7 @@ public class YaraTests : TestsRuntime
     [Fact]
     public async Task CanRunScanRecursiveNoFalsePositive()
     {
-        var r = await toolkit.ScanAsync($"{Dir}/test.yar", Dir, new YaraOptions { Recurse = true });
+        var r = (await toolkit.ScanAsync($"{Dir}/test.yar", Dir, new YaraOptions { Recurse = true })).Value;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, m => m.Target.EndsWith("sample.txt"));
@@ -80,7 +80,7 @@ public class YaraTests : TestsRuntime
 
         Assert.True(await toolkit.CompileAsync($"{Dir}/test.yar", compiled));
 
-        var r = await toolkit.ScanAsync(compiled, $"{Dir}/sample.txt", new YaraOptions { Compiled = true });
+        var r = (await toolkit.ScanAsync(compiled, $"{Dir}/sample.txt", new YaraOptions { Compiled = true })).Value;
         Assert.NotNull(r);
         var match = Assert.Single(r);
         Assert.Equal("CamelTest", match.Rule);

@@ -38,13 +38,13 @@ public partial class WindowsAnalysisWorkflow
         using var _audit = AuditScope();
         using var op = Begin("Analyzing USB devices from {0}", systemHive);
 
-        var records = await WindowsAnalysis.UsbDeviceForensicsAsync(systemHive, softwareHive, ntuserHive);
+        var records = (await WindowsAnalysis.UsbDeviceForensicsAsync(systemHive, softwareHive, ntuserHive)).Value;
         if (records is null)
             return WorkflowResult<UsbDeviceReport>.Failure(
                 $"usbdeviceforensics could not profile the hives ('{systemHive}', '{softwareHive}'); check they are valid SYSTEM/SOFTWARE hives.");
 
         // FriendlyName per serial from RegRipper's usbstor plugin (usbdeviceforensics' TSV omits it).
-        var usbstor = await WindowsAnalysis.RegRipperAsync(systemHive, "usbstor");
+        var usbstor = (await WindowsAnalysis.RegRipperAsync(systemHive, "usbstor")).Value;
         var friendlyBySerial = ParseUsbstorFriendlyNames(usbstor);
 
         var devices = new List<UsbDevice>();
@@ -58,7 +58,7 @@ public partial class WindowsAnalysisWorkflow
             bool inSetupApi = false;
             if (setupApiLog is not null && r.SerialNumber is { Length: > 0 } sn)
             {
-                var hits = await DiskAnalysis.GrepLinesAsync(setupApiLog, [sn], ignoreCase: true, maxMatches: 1);
+                var hits = (await DiskAnalysis.GrepLinesAsync(setupApiLog, [sn], ignoreCase: true, maxMatches: 1)).Value;
                 inSetupApi = hits is { Length: > 0 };
                 if (inSetupApi) sources.Add("setupapi.dev.log");
             }

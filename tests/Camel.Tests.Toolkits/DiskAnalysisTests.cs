@@ -33,7 +33,7 @@ public class DiskAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunEwfInfo()
     {
-        var r = await toolkit.EwfInfoAsync(Image);
+        var r = (await toolkit.EwfInfoAsync(Image)).Value;
         Assert.NotNull(r);
         Assert.Equal("aee4fcd9301c03b3b054623ca261959a", r.MD5);
         Assert.Equal("Greg Schardt", r.CaseNumber);
@@ -44,7 +44,7 @@ public class DiskAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunEwfVerify()
     {
-        var r = await toolkit.EwfVerifyAsync(Image);
+        var r = (await toolkit.EwfVerifyAsync(Image)).Value;
         Assert.NotNull(r);
         Assert.True(r.Success);
         Assert.Equal(r.StoredMD5, r.CalculatedMD5);
@@ -54,7 +54,7 @@ public class DiskAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunImgStat()
     {
-        var r = await toolkit.ImgStatAsync(Image);
+        var r = (await toolkit.ImgStatAsync(Image)).Value;
         Assert.NotNull(r);
         Assert.Equal("ewf", r.ImageType);
         Assert.Equal(4871301120, r.SizeOfData);
@@ -64,7 +64,7 @@ public class DiskAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunMmls()
     {
-        var r = await toolkit.MmlsAsync(Image);
+        var r = (await toolkit.MmlsAsync(Image)).Value;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         var ntfs = Assert.Single(r, e => e.Description.Contains("NTFS"));
@@ -74,7 +74,7 @@ public class DiskAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunFsStat()
     {
-        var r = await toolkit.FsStatAsync(Image, NtfsOffset);
+        var r = (await toolkit.FsStatAsync(Image, NtfsOffset)).Value;
         Assert.NotNull(r);
         Assert.Equal("NTFS", r.FileSystemType);
         Assert.Equal(5, r.RootDirectory);
@@ -84,7 +84,7 @@ public class DiskAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunFls()
     {
-        var r = await toolkit.FlsAsync(Image, NtfsOffset);
+        var r = (await toolkit.FlsAsync(Image, NtfsOffset)).Value;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => e.Name == "boot.ini");
@@ -94,7 +94,7 @@ public class DiskAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunIstat()
     {
-        var r = await toolkit.IstatAsync(Image, 3664, NtfsOffset); // boot.ini
+        var r = (await toolkit.IstatAsync(Image, 3664, NtfsOffset)).Value; // boot.ini
         Assert.NotNull(r);
         Assert.Equal(3664, r.Entry);
         Assert.True(r.Allocated);
@@ -104,7 +104,7 @@ public class DiskAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunFfind()
     {
-        var r = await toolkit.FfindAsync(Image, 3664, NtfsOffset);
+        var r = (await toolkit.FfindAsync(Image, 3664, NtfsOffset)).Value;
         Assert.NotNull(r);
         Assert.Contains("boot.ini", r);
     }
@@ -112,7 +112,7 @@ public class DiskAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunIls()
     {
-        var r = await toolkit.IlsAsync(Image, NtfsOffset);
+        var r = (await toolkit.IlsAsync(Image, NtfsOffset)).Value;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.All(r, e => Assert.True(e.StIno >= 0));
@@ -172,7 +172,7 @@ public class DiskAnalysisTests : TestsRuntime
         const string name = "camel_mp_test";
         sshenv.ExecuteCommand("rmdir", $"/mnt/{name}", out _, true); // clean up any prior run
 
-        var path = await toolkit.MakeMountDirAsync(name);
+        var path = (await toolkit.MakeMountDirAsync(name)).Value;
         Assert.Equal($"/mnt/{name}", path);
         Assert.True(sshenv.ExecuteCommand("test", $"-d /mnt/{name}", out _, false)); // dir exists
 
@@ -188,7 +188,7 @@ public class DiskAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("mkdir", $"-p {raw}", out _, false);
         Assert.True(await toolkit.EwfMountRawAsync(Image, raw));
 
-        var parts = await toolkit.ListPartitionsAsync($"{raw}/ewf1");
+        var parts = (await toolkit.ListPartitionsAsync($"{raw}/ewf1")).Value;
         Assert.NotNull(parts);
         Assert.NotEmpty(parts);
 
@@ -261,7 +261,7 @@ public class DiskAnalysisTests : TestsRuntime
         const string outDir = "/tmp/camel_recover";
         sshenv.ExecuteCommand("rm", $"-rf {outDir}", out _, true);
 
-        var n = await toolkit.TskRecoverAsync(Image, outDir, all: false, offset: NtfsOffset);
+        var n = (await toolkit.TskRecoverAsync(Image, outDir, all: false, offset: NtfsOffset)).Value;
         Assert.NotNull(n);
         Assert.True(n > 0);
 
@@ -277,7 +277,7 @@ public class DiskAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("rm", $"-rf {outDir}", out _, true);
 
         // Recover only the WINDOWS directory subtree (inode 458).
-        var n = await toolkit.TskRecoverAsync(Image, outDir, all: false, dirInode: 458, offset: NtfsOffset);
+        var n = (await toolkit.TskRecoverAsync(Image, outDir, all: false, dirInode: 458, offset: NtfsOffset)).Value;
         Assert.NotNull(n);
         Assert.True(n > 0);
     }
@@ -290,7 +290,7 @@ public class DiskAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("bash",
             $"-c \"fls -o {NtfsOffset} -m / '{Image}' 5 > {bodyfile}\"", out _, false);
 
-        var r = await toolkit.MactimeAsync(bodyfile);
+        var r = (await toolkit.MactimeAsync(bodyfile)).Value;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.All(r, e => Assert.NotEmpty(e.Date));
@@ -355,7 +355,7 @@ public class DiskAnalysisTests : TestsRuntime
         Assert.Empty(await toolkit.FindFilesAsync($"{d}/nope", "*.dll"));
 
         // SHA-256 of known content ("hello").
-        Assert.Equal("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", await toolkit.Sha256Async($"{d}/a.dll"));
+        Assert.Equal("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", (await toolkit.Sha256Async($"{d}/a.dll")).Value);
 
         sshenv.ExecuteCommand("rm", $"-rf {d}", out _, false);
     }
@@ -400,7 +400,7 @@ public class DiskAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("mkdir", $"-p {raw}", out _, false);
         Assert.True(await toolkit.EwfMountRawAsync(Image, raw));
 
-        var info = await toolkit.BdeInfoAsync($"{raw}/ewf1", NtfsOffset);
+        var info = (await toolkit.BdeInfoAsync($"{raw}/ewf1", NtfsOffset)).Value;
         Assert.Null(info);
 
         sshenv.ExecuteCommand("umount", raw, out _, true);
@@ -415,7 +415,7 @@ public class DiskAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("bash",
             $"-c \"printf 'BitLocker Drive Encryption recovery key\\n{key}\\nsome other noise 12345\\n' > {f}\"", out _, false);
 
-        var keys = await toolkit.SearchBitLockerRecoveryKeysAsync(f);
+        var keys = (await toolkit.SearchBitLockerRecoveryKeysAsync(f)).Value;
         Assert.NotNull(keys);
         Assert.Contains(key, keys);
 

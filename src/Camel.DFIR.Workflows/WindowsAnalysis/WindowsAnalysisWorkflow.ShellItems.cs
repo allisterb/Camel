@@ -39,10 +39,10 @@ public partial class WindowsAnalysisWorkflow
 
         // Files opened: LNK shortcuts (Recent + Desktop) and Jump Lists (AutomaticDestinations). All three are
         // null-tolerant — a missing/empty source just contributes nothing.
-        var lnks = (await WindowsAnalysis.LECmdDirectoryAsync(recent) ?? [])
-            .Concat(await WindowsAnalysis.LECmdDirectoryAsync(desktop) ?? []).ToArray();
-        var jumps = await WindowsAnalysis.JLECmdAsync($"{recent}/AutomaticDestinations") ?? [];
-        var shellbags = await WindowsAnalysis.SBECmdAsync(hiveDirectory ?? root) ?? [];
+        var lnks = ((await WindowsAnalysis.LECmdDirectoryAsync(recent)).Value ?? [])
+            .Concat((await WindowsAnalysis.LECmdDirectoryAsync(desktop)).Value ?? []).ToArray();
+        var jumps = (await WindowsAnalysis.JLECmdAsync($"{recent}/AutomaticDestinations")).Value ?? [];
+        var shellbags = (await WindowsAnalysis.SBECmdAsync(hiveDirectory ?? root)).Value ?? [];
 
         if (lnks.Length == 0 && jumps.Length == 0 && shellbags.Length == 0)
             return WorkflowResult<ShellItemReport>.Failure(

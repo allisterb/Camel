@@ -45,8 +45,8 @@ public partial class WindowsAnalysisWorkflow
         var archives = new List<EmailArchive>();
         foreach (var store in stores)
         {
-            var info = await WindowsAnalysis.PffInfoAsync(store);
-            var export = await WindowsAnalysis.ReadPstAsync(store);
+            var info = (await WindowsAnalysis.PffInfoAsync(store)).Value;
+            var export = (await WindowsAnalysis.ReadPstAsync(store)).Value;
             archives.Add(new EmailArchive
             {
                 Path = store,

@@ -44,12 +44,13 @@ public class LinuxAnalysisToolkit : Toolkit
     /// best-effort <see cref="LinuxSystemInfo"/> (fields that could not be read are null), or null only when the
     /// root has no readable os-release nor hostname (likely a wrong/unmounted path).
     /// </summary>
-    public async Task<LinuxSystemInfo?> SystemInfoAsync(string rootDir, bool sudo = true)
+    public async Task<ToolResult<LinuxSystemInfo>> SystemInfoAsync(string rootDir, bool sudo = true)
     {
         var osr = await CatAsync(Combine(rootDir, "etc/os-release"), sudo)
                   ?? await CatAsync(Combine(rootDir, "usr/lib/os-release"), sudo);
         var hostname = (await CatAsync(Combine(rootDir, "etc/hostname"), sudo))?.Trim();
-        if (osr is null && hostname is null) return null;
+        if (osr is null && hostname is null)
+            return ToolResult<LinuxSystemInfo>.Fail($"No readable os-release or hostname under '{rootDir}' — wrong path or not a mounted Linux root?");
 
         var kv = ParseEnvFile(osr ?? "");
         return new LinuxSystemInfo
@@ -71,10 +72,10 @@ public class LinuxAnalysisToolkit : Toolkit
     /// returned — only a coarse <see cref="LinuxUserAccount.PasswordState"/>. Returns null when <c>etc/passwd</c>
     /// is unreadable.
     /// </summary>
-    public async Task<LinuxUserAccount[]?> UserAccountsAsync(string rootDir, bool sudo = true)
+    public async Task<ToolResult<LinuxUserAccount[]>> UserAccountsAsync(string rootDir, bool sudo = true)
     {
         var passwd = await CatAsync(Combine(rootDir, "etc/passwd"), sudo);
-        if (passwd is null) return null;
+        if (passwd is null) return ToolResult<LinuxUserAccount[]>.Fail($"etc/passwd is not readable under '{rootDir}'.");
         var shadow = await CatAsync(Combine(rootDir, "etc/shadow"), sudo);   // may be null (not permitted / absent)
 
         // shadow: user:hash:lastchg:min:max:warn:inactive:expire:
@@ -117,10 +118,10 @@ public class LinuxAnalysisToolkit : Toolkit
     /// lines are skipped; only actual grants (user/%group rules) are returned. Returns null when no sudoers file
     /// is readable.
     /// </summary>
-    public async Task<SudoRule[]?> SudoersAsync(string rootDir, bool sudo = true)
+    public async Task<ToolResult<SudoRule[]>> SudoersAsync(string rootDir, bool sudo = true)
     {
         var files = await ReadGlobAsync($"{Combine(rootDir, "etc/sudoers")} {Combine(rootDir, "etc/sudoers.d")}/*", sudo);
-        if (files.Count == 0) return null;
+        if (files.Count == 0) return ToolResult<SudoRule[]>.Fail($"No sudoers file is readable under '{rootDir}'.");
         var rules = new List<SudoRule>();
         foreach (var (path, content) in files)
             foreach (var raw in Lines(content))
@@ -153,7 +154,7 @@ public class LinuxAnalysisToolkit : Toolkit
     /// <c>var/spool/cron/</c> (and <c>var/spool/cron/crontabs/</c>). Environment-assignment and comment lines are
     /// dropped. Returns the parsed entries (empty when none), or null when no cron source is readable.
     /// </summary>
-    public async Task<CronEntry[]?> CronEntriesAsync(string rootDir, bool sudo = true)
+    public async Task<ToolResult<CronEntry[]>> CronEntriesAsync(string rootDir, bool sudo = true)
     {
         // System-format crontabs (5 fields + USER + command, or "@nick USER command").
         var system = await ReadGlobAsync($"{Combine(rootDir, "etc/crontab")} {Combine(rootDir, "etc/cron.d")}/*", sudo);
@@ -163,7 +164,8 @@ public class LinuxAnalysisToolkit : Toolkit
         var dropDirs = new[] { "hourly", "daily", "weekly", "monthly" };
         var scripts = await ReadGlobAsync(string.Join(" ", dropDirs.Select(d => $"{Combine(rootDir, $"etc/cron.{d}")}/*")), sudo);
 
-        if (system.Count == 0 && userCron.Count == 0 && scripts.Count == 0) return null;
+        if (system.Count == 0 && userCron.Count == 0 && scripts.Count == 0)
+            return ToolResult<CronEntry[]>.Fail($"No cron source is readable under '{rootDir}'.");
 
         var entries = new List<CronEntry>();
         foreach (var (path, content) in system) entries.AddRange(ParseCron(path, content, systemFormat: true, user: null));
@@ -191,11 +193,11 @@ public class LinuxAnalysisToolkit : Toolkit
     /// timestamps, numeric host/IP). Default path is <c>var/log/wtmp</c> under <paramref name="rootDir"/> when
     /// <paramref name="wtmpPath"/> is null. Returns null on tool failure.
     /// </summary>
-    public async Task<LinuxLogin[]?> LastLoginsAsync(string? wtmpPath = null, string rootDir = "/", bool sudo = true)
+    public async Task<ToolResult<LinuxLogin[]>> LastLoginsAsync(string? wtmpPath = null, string rootDir = "/", bool sudo = true)
     {
         var path = wtmpPath ?? Combine(rootDir, "var/log/wtmp");
-        var o = await RunAsync("Last", $"-F -i -w -f {Q(path)}", sudo);
-        return o is null ? null : ParseLast(o);
+        var res = await RunAsync("Last", $"-F -i -w -f {Q(path)}", sudo);
+        return res.Ok ? ParseLast(res.Value!) : ToolResult<LinuxLogin[]>.Fail(res.FailureReason!);
     }
 
     /// <summary>
@@ -203,11 +205,11 @@ public class LinuxAnalysisToolkit : Toolkit
     /// password-spray view. Default path is <c>var/log/btmp</c> under <paramref name="rootDir"/>. Returns null on
     /// tool failure.
     /// </summary>
-    public async Task<LinuxLogin[]?> FailedLoginsAsync(string? btmpPath = null, string rootDir = "/", bool sudo = true)
+    public async Task<ToolResult<LinuxLogin[]>> FailedLoginsAsync(string? btmpPath = null, string rootDir = "/", bool sudo = true)
     {
         var path = btmpPath ?? Combine(rootDir, "var/log/btmp");
-        var o = await RunAsync("Lastb", $"-F -i -w -f {Q(path)}", sudo);
-        return o is null ? null : ParseLast(o);
+        var res = await RunAsync("Lastb", $"-F -i -w -f {Q(path)}", sudo);
+        return res.Ok ? ParseLast(res.Value!) : ToolResult<LinuxLogin[]>.Fail(res.FailureReason!);
     }
 
     /// <summary>
@@ -215,10 +217,11 @@ public class LinuxAnalysisToolkit : Toolkit
     /// reboot/boot records and for detecting gaps or zeroed records left by log tampering. Returns null on tool
     /// failure.
     /// </summary>
-    public async Task<UtmpRecord[]?> UtmpDumpAsync(string path, bool sudo = true)
+    public async Task<ToolResult<UtmpRecord[]>> UtmpDumpAsync(string path, bool sudo = true)
     {
-        var o = await RunAsync("Utmpdump", Q(path), sudo);
-        if (o is null) return null;
+        var res = await RunAsync("Utmpdump", Q(path), sudo);
+        if (!res.Ok) return ToolResult<UtmpRecord[]>.Fail(res.FailureReason!);
+        var o = res.Value!;
         var records = new List<UtmpRecord>();
         foreach (var line in Lines(o))
         {
@@ -251,13 +254,14 @@ public class LinuxAnalysisToolkit : Toolkit
     /// number of (most-recent) entries with <paramref name="maxEntries"/> and/or filter to a unit with
     /// <paramref name="unit"/>. Returns null on tool failure.
     /// </summary>
-    public async Task<JournalEntry[]?> JournalAsync(string journalDir, int? maxEntries = null, string? unit = null, bool sudo = true)
+    public async Task<ToolResult<JournalEntry[]>> JournalAsync(string journalDir, int? maxEntries = null, string? unit = null, bool sudo = true)
     {
         var args = $"-D {Q(journalDir)} -o json --no-pager" +
                    (maxEntries is int n and > 0 ? $" -n {n}" : "") +
                    (unit is not null ? $" -u {Q(unit)}" : "");
-        var o = await RunAsync("Journalctl", args, sudo);
-        if (o is null) return null;
+        var res = await RunAsync("Journalctl", args, sudo);
+        if (!res.Ok) return ToolResult<JournalEntry[]>.Fail(res.FailureReason!);
+        var o = res.Value!;
         var entries = new List<JournalEntry>();
         foreach (var line in Lines(o))
         {
@@ -275,10 +279,10 @@ public class LinuxAnalysisToolkit : Toolkit
     /// file has no install timestamp — use <see cref="PackageLogAsync"/> for the <em>when</em>. Returns null when
     /// the status file is unreadable (e.g. an RPM-based image, which this path does not cover).
     /// </summary>
-    public async Task<LinuxPackage[]?> InstalledPackagesAsync(string rootDir, bool sudo = true)
+    public async Task<ToolResult<LinuxPackage[]>> InstalledPackagesAsync(string rootDir, bool sudo = true)
     {
         var status = await CatAsync(Combine(rootDir, "var/lib/dpkg/status"), sudo);
-        if (status is null) return null;
+        if (status is null) return ToolResult<LinuxPackage[]>.Fail($"var/lib/dpkg/status is not readable under '{rootDir}' (RPM-based images are not covered by this path).");
         var packages = new List<LinuxPackage>();
         foreach (var block in status.Split("\n\n", StringSplitOptions.RemoveEmptyEntries))
         {
@@ -304,11 +308,12 @@ public class LinuxAnalysisToolkit : Toolkit
     /// <c>var/log/apt/history.log</c>. Only meaningful actions are returned (install/upgrade/remove/purge);
     /// dpkg's per-step "status"/"trigproc" noise is dropped. Returns null when no log is readable.
     /// </summary>
-    public async Task<PackageEvent[]?> PackageLogAsync(string rootDir, bool sudo = true)
+    public async Task<ToolResult<PackageEvent[]>> PackageLogAsync(string rootDir, bool sudo = true)
     {
         var dpkgFiles = await ReadGlobAsync($"{Combine(rootDir, "var/log/dpkg.log")} {Combine(rootDir, "var/log/dpkg.log.1")}", sudo);
         var aptFiles = await ReadGlobAsync($"{Combine(rootDir, "var/log/apt/history.log")} {Combine(rootDir, "var/log/apt/history.log.1")}", sudo);
-        if (dpkgFiles.Count == 0 && aptFiles.Count == 0) return null;
+        if (dpkgFiles.Count == 0 && aptFiles.Count == 0)
+            return ToolResult<PackageEvent[]>.Fail($"No dpkg/apt package log is readable under '{rootDir}'.");
 
         var events = new List<PackageEvent>();
         foreach (var (_, content) in dpkgFiles) events.AddRange(ParseDpkgLog(content));
@@ -325,14 +330,14 @@ public class LinuxAnalysisToolkit : Toolkit
     /// <see cref="ShellHistoryEntry.Timestamp"/> when present. Returns the lines (empty when none), or null when
     /// no history file is readable.
     /// </summary>
-    public async Task<ShellHistoryEntry[]?> ShellHistoryAsync(string rootDir, bool sudo = true)
+    public async Task<ToolResult<ShellHistoryEntry[]>> ShellHistoryAsync(string rootDir, bool sudo = true)
     {
         string[] names = [".bash_history", ".zsh_history", ".python_history", ".sh_history"];
         var glob = string.Join(" ",
             names.Select(n => $"{Combine(rootDir, "root")}/{n}")
                  .Concat(names.Select(n => $"{Combine(rootDir, "home")}/*/{n}")));
         var files = await ReadGlobAsync(glob, sudo);
-        if (files.Count == 0) return null;
+        if (files.Count == 0) return ToolResult<ShellHistoryEntry[]>.Fail($"No shell-history file is readable under '{rootDir}'.");
 
         var entries = new List<ShellHistoryEntry>();
         foreach (var (path, content) in files)
@@ -346,15 +351,16 @@ public class LinuxAnalysisToolkit : Toolkit
     /// 1) is success here, not a failure. When ClamAV has no signature database loaded the result is empty and
     /// the workflow surfaces a note to run <c>freshclam</c>. Returns null only if clamscan could not be launched.
     /// </summary>
-    public async Task<ClamAvMatch[]?> ClamScanAsync(string path, bool recurse = true, bool sudo = true)
+    public async Task<ToolResult<ClamAvMatch[]>> ClamScanAsync(string path, bool recurse = true, bool sudo = true)
     {
+        if (!IsToolAvailable("ClamScan")) return ToolResult<ClamAvMatch[]>.Fail($"clamscan is not available on platform '{platform}'.");
         // clamscan exits 1 when it finds a virus, which ExecuteToolText would treat as failure; run it through a
         // bash wrapper that always exits 0 and parse the "<path>: <sig> FOUND" lines from stdout.
         var clam = Tools["ClamScan"].Command;
         var script = $"{clam} {(recurse ? "-r " : "")}-i --no-summary {Q(path)}; true";
         var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(script));
         var r = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"echo {b64} | base64 -d | bash\"", sudo || Tools["ClamScan"].Sudo);
-        if (!r.IsCompleted) return null;
+        if (!r.IsCompleted) return ToolResult<ClamAvMatch[]>.Fail($"clamscan command failed: {Short(r.Output)}");
         var matches = new List<ClamAvMatch>();
         foreach (var line in Lines(r.Output))
         {
@@ -374,7 +380,7 @@ public class LinuxAnalysisToolkit : Toolkit
     /// -type f</c>) — the set-user/group-id binaries an attacker plants or abuses for privilege escalation.
     /// Stays on one filesystem (<c>-xdev</c>) so it doesn't descend into other mounts. Returns null on failure.
     /// </summary>
-    public Task<LinuxFile[]?> SetuidFilesAsync(string rootDir, bool sudo = true) =>
+    public Task<ToolResult<LinuxFile[]>> SetuidFilesAsync(string rootDir, bool sudo = true) =>
         FindFilesAsync($"{Q(rootDir)} -xdev \\( -perm -4000 -o -perm -2000 \\) -type f {FindFmt}", sudo);
 
     /// <summary>
@@ -382,7 +388,7 @@ public class LinuxAnalysisToolkit : Toolkit
     /// files any user can overwrite, a tampering/backdoor vector when they live in system locations. Returns null
     /// on failure.
     /// </summary>
-    public Task<LinuxFile[]?> WorldWritableFilesAsync(string rootDir, bool sudo = true) =>
+    public Task<ToolResult<LinuxFile[]>> WorldWritableFilesAsync(string rootDir, bool sudo = true) =>
         FindFilesAsync($"{Q(rootDir)} -xdev -type f -perm -0002 {FindFmt}", sudo);
 
     /// <summary>
@@ -390,21 +396,23 @@ public class LinuxAnalysisToolkit : Toolkit
     /// <c>/var/tmp</c>) so the caller can flag executables staged in world-writable scratch space. Paths are taken
     /// as-is (already absolute, or join them under a mounted root yourself). Returns null on failure.
     /// </summary>
-    public Task<LinuxFile[]?> FilesInDirsAsync(IEnumerable<string> dirs, bool sudo = true)
+    public Task<ToolResult<LinuxFile[]>> FilesInDirsAsync(IEnumerable<string> dirs, bool sudo = true)
     {
         var paths = string.Join(" ", dirs.Select(Q));
-        return paths.Length == 0 ? Task.FromResult<LinuxFile[]?>([]) : FindFilesAsync($"{paths} -type f {FindFmt}", sudo);
+        return paths.Length == 0 ? Task.FromResult(ToolResult<LinuxFile[]>.Pass([])) : FindFilesAsync($"{paths} -type f {FindFmt}", sudo);
     }
 
     // Runs `find <expr>` (the caller supplies the whole expression incl. the FindFmt printf) and parses the rows.
     // find exits non-zero when it cannot read some entry but still prints the matches it found, so the output is
     // parsed regardless of exit code (mirroring DiskAnalysisToolkit.FindFilesAsync). stderr is discarded.
-    private async Task<LinuxFile[]?> FindFilesAsync(string expr, bool sudo)
+    private async Task<ToolResult<LinuxFile[]>> FindFilesAsync(string expr, bool sudo)
     {
         var script = $"find {expr} 2>/dev/null";
         var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(script));
         var r = await auditEnvironment.ExecuteCommandAsync("bash", $"-c \"echo {b64} | base64 -d | bash\"", sudo);
-        if (r.Output.Length == 0) return r.IsCompleted ? [] : null;
+        if (r.Output.Length == 0)
+            return r.IsCompleted ? ToolResult<LinuxFile[]>.Pass([])
+                                 : ToolResult<LinuxFile[]>.Fail($"find command failed: {Short(r.Output)}");
         var files = new List<LinuxFile>();
         foreach (var line in Lines(r.Output))
         {
@@ -783,14 +791,21 @@ public class LinuxAnalysisToolkit : Toolkit
         return result;
     }
 
-    /// <summary>Runs tool <paramref name="name"/>, forcing sudo when the per-call flag or the config default is set.</summary>
-    private async Task<string?> RunAsync(string name, string args, bool sudo)
+    /// <summary>Runs tool <paramref name="name"/> (forcing sudo per the call flag or config default) and returns its
+    /// stdout as a ToolResult — a failed result names the tool when unavailable on the platform, or carries its
+    /// error output when it ran but failed (the distinction a bare null hid now matters across platforms).</summary>
+    private async Task<ToolResult<string>> RunAsync(string name, string args, bool sudo)
     {
+        if (!Tools[name].Available) return ToolResult<string>.Fail($"{name} is not available on platform '{platform}'.");
         var r = await auditEnvironment.ExecuteCommandAsync(Tools[name].Command, args, Tools[name].Sudo || sudo);
-        if (r.IsCompleted) return r.Output;
+        if (r.IsCompleted) return r.Output ?? "";
         Error($"Failed to execute tool command {Tools[name].Command} {args}: {r.Output}.");
-        return null;
+        return ToolResult<string>.Fail($"{name} command failed: {Short(r.Output)}");
     }
+
+    // Condenses tool error output into a single-line reason for a failed ToolResult.
+    private static string Short(string? s) =>
+        string.IsNullOrWhiteSpace(s) ? "(no output)" : (s.Length > 200 ? s[..200] + "…" : s).Replace("\r", " ").Replace("\n", " ").Trim();
 
     private static string Q(string path) => $"'{path.Replace("'", "'\\''")}'";
 

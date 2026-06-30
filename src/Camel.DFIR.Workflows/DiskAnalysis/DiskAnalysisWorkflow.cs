@@ -29,7 +29,7 @@ public partial class DiskAnalysisWorkflow : Workflow
 
         // 1. Read and validate the image metadata. This also confirms the file exists and is a readable
         //    EWF/E01 image before we attempt to mount it (records the embedded MD5/SHA1 for case notes).
-        var info = await DiskAnalysis.EwfInfoAsync(imageFile);
+        var info = (await DiskAnalysis.EwfInfoAsync(imageFile)).Value;
         if (info is null)
             return WorkflowResult<EwfImageMount>.Failure(
                 $"Could not read EWF metadata for '{imageFile}'; the file may be missing or not a valid E01/EWF image.");
@@ -46,7 +46,7 @@ public partial class DiskAnalysisWorkflow : Workflow
 
         // 4. Inspect the partition table of the raw device so callers can locate the target volume.
         string rawDevice = $"{mountDir.TrimEnd('/')}/ewf1";
-        var partitionTable = await DiskAnalysis.MmlsAsync(rawDevice);
+        var partitionTable = (await DiskAnalysis.MmlsAsync(rawDevice)).Value;
         if (partitionTable is null)
         {
             // mmls failing isn't fatal: a single-volume image (a partition image rather than a whole disk)
@@ -83,7 +83,7 @@ public partial class DiskAnalysisWorkflow : Workflow
         // 1. Verify a filesystem actually lives at this offset before attempting to mount. fsstat reads the
         //    volume boot record / superblock at the offset; it reports a File System Type only when one is
         //    recognised (it otherwise prints "Cannot determine file system type", leaving the type unset).
-        var fs = await DiskAnalysis.FsStatAsync(imageMount.RawDevice, offset);
+        var fs = (await DiskAnalysis.FsStatAsync(imageMount.RawDevice, offset)).Value;
         if (fs is null || string.IsNullOrWhiteSpace(fs.FileSystemType))
             return WorkflowResult<FileSystemMount>.Failure(
                 $"No valid filesystem found at sector offset {offset} of '{imageMount.RawDevice}'. " +
@@ -124,12 +124,12 @@ public partial class DiskAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Verifying EWF image {0}", imageFile);
 
-        var info = await DiskAnalysis.EwfInfoAsync(imageFile);
+        var info = (await DiskAnalysis.EwfInfoAsync(imageFile)).Value;
         if (info is null)
             return WorkflowResult<ImageVerification>.Failure(
                 $"Could not read EWF metadata for '{imageFile}'; the file may be missing or not a valid E01/EWF image.");
 
-        var verify = await DiskAnalysis.EwfVerifyAsync(imageFile);
+        var verify = (await DiskAnalysis.EwfVerifyAsync(imageFile)).Value;
         if (verify is null)
             return WorkflowResult<ImageVerification>.Failure($"ewfverify did not complete for '{imageFile}'.");
 
@@ -161,7 +161,7 @@ public partial class DiskAnalysisWorkflow : Workflow
         using var op = Begin("Generating filesystem timeline for {0} (offset {1})", imageFile, offset?.ToString() ?? "none");
 
         // Confirm a filesystem actually lives at the offset before walking it (avoids an empty/garbage timeline).
-        var fs = await DiskAnalysis.FsStatAsync(imageFile, offset);
+        var fs = (await DiskAnalysis.FsStatAsync(imageFile, offset)).Value;
         if (fs is null || string.IsNullOrWhiteSpace(fs.FileSystemType))
             return WorkflowResult<FilesystemTimeline>.Failure(
                 $"No valid filesystem found at sector offset {offset} of '{imageFile}'. " +
@@ -172,7 +172,7 @@ public partial class DiskAnalysisWorkflow : Workflow
             return WorkflowResult<FilesystemTimeline>.Failure(
                 $"Failed to generate the fls bodyfile for '{imageFile}' (offset {offset}).");
 
-        var entries = await DiskAnalysis.MactimeAsync(bodyfilePath, timezone);
+        var entries = (await DiskAnalysis.MactimeAsync(bodyfilePath, timezone)).Value;
         if (entries is null)
             return WorkflowResult<FilesystemTimeline>.Failure($"mactime failed to process bodyfile '{bodyfilePath}'.");
 
@@ -199,19 +199,20 @@ public partial class DiskAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Recovering files from {0} (offset {1}) to {2}", imageFile, offset?.ToString() ?? "none", outputDir);
 
-        var fs = await DiskAnalysis.FsStatAsync(imageFile, offset);
+        var fs = (await DiskAnalysis.FsStatAsync(imageFile, offset)).Value;
         if (fs is null || string.IsNullOrWhiteSpace(fs.FileSystemType))
             return WorkflowResult<FileRecovery>.Failure(
                 $"No valid filesystem found at sector offset {offset} of '{imageFile}'. " +
                 $"Check the partition table (mmls) for a correct partition start sector.");
 
-        var count = await DiskAnalysis.TskRecoverAsync(imageFile, outputDir, all: includeDeleted, offset: offset);
-        if (count is null)
-            return WorkflowResult<FileRecovery>.Failure($"tsk_recover failed for '{imageFile}' (offset {offset}).");
+        var countR = await DiskAnalysis.TskRecoverAsync(imageFile, outputDir, all: includeDeleted, offset: offset);
+        if (!countR.Ok)
+            return WorkflowResult<FileRecovery>.Failure(countR.FailureReason ?? $"tsk_recover failed for '{imageFile}' (offset {offset}).");
+        var count = countR.Value;
 
         op.Complete();
         return WorkflowResult<FileRecovery>.Success(
-            new FileRecovery(outputDir, count.Value, includeDeleted),
+            new FileRecovery(outputDir, count, includeDeleted),
             $"Recovered {count} file(s){(includeDeleted ? " (including deleted/unallocated)" : "")} " +
             $"from the {fs.FileSystemType} filesystem to '{outputDir}'.");
     }

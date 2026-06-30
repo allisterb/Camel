@@ -23,11 +23,11 @@ public partial class LinuxAnalysisWorkflow
         using var _audit = AuditScope();
         using var op = Begin("Analyzing Linux user accounts under {0}", rootDir);
 
-        var accounts = await LinuxAnalysis.UserAccountsAsync(rootDir);
+        var accounts = (await LinuxAnalysis.UserAccountsAsync(rootDir)).Value;
         if (accounts is null)
             return WorkflowResult<UserAccountReport>.Failure(
                 $"Could not read '{Combine(rootDir, "etc/passwd")}'; the path may be wrong or the volume not mounted.");
-        var sudoers = await LinuxAnalysis.SudoersAsync(rootDir) ?? [];
+        var sudoers = (await LinuxAnalysis.SudoersAsync(rootDir)).Value ?? [];
 
         var findings = new List<AccountFinding>();
         foreach (var a in accounts)

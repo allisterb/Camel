@@ -23,11 +23,11 @@ public partial class LinuxAnalysisWorkflow
         using var _audit = AuditScope();
         using var op = Begin("Analyzing installed packages under {0}", rootDir);
 
-        var installed = await LinuxAnalysis.InstalledPackagesAsync(rootDir);
+        var installed = (await LinuxAnalysis.InstalledPackagesAsync(rootDir)).Value;
         if (installed is null)
             return WorkflowResult<PackageReport>.Failure(
                 $"Could not read '{Combine(rootDir, "var/lib/dpkg/status")}' (not a dpkg-based image, or wrong path).");
-        var events = await LinuxAnalysis.PackageLogAsync(rootDir) ?? [];
+        var events = (await LinuxAnalysis.PackageLogAsync(rootDir)).Value ?? [];
 
         var recent = events.OrderByDescending(e => e.Timestamp ?? DateTime.MinValue).Take(50).ToArray();
         var findings = events

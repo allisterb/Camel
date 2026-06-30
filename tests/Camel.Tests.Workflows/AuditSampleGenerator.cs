@@ -69,13 +69,13 @@ public class AuditSampleGenerator : TestsRuntime
 
                 // ── Execution 3: $MFT filesystem records ─────────────────────────────────────────────────
                 await Execution("9a4f7b03",
-                    "const mft = await WindowsAnalysisToolkit.MFTECmdAsync('/tmp/rd01_mft_head');\n" +
+                    "const mft = (await WindowsAnalysisToolkit.MFTECmdAsync('/tmp/rd01_mft_head')).Value;\n" +
                     "log(mft.length + ' MFT records');",
                     async () =>
                     {
                         const string mft = "/tmp/rd01_mft_head";
                         env.ExecuteCommand("head", $"-c 16000000 '{Rd01}/$MFT' > {mft}", out _, false);
-                        var r = await api.WindowsAnalysis.MFTECmdAsync(mft);
+                        var r = (await api.WindowsAnalysis.MFTECmdAsync(mft)).Value;
                         Print("MFT records", r is not null, $"records={r?.Length} firstFile={r?.FirstOrDefault()?.FileName}");
                         return r is not null;
                     });

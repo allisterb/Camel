@@ -117,7 +117,7 @@ public class WebServerAnalysisWorkflow : Workflow
 
         var patterns = Signatures.Select(s => s.Pattern).Concat(extraPatterns ?? []).Distinct();
         const int hitCap = 20000;   // bound the transfer on a hostile log; aggregates remain representative
-        var lines = await DiskAnalysis.GrepLinesAsync(accessLogPath, patterns, ignoreCase: true, maxMatches: hitCap);
+        var lines = (await DiskAnalysis.GrepLinesAsync(accessLogPath, patterns, ignoreCase: true, maxMatches: hitCap)).Value;
         if (lines is null)
             return WorkflowResult<WebServerLogReport>.Failure(
                 $"Could not read access log '{accessLogPath}'; the path may be wrong or the volume not mounted.");
@@ -193,7 +193,7 @@ public class WebServerAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Scanning web root {0} for web shells", webRoot);
 
-        var matches = await Yara.ScanAsync(rulesFile, webRoot, new YaraOptions { Recurse = true, Timeout = 120 });
+        var matches = (await Yara.ScanAsync(rulesFile, webRoot, new YaraOptions { Recurse = true, Timeout = 120 })).Value;
         if (matches is null)
             return WorkflowResult<WebshellScanReport>.Failure(
                 $"YARA scan of '{webRoot}' with '{rulesFile}' failed; check the web root path and that the rules file exists.");

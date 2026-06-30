@@ -34,7 +34,7 @@ public partial class WindowsAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Extracting key registry artifacts from {0}", hiveDirectory);
 
-        var entries = await WindowsAnalysis.RECmdAsync(hiveDirectory, batchFile);
+        var entries = (await WindowsAnalysis.RECmdAsync(hiveDirectory, batchFile)).Value;
         if (entries is null)
             return WorkflowResult<KeyRegistryArtifactsReport>.Failure(
                 $"RECmd batch parse failed for hive directory '{hiveDirectory}'; check the hives exist and the batch file '{batchFile}' is installed.");
@@ -66,7 +66,7 @@ public partial class WindowsAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Getting known executables (Shimcache) from {0}", systemHive);
 
-        var entries = await WindowsAnalysis.AppCompatCacheParserAsync(systemHive, ignoreTransactionLogs);
+        var entries = (await WindowsAnalysis.AppCompatCacheParserAsync(systemHive, ignoreTransactionLogs)).Value;
         if (entries is null)
             return WorkflowResult<ShimcacheEntry[]>.Failure(
                 $"AppCompatCacheParser failed for SYSTEM hive '{systemHive}'; check the hive exists and is a valid SYSTEM hive.");
@@ -90,7 +90,7 @@ public partial class WindowsAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Getting executed binaries (Amcache) from {0}", amcacheHive);
 
-        var entries = await WindowsAnalysis.AmcacheParserAsync(amcacheHive, ignoreTransactionLogs);
+        var entries = (await WindowsAnalysis.AmcacheParserAsync(amcacheHive, ignoreTransactionLogs)).Value;
         if (entries is null)
             return WorkflowResult<AmcacheEntry[]>.Failure(
                 $"AmcacheParser failed for hive '{amcacheHive}'; check the hive exists and is a valid Amcache.hve.");
@@ -115,7 +115,7 @@ public partial class WindowsAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Analyzing external connections (mapped drives) in {0}", ntuserHive);
 
-        var entries = await WindowsAnalysis.RECmdSingleHiveAsync(ntuserHive, batchFile);
+        var entries = (await WindowsAnalysis.RECmdSingleHiveAsync(ntuserHive, batchFile)).Value;
         if (entries is null)
             return WorkflowResult<ExternalShareConnectionsReport>.Failure(
                 $"RECmd failed for hive '{ntuserHive}'; check the hive exists and the batch file '{batchFile}' is installed.");
@@ -386,12 +386,12 @@ public partial class WindowsAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Analyzing evidence of execution from {0}", systemHive);
 
-        var shim = await WindowsAnalysis.AppCompatCacheParserAsync(systemHive);
+        var shim = (await WindowsAnalysis.AppCompatCacheParserAsync(systemHive)).Value;
         if (shim is null)
             return WorkflowResult<ExecutionReport>.Failure(
                 $"AppCompatCacheParser failed for SYSTEM hive '{systemHive}'; check it is a valid SYSTEM hive.");
-        var amcache = amcacheHive is not null ? (await WindowsAnalysis.AmcacheParserAsync(amcacheHive) ?? []) : [];
-        var lolbas = await WindowsAnalysis.LoadLolbasAsync();
+        var amcache = amcacheHive is not null ? ((await WindowsAnalysis.AmcacheParserAsync(amcacheHive)).Value ?? []) : [];
+        var lolbas = (await WindowsAnalysis.LoadLolbasAsync()).Value;
 
         // Index each source by executable path and take the union — one artifact per distinct path.
         var shimByPath = shim.Where(s => !string.IsNullOrEmpty(s.Path))
@@ -445,7 +445,7 @@ public partial class WindowsAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Hunting WMI event-consumer persistence in {0}", objectsDataPath);
 
-        var subs = await WindowsAnalysis.WmiSubscriptionsAsync(objectsDataPath);
+        var subs = (await WindowsAnalysis.WmiSubscriptionsAsync(objectsDataPath)).Value;
         if (subs is null)
             return WorkflowResult<WmiPersistenceReport>.Failure(
                 $"Could not read the WMI repository '{objectsDataPath}'; expected \\Windows\\System32\\wbem\\Repository\\OBJECTS.DATA.");
@@ -584,7 +584,7 @@ public partial class WindowsAnalysisWorkflow : Workflow
     private async Task<bool> DiffersFromAsync(FsFile a, FsFile b)
     {
         if (a.Size != b.Size) return true;
-        var (ha, hb) = (await DiskAnalysis.Sha256Async(a.Path), await DiskAnalysis.Sha256Async(b.Path));
+        var (ha, hb) = ((await DiskAnalysis.Sha256Async(a.Path)).Value, (await DiskAnalysis.Sha256Async(b.Path)).Value);
         return ha is null || hb is null || !ha.Equals(hb, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -745,7 +745,7 @@ public partial class WindowsAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Analyzing logon events in {0}", securityEvtxPath);
 
-        var events = await WindowsAnalysis.EvtxECmdAsync(file: securityEvtxPath, includeIds: LogonEventIds);
+        var events = (await WindowsAnalysis.EvtxECmdAsync(file: securityEvtxPath, includeIds: LogonEventIds)).Value;
         if (events is null)
             return WorkflowResult<LogonReport>.Failure(
                 $"EvtxECmd failed to parse '{securityEvtxPath}'; check the path points to a Security.evtx.");
@@ -840,12 +840,12 @@ public partial class WindowsAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Hunting lateral movement in {0}", securityEvtxPath);
 
-        var sec = await WindowsAnalysis.EvtxECmdAsync(file: securityEvtxPath, includeIds: LateralSecurityIds);
+        var sec = (await WindowsAnalysis.EvtxECmdAsync(file: securityEvtxPath, includeIds: LateralSecurityIds)).Value;
         if (sec is null)
             return WorkflowResult<LateralMovementReport>.Failure(
                 $"EvtxECmd failed to parse '{securityEvtxPath}'; check the path points to a Security.evtx.");
         var sys = systemEvtxPath is not null
-            ? (await WindowsAnalysis.EvtxECmdAsync(file: systemEvtxPath, includeIds: "7045") ?? [])
+            ? ((await WindowsAnalysis.EvtxECmdAsync(file: systemEvtxPath, includeIds: "7045")).Value ?? [])
             : [];
 
         // Inbound Network/RDP logons from a routable remote source, and explicit-credential (runas) events.
@@ -956,12 +956,12 @@ public partial class WindowsAnalysisWorkflow : Workflow
 
         // 4768 + 4771 are bounded; pull them in full. 4769 dominates the log on a busy DC, so server-side filter it
         // to RC4 only (the sole 4769 signal we score) before transferring — keeps the workflow tractable at DC scale.
-        var smallEvents = await WindowsAnalysis.EvtxECmdAsync(file: securityEvtxPath, includeIds: SmallKerberosEventIds);
+        var smallEvents = (await WindowsAnalysis.EvtxECmdAsync(file: securityEvtxPath, includeIds: SmallKerberosEventIds)).Value;
         if (smallEvents is null)
             return WorkflowResult<KerberosReport>.Failure(
                 $"EvtxECmd failed to parse '{securityEvtxPath}'; check the path points to a Security.evtx.");
-        var rc4Tgs = await WindowsAnalysis.EvtxECmdServerFilteredAsync(
-            payloadGrepPattern: Rc4PayloadFilter, file: securityEvtxPath, includeIds: "4769") ?? [];
+        var rc4Tgs = (await WindowsAnalysis.EvtxECmdServerFilteredAsync(
+            payloadGrepPattern: Rc4PayloadFilter, file: securityEvtxPath, includeIds: "4769")).Value ?? [];
 
         var parsed = smallEvents.Concat(rc4Tgs).Select(ToKerberosEvent).ToArray();
 
@@ -1074,12 +1074,12 @@ public partial class WindowsAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Detecting event-log clearing in {0}", securityEvtxPath);
 
-        var sec = await WindowsAnalysis.EvtxECmdAsync(file: securityEvtxPath, includeIds: "1102");
+        var sec = (await WindowsAnalysis.EvtxECmdAsync(file: securityEvtxPath, includeIds: "1102")).Value;
         if (sec is null)
             return WorkflowResult<LogClearingReport>.Failure(
                 $"EvtxECmd failed to parse '{securityEvtxPath}'; check the path points to a Security.evtx.");
         var sys = systemEvtxPath is not null
-            ? (await WindowsAnalysis.EvtxECmdAsync(file: systemEvtxPath, includeIds: "104") ?? [])
+            ? ((await WindowsAnalysis.EvtxECmdAsync(file: systemEvtxPath, includeIds: "104")).Value ?? [])
             : [];
 
         var events = sec.Where(e => e.EventId == 1102).Select(e => ToLogCleared(e, "Security"))
@@ -1139,7 +1139,7 @@ public partial class WindowsAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Analyzing PowerShell script blocks in {0}", powershellEvtxPath);
 
-        var events = await WindowsAnalysis.EvtxECmdAsync(file: powershellEvtxPath, includeIds: "4104");
+        var events = (await WindowsAnalysis.EvtxECmdAsync(file: powershellEvtxPath, includeIds: "4104")).Value;
         if (events is null)
             return WorkflowResult<PowerShellReport>.Failure(
                 $"EvtxECmd failed to parse '{powershellEvtxPath}'; check the path points to a PowerShell Operational log.");
@@ -1205,11 +1205,11 @@ public partial class WindowsAnalysisWorkflow : Workflow
 
         // Run each targeted ASEP plugin against the hive it reads. rip.pl is lenient (exits 0 even on a missing
         // hive, yielding no findings), so a null result means rip.pl itself could not run.
-        var runSoftware = await WindowsAnalysis.RegRipperAsync(softwareHive, "run");
-        var appInit = await WindowsAnalysis.RegRipperAsync(softwareHive, "appinitdlls");
-        var cmdShell = await WindowsAnalysis.RegRipperAsync(softwareHive, "cmd_shell");
-        var svc = await WindowsAnalysis.RegRipperAsync(systemHive, "svc");
-        var runUser = ntuserHive is not null ? await WindowsAnalysis.RegRipperAsync(ntuserHive, "run") : null;
+        var runSoftware = (await WindowsAnalysis.RegRipperAsync(softwareHive, "run")).Value;
+        var appInit = (await WindowsAnalysis.RegRipperAsync(softwareHive, "appinitdlls")).Value;
+        var cmdShell = (await WindowsAnalysis.RegRipperAsync(softwareHive, "cmd_shell")).Value;
+        var svc = (await WindowsAnalysis.RegRipperAsync(systemHive, "svc")).Value;
+        var runUser = ntuserHive is not null ? (await WindowsAnalysis.RegRipperAsync(ntuserHive, "run")).Value : null;
 
         if (runSoftware is null && svc is null)
             return WorkflowResult<RegistryPersistenceReport>.Failure(
@@ -1218,11 +1218,11 @@ public partial class WindowsAnalysisWorkflow : Workflow
         // Scheduled tasks: prefer the on-disk Task XML (which carries the action/command line) when a Tasks
         // directory is supplied; otherwise fall back to the registry TaskCache (existence only, no command).
         var taskEntries = tasksDirectory is not null
-            ? (await WindowsAnalysis.ScheduledTasksAsync(tasksDirectory) ?? []).Select(MapXmlTask)
-            : ParseTasks(await WindowsAnalysis.RegRipperAsync(softwareHive, "tasks"));
+            ? ((await WindowsAnalysis.ScheduledTasksAsync(tasksDirectory)).Value ?? []).Select(MapXmlTask)
+            : ParseTasks((await WindowsAnalysis.RegRipperAsync(softwareHive, "tasks")).Value);
 
         // LOLBAS index for living-off-the-land detection (null-tolerant: scoring skips LOLBin checks if absent).
-        var lolbas = await WindowsAnalysis.LoadLolbasAsync();
+        var lolbas = (await WindowsAnalysis.LoadLolbasAsync()).Value;
 
         // Parse each plugin's output into entries, then score every entry for suspicion.
         var entries = ParseAutostart(runSoftware, CatRunKeys)

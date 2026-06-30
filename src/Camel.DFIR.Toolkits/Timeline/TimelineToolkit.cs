@@ -70,12 +70,12 @@ public class TimelineToolkit : Toolkit
     /// psort returns only the events within <paramref name="sliceSize"/> minutes (default 5) either side — a
     /// "pivot point" mini-timeline. Slice and filter can be combined.</para>
     /// </summary>
-    public Task<TimelineEvent[]?> PsortAsync(string storageFile, string? filter = null, string? slice = null, int? sliceSize = null) =>
-        ExecuteToolJsonLinesFileAsync<TimelineEvent>("Psort",
+    public async Task<ToolResult<TimelineEvent[]>> PsortAsync(string storageFile, string? filter = null, string? slice = null, int? sliceSize = null) =>
+        Wrap("Psort", "psort", await ExecuteToolJsonLinesFileAsync<TimelineEvent>("Psort",
             f => $"-o json_line -w {Q(f)}" +
                  (slice is not null ? $" --slice {Qd(slice)}" : "") +
                  (sliceSize is not null ? $" --slice_size {sliceSize}" : "") +
-                 $" {Q(storageFile)}" + (filter is not null ? $" {Qd(filter)}" : ""));
+                 $" {Q(storageFile)}" + (filter is not null ? $" {Qd(filter)}" : "")));
 
     /// <summary>
     /// Runs psort's <c>tagging</c> analysis plugin over <paramref name="storageFile"/>, labelling events that
@@ -102,14 +102,16 @@ public class TimelineToolkit : Toolkit
     /// psort <paramref name="filter"/> (e.g. a date range) pre-narrows the export. Returns the matching events,
     /// or null if psort failed.
     /// </summary>
-    public async Task<TimelineEvent[]?> PsortSearchAsync(string storageFile, string grepPattern, string? filter = null)
+    public async Task<ToolResult<TimelineEvent[]>> PsortSearchAsync(string storageFile, string grepPattern, string? filter = null)
     {
         string file = "/tmp/camel_ts_" + Guid.NewGuid().ToString("N") + ".jsonl";
         try
         {
             if (await ExecuteToolTextAsync("Psort",
                     $"-q -o json_line -w {Q(file)} {Q(storageFile)}" + (filter is not null ? $" {Qd(filter)}" : "")) is null)
-                return null;
+                return ToolResult<TimelineEvent[]>.Fail(IsToolAvailable("Psort")
+                    ? $"psort command failed on platform '{platform}' (see server log)."
+                    : $"psort is not available on platform '{platform}'.");
             // grep server-side so only matching lines transfer. grep exits 1 on no match (empty output) — that
             // is an empty result, not a failure, so we just parse whatever it returned.
             var r = await auditEnvironment.ExecuteCommandAsync("grep", $"-i -E {Qd(grepPattern)} {Q(file)}", false);
@@ -131,7 +133,7 @@ public class TimelineToolkit : Toolkit
     /// <paramref name="maxMessageChars"/>, so the content detector's length-outlier signal saturates there (the
     /// keyword signal is unaffected). Requires <c>python3</c> on the workstation (ships with Plaso).
     /// </summary>
-    public async Task<TimelineEvent[]?> PsortReducedAsync(string storageFile, string? filter = null, int maxMessageChars = 1024)
+    public async Task<ToolResult<TimelineEvent[]>> PsortReducedAsync(string storageFile, string? filter = null, int maxMessageChars = 1024)
     {
         var id = Guid.NewGuid().ToString("N");
         string big = $"/tmp/camel_ts_{id}.jsonl", slim = $"/tmp/camel_ts_{id}.slim.jsonl", script = $"/tmp/camel_reduce_{id}.py";
@@ -140,17 +142,19 @@ public class TimelineToolkit : Toolkit
         {
             if (await ExecuteToolTextAsync("Psort",
                     $"-q -o json_line -w {Q(big)} {Q(storageFile)}" + (filter is not null ? $" {Qd(filter)}" : "")) is null)
-                return null;
+                return ToolResult<TimelineEvent[]>.Fail(IsToolAvailable("Psort")
+                    ? $"psort command failed on platform '{platform}' (see server log)."
+                    : $"psort is not available on platform '{platform}'.");
 
             if (!await WriteRemoteTextAsync(script, ReduceScript))
-                return null;
+                return ToolResult<TimelineEvent[]>.Fail("Could not stage the server-side timeline reducer script on the workstation.");
 
             // Reduce server-side: only the slim json (truncated messages, no Strings/xml payloads) is produced.
             var reduced = await auditEnvironment.ExecuteCommandAsync("python3", $"{Q(script)} {Q(big)} {Q(slim)} {maxMessageChars}", false);
             if (!reduced.IsCompleted)
             {
                 Error($"Server-side timeline reduction failed for '{storageFile}': {reduced.Output}");
-                return null;
+                return ToolResult<TimelineEvent[]>.Fail($"Server-side timeline reduction failed (needs python3 on the workstation).");
             }
 
             // SCP the slim file down (a binary stream — far faster than capturing a huge file through stdout) and
@@ -158,7 +162,7 @@ public class TimelineToolkit : Toolkit
             if (auditEnvironment.GetFileAsLocal(slim, localSlim) is null)
             {
                 Error($"Failed to download the reduced timeline '{slim}' from the workstation.");
-                return null;
+                return ToolResult<TimelineEvent[]>.Fail($"Failed to download the reduced timeline from the workstation.");
             }
             return ParseJsonLinesFile<TimelineEvent>(localSlim);
         }
@@ -170,17 +174,23 @@ public class TimelineToolkit : Toolkit
     }
 
     /// <summary>Inspects a .plaso storage file and returns parser hit statistics and the total event count.</summary>
-    public async Task<PlasoInfo?> PinfoAsync(string storageFile) =>
-        await ExecuteToolTextAsync("Pinfo", $"--output-format json {Q(storageFile)}") is { } o ? PlasoInfo.Parse(o) : null;
+    public async Task<ToolResult<PlasoInfo>> PinfoAsync(string storageFile)
+    {
+        var o = await ExecuteToolTextAsync("Pinfo", $"--output-format json {Q(storageFile)}");
+        if (o is null) return ToolResult<PlasoInfo>.Fail(IsToolAvailable("Pinfo")
+            ? $"pinfo command failed on platform '{platform}' (see server log)."
+            : $"pinfo is not available on platform '{platform}'.");
+        return PlasoInfo.Parse(o);
+    }
 
     /// <summary>
     /// One-step ingest and export: parses <paramref name="source"/> and returns the timeline events without
     /// a persistent .plaso file. Optionally restrict to a <paramref name="parsers"/> preset/list.
     /// </summary>
-    public Task<TimelineEvent[]?> PstealAsync(string source, string? parsers = null, string timezone = "UTC") =>
-        ExecuteToolJsonLinesFileAsync<TimelineEvent>("Psteal",
+    public async Task<ToolResult<TimelineEvent[]>> PstealAsync(string source, string? parsers = null, string timezone = "UTC") =>
+        Wrap("Psteal", "psteal", await ExecuteToolJsonLinesFileAsync<TimelineEvent>("Psteal",
             f => $"--source {Q(source)} -o json_line -w {Q(f)} --status-view none --timezone {timezone}" +
-                 (parsers is not null ? $" --parsers {parsers}" : ""));
+                 (parsers is not null ? $" --parsers {parsers}" : "")));
 
     /// <summary>
     /// Extracts files from the storage-media image <paramref name="source"/> into <paramref name="outputDir"/>.
@@ -203,36 +213,39 @@ public class TimelineToolkit : Toolkit
     /// is true. <paramref name="minLevel"/> filters by minimum severity (informational, low, medium, high,
     /// critical). Output is always UTC.
     /// </summary>
-    public Task<HayabusaAlert[]?> HayabusaJsonTimelineAsync(string evtxPath, bool directory = false, string? minLevel = null) =>
-        ExecuteToolJsonLinesFileAsync<HayabusaAlert>("Hayabusa",
+    public async Task<ToolResult<HayabusaAlert[]>> HayabusaJsonTimelineAsync(string evtxPath, bool directory = false, string? minLevel = null) =>
+        Wrap("Hayabusa", "hayabusa", await ExecuteToolJsonLinesFileAsync<HayabusaAlert>("Hayabusa",
             f => $"json-timeline {(directory ? "-d" : "-f")} {Q(evtxPath)} -L -o {Q(f)} -w -q -Q -U" +
-                 (minLevel is not null ? $" -m {minLevel}" : ""));
+                 (minLevel is not null ? $" -m {minLevel}" : "")));
 
     /// <summary>hayabusa computer-metrics: total events per computer name.</summary>
-    public Task<ComputerMetric[]?> HayabusaComputerMetricsAsync(string evtxPath, bool directory = false) =>
-        ExecuteToolCsvFileAsync<ComputerMetric>("Hayabusa",
-            f => $"computer-metrics {Src(evtxPath, directory)} -o {Q(f)} -q -Q", ComputerMetric.FromRow);
+    public async Task<ToolResult<ComputerMetric[]>> HayabusaComputerMetricsAsync(string evtxPath, bool directory = false) =>
+        Wrap("Hayabusa", "hayabusa", await ExecuteToolCsvFileAsync<ComputerMetric>("Hayabusa",
+            f => $"computer-metrics {Src(evtxPath, directory)} -o {Q(f)} -q -Q", ComputerMetric.FromRow));
 
     /// <summary>hayabusa eid-metrics: event-ID frequency across the logs.</summary>
-    public Task<EidMetric[]?> HayabusaEidMetricsAsync(string evtxPath, bool directory = false) =>
-        ExecuteToolCsvFileAsync<EidMetric>("Hayabusa",
-            f => $"eid-metrics {Src(evtxPath, directory)} -o {Q(f)} -q -Q -U", EidMetric.FromRow);
+    public async Task<ToolResult<EidMetric[]>> HayabusaEidMetricsAsync(string evtxPath, bool directory = false) =>
+        Wrap("Hayabusa", "hayabusa", await ExecuteToolCsvFileAsync<EidMetric>("Hayabusa",
+            f => $"eid-metrics {Src(evtxPath, directory)} -o {Q(f)} -q -Q -U", EidMetric.FromRow));
 
     /// <summary>hayabusa log-metrics: per-evtx-file metadata (events, timestamps, channels, providers).</summary>
-    public Task<LogMetric[]?> HayabusaLogMetricsAsync(string evtxPath, bool directory = false) =>
-        ExecuteToolCsvFileAsync<LogMetric>("Hayabusa",
-            f => $"log-metrics {Src(evtxPath, directory)} -o {Q(f)} -q -Q -U", LogMetric.FromRow);
+    public async Task<ToolResult<LogMetric[]>> HayabusaLogMetricsAsync(string evtxPath, bool directory = false) =>
+        Wrap("Hayabusa", "hayabusa", await ExecuteToolCsvFileAsync<LogMetric>("Hayabusa",
+            f => $"log-metrics {Src(evtxPath, directory)} -o {Q(f)} -q -Q -U", LogMetric.FromRow));
 
     /// <summary>
     /// hayabusa logon-summary: successful and failed logon records. (hayabusa writes two CSV files from
     /// an output prefix; both are read and combined, each row flagged via <see cref="LogonSummaryEntry.Successful"/>.)
     /// </summary>
-    public async Task<LogonSummaryEntry[]?> HayabusaLogonSummaryAsync(string evtxPath, bool directory = false)
+    public async Task<ToolResult<LogonSummaryEntry[]>> HayabusaLogonSummaryAsync(string evtxPath, bool directory = false)
     {
         string prefix = "/tmp/camel_ls_" + Guid.NewGuid().ToString("N");
         try
         {
-            if (await ExecuteToolTextAsync("Hayabusa", $"logon-summary {Src(evtxPath, directory)} -o {Q(prefix)} -q -Q -U") is null) return null;
+            if (await ExecuteToolTextAsync("Hayabusa", $"logon-summary {Src(evtxPath, directory)} -o {Q(prefix)} -q -Q -U") is null)
+                return ToolResult<LogonSummaryEntry[]>.Fail(IsToolAvailable("Hayabusa")
+                    ? $"hayabusa command failed on platform '{platform}' (see server log)."
+                    : $"hayabusa is not available on platform '{platform}'.");
             var list = new List<LogonSummaryEntry>();
             if (await ReadCsvFileAsync($"{prefix}-successful.csv", r => LogonSummaryEntry.FromRow(r, true)) is { } s) list.AddRange(s);
             if (await ReadCsvFileAsync($"{prefix}-failed.csv", r => LogonSummaryEntry.FromRow(r, false)) is { } f) list.AddRange(f);
@@ -281,6 +294,15 @@ public class TimelineToolkit : Toolkit
                     'message': m[:n],
                 }) + '\n')
         """;
+
+    // Wraps a base-helper result (null = the tool was unavailable on the platform OR its command failed) as a
+    // ToolResult, naming the tool in the failure reason. The base ExecuteTool* helpers already short-circuit to
+    // null without running when the tool is unavailable, so checking availability after the fact picks the message.
+    private ToolResult<T[]> Wrap<T>(string toolKey, string label, T[]? r) =>
+        r is not null ? r
+        : ToolResult<T[]>.Fail(IsToolAvailable(toolKey)
+            ? $"{label} command failed on platform '{platform}' (see server log)."
+            : $"{label} is not available on platform '{platform}'.");
 
     private static string Q(string path) => $"'{path}'";
     // hayabusa source selector: -f for a single .evtx file, -d for a directory.
