@@ -64,8 +64,8 @@ public class PacketAnalysisToolkit : Toolkit
     public async Task<ToolResult<PcapInfo>> CapInfoAsync(string pcap, bool sudo = false)
     {
         var res = await RunAsync("Capinfos", $"-M {Q(pcap)}", sudo);
-        if (!res.Ok) return ToolResult<PcapInfo>.Fail(res.FailureReason!);
-        var o = res.Value!;
+        if (!res.IsSuccess) return ToolResult<PcapInfo>.Fail(res.Message!);
+        var o = res.Result!;
         var kv = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var line in Lines(o))
         {
@@ -99,8 +99,8 @@ public class PacketAnalysisToolkit : Toolkit
     public async Task<ToolResult<ProtocolLayer[]>> ProtocolHierarchyAsync(string pcap, bool sudo = false)
     {
         var res = await RunAsync("Tshark", $"-n -q -r {Q(pcap)} -z io,phs", sudo);
-        if (!res.Ok) return ToolResult<ProtocolLayer[]>.Fail(res.FailureReason!);
-        var o = res.Value!;
+        if (!res.IsSuccess) return ToolResult<ProtocolLayer[]>.Fail(res.Message!);
+        var o = res.Result!;
         var layers = new List<ProtocolLayer>();
         foreach (var line in o.Split('\n'))
         {
@@ -122,8 +122,8 @@ public class PacketAnalysisToolkit : Toolkit
     public async Task<ToolResult<Conversation[]>> ConversationsAsync(string pcap, string proto = "tcp", bool sudo = false)
     {
         var res = await RunAsync("Tshark", $"-n -q -r {Q(pcap)} -z conv,{proto}", sudo);
-        if (!res.Ok) return ToolResult<Conversation[]>.Fail(res.FailureReason!);
-        var o = res.Value!;
+        if (!res.IsSuccess) return ToolResult<Conversation[]>.Fail(res.Message!);
+        var o = res.Result!;
         var convs = new List<Conversation>();
         foreach (var line in o.Split('\n'))
         {
@@ -154,8 +154,8 @@ public class PacketAnalysisToolkit : Toolkit
     public async Task<ToolResult<Endpoint[]>> EndpointsAsync(string pcap, string proto = "ip", bool sudo = false)
     {
         var res = await RunAsync("Tshark", $"-n -q -r {Q(pcap)} -z endpoints,{proto}", sudo);
-        if (!res.Ok) return ToolResult<Endpoint[]>.Fail(res.FailureReason!);
-        var o = res.Value!;
+        if (!res.IsSuccess) return ToolResult<Endpoint[]>.Fail(res.Message!);
+        var o = res.Result!;
         var eps = new List<Endpoint>();
         foreach (var line in o.Split('\n'))
         {
@@ -186,8 +186,8 @@ public class PacketAnalysisToolkit : Toolkit
                    (displayFilter is not null ? $" -Y {Q(displayFilter)}" : "") +
                    " -T fields -e frame.number -e frame.time_epoch -e ip.src -e ip.dst -e _ws.col.Protocol -e frame.len -e _ws.col.Info";
         var res = await RunAsync("Tshark", args, sudo);
-        if (!res.Ok) return ToolResult<PacketSummary[]>.Fail(res.FailureReason!);
-        var o = res.Value!;
+        if (!res.IsSuccess) return ToolResult<PacketSummary[]>.Fail(res.Message!);
+        var o = res.Result!;
         var rows = new List<PacketSummary>();
         foreach (var line in Lines(o))
         {
@@ -219,8 +219,8 @@ public class PacketAnalysisToolkit : Toolkit
         var args = $"-n -r {Q(pcap)}" + (string.IsNullOrEmpty(displayFilter) ? "" : $" -Y {Q(displayFilter)}") +
                    $" -T fields {fieldArgs}";
         var res = await RunAsync("Tshark", args, sudo);
-        if (!res.Ok) return ToolResult<string[][]>.Fail(res.FailureReason!);
-        var o = res.Value!;
+        if (!res.IsSuccess) return ToolResult<string[][]>.Fail(res.Message!);
+        var o = res.Result!;
         return Lines(o).Select(l =>
         {
             var parts = l.Split('\t');
@@ -241,8 +241,8 @@ public class PacketAnalysisToolkit : Toolkit
     public async Task<ToolResult<string>> FollowStreamAsync(string pcap, string proto, int index, bool sudo = false)
     {
         var res = await RunAsync("Tshark", $"-n -q -r {Q(pcap)} -z follow,{proto},ascii,{index}", sudo);
-        if (!res.Ok) return ToolResult<string>.Fail(res.FailureReason!);
-        var o = res.Value!;
+        if (!res.IsSuccess) return ToolResult<string>.Fail(res.Message!);
+        var o = res.Result!;
         // Drop the banner (up to and including the "Node 1:" line) and the trailing "===" rule.
         var lines = o.Split('\n').ToList();
         int start = lines.FindIndex(l => l.StartsWith("Node 1:", StringComparison.Ordinal));
@@ -270,8 +270,8 @@ public class PacketAnalysisToolkit : Toolkit
     public async Task<ToolResult<TcpTraceConn[]>> TcpTraceAsync(string pcap, bool sudo = false)
     {
         var res = await RunAsync("Tcptrace", $"-n {Q(pcap)}", sudo);
-        if (!res.Ok) return ToolResult<TcpTraceConn[]>.Fail(res.FailureReason!);
-        var o = res.Value!;
+        if (!res.IsSuccess) return ToolResult<TcpTraceConn[]>.Fail(res.Message!);
+        var o = res.Result!;
         var conns = new List<TcpTraceConn>();
         foreach (var line in o.Split('\n'))
         {
@@ -298,8 +298,8 @@ public class PacketAnalysisToolkit : Toolkit
     public async Task<ToolResult<NgrepMatch[]>> NgrepAsync(string pcap, string pattern, string? bpf = null, bool sudo = false)
     {
         var res = await RunAsync("Ngrep", $"-I {Q(pcap)} -q -W single {Q(pattern)}" + (bpf is not null ? $" {Q(bpf)}" : ""), sudo);
-        if (!res.Ok) return ToolResult<NgrepMatch[]>.Fail(res.FailureReason!);
-        var o = res.Value!;
+        if (!res.IsSuccess) return ToolResult<NgrepMatch[]>.Fail(res.Message!);
+        var o = res.Result!;
         var matches = new List<NgrepMatch>();
         NgrepMatch? cur = null; var payload = new StringBuilder();
         void Flush() { if (cur is not null) { matches.Add(cur with { Payload = payload.ToString().Trim() }); cur = null; payload.Clear(); } }
@@ -325,8 +325,8 @@ public class PacketAnalysisToolkit : Toolkit
     public async Task<ToolResult<P0fRecord[]>> P0fAsync(string pcap, bool sudo = false)
     {
         var res = await RunAsync("P0f", $"-r {Q(pcap)}", sudo);
-        if (!res.Ok) return ToolResult<P0fRecord[]>.Fail(res.FailureReason!);
-        var o = res.Value!;
+        if (!res.IsSuccess) return ToolResult<P0fRecord[]>.Fail(res.Message!);
+        var o = res.Result!;
         var records = new List<P0fRecord>();
         string? subject = null, address = null;
         foreach (var raw in o.Split('\n'))
@@ -349,8 +349,8 @@ public class PacketAnalysisToolkit : Toolkit
     {
         var src = flowSource.Contains('*') || !flowSource.Contains('.') ? $"-R {Q(flowSource)}" : $"-r {Q(flowSource)}";
         var res = await RunAsync("Nfdump", $"{src} -o csv -q" + (filter is not null ? $" {Q(filter)}" : ""), sudo);
-        if (!res.Ok) return ToolResult<NetflowRecord[]>.Fail(res.FailureReason!);
-        var o = res.Value!;
+        if (!res.IsSuccess) return ToolResult<NetflowRecord[]>.Fail(res.Message!);
+        var o = res.Result!;
         var records = new List<NetflowRecord>();
         foreach (var line in Lines(o))
         {
@@ -379,7 +379,7 @@ public class PacketAnalysisToolkit : Toolkit
         auditEnvironment.FailIfEvidenceSpoliationRisk(outDir);
         await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {Q(outDir)}", false);
         var res = await RunAsync("Suricata", $"-r {Q(pcap)} -l {Q(outDir)}", sudo || Tools["Suricata"].Sudo);
-        if (!res.Ok) return ToolResult<SuricataAlert[]>.Fail(res.FailureReason!);
+        if (!res.IsSuccess) return ToolResult<SuricataAlert[]>.Fail(res.Message!);
         if (Tools["Suricata"].Sudo || sudo)
             await auditEnvironment.ExecuteCommandAsync("chown", $"-R $(id -un):$(id -gn) {Q(outDir)}", true);
 
@@ -434,7 +434,7 @@ public class PacketAnalysisToolkit : Toolkit
         if (endEpoch is not null) args.Append($"-B {EpochArg(endEpoch.Value)} ");
         args.Append($"{Q(pcap)} {Q(outFile)}");
         if (firstPacket is not null && lastPacket is not null) args.Append($" {firstPacket}-{lastPacket}");
-        return (await RunAsync("Editcap", args.ToString().Trim(), sudo)).Ok;
+        return (await RunAsync("Editcap", args.ToString().Trim(), sudo)).IsSuccess;
     }
 
     /// <summary>Merges multiple captures into <paramref name="outFile"/> via <c>mergecap -w</c>. Returns true on success.</summary>
@@ -442,7 +442,7 @@ public class PacketAnalysisToolkit : Toolkit
     {
         if (pcaps.Length == 0) return false;
         auditEnvironment.FailIfEvidenceSpoliationRisk(outFile);
-        return (await RunAsync("Mergecap", $"-w {Q(outFile)} {string.Join(" ", pcaps.Select(Q))}", sudo)).Ok;
+        return (await RunAsync("Mergecap", $"-w {Q(outFile)} {string.Join(" ", pcaps.Select(Q))}", sudo)).IsSuccess;
     }
     #endregion
 
@@ -453,7 +453,7 @@ public class PacketAnalysisToolkit : Toolkit
         auditEnvironment.FailIfEvidenceSpoliationRisk(outDir);
         await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {Q(outDir)}", false);
         var res = await run();
-        if (!res.Ok) return ToolResult<string[]>.Fail(res.FailureReason!);
+        if (!res.IsSuccess) return ToolResult<string[]>.Fail(res.Message!);
         if (sudo) await auditEnvironment.ExecuteCommandAsync("chown", $"-R $(id -un):$(id -gn) {Q(outDir)}", true);
         var find = await auditEnvironment.ExecuteCommandAsync("find", $"{Q(outDir)} -maxdepth 1 -type f -printf '%p\\n'", false);
         return find.IsCompleted

@@ -30,10 +30,10 @@ nullish coalescing `??`, `Array`/`Map`/`Set`/`JSON`, etc.). Tailor generated cod
 - **Returned objects expose properties in PascalCase**, e.g. `result.IsSuccess`, `event.Timestamp`.
 - **Parameters are positional** (JS has no named args). Omit *trailing* optional params; pass earlier defaults
   explicitly (use `null` for nullable types) to reach a later one.
-- **Toolkit data methods return a `ToolResult<T>` (check `.Ok`, read `.Value` or `.FailureReason`); a handful of
+- **Toolkit data methods return a `ToolResult<T>` (check `.IsSuccess`, read `.Result` or `.Message`); a handful of
   pure-action methods (mount / dump / extract) return `bool`; workflow methods return `WorkflowResult<T>`.** A
   failed `ToolResult` distinguishes "the tool isn't installed on this platform" from "the command ran but failed";
-  an empty `.Value` collection means "ran clean, found nothing" — not a failure. Always check `.Ok`/`.IsSuccess`
+  an empty `.Result` collection means "ran clean, found nothing" — not a failure. Always check `.IsSuccess`
   before reading the payload. (See the `ToolResult` schema in `camel-sdk-schema`.)
 - Output via the globals `log` / `error` / `table`. The `audit*` family additionally persists to the per-case
   audit log: `auditInfo`/`auditError` (notes), `auditFinding`/`auditReviewRec` (a structured finding / a review
@@ -164,7 +164,7 @@ if (!r.IsSuccess) error(r.Message); else log(r.Message);  // inspect r.Result �
 # Toolkits
 
 Toolkit methods execute a SIFT tool on the workstation and return a parsed model wrapped in a `ToolResult<T>`
-(check `.Ok`, read `.Value`, or `.FailureReason` when the tool is unavailable or the command failed); a few
+(check `.IsSuccess`, read `.Result`, or `.Message` when the tool is unavailable or the command failed); a few
 pure-action methods (mount / dump / extract) return `bool`. The toolkit objects are `MemoryAnalysisToolkit`, `DiskAnalysisToolkit`,
 `WindowsAnalysisToolkit`, `TimelineAnalysisToolkit`, `YaraToolkit`, `UnixToolsToolkit`, `LinuxAnalysisToolkit`,
 `PacketAnalysisToolkit`, and `AnomalyDetectionToolkit`. The JSON schema for each return type named below is in the
@@ -176,7 +176,7 @@ pure-action methods (mount / dump / extract) return `bool`. The toolkit objects 
 
 Volatility 3 wrapper for Windows memory-image analysis. `filename` is the memory image path. Methods taking an
 optional `pid: int` restrict output to one process. Each plugin method returns a **`ToolResult<T>`** — check
-`.Ok`, read `.Value` or `.FailureReason`. An empty `.Value` array means "ran clean, nothing found"; a *failed*
+`.IsSuccess`, read `.Result` or `.Message`. An empty `.Result` array means "ran clean, nothing found"; a *failed*
 result means the plugin could not run (Volatility absent, or — for a Linux plugin — no ISF symbol table for the
 kernel). The `ExtractStringsAsync` helper stays a plain `bool` (true on success).
 
@@ -236,8 +236,8 @@ kernel). The `ExtractStringsAsync` helper stays a plain `bool` (true on success)
 For a **Linux** memory image. Same call shape as the Windows methods. **Symbols caveat:** every Linux plugin
 needs an ISF symbol table matching the captured kernel's banner (none ship with Volatility); `vol` auto-fetches
 known kernels from the public symbol server, otherwise generate symbols with `dwarf2json`. With no symbols the
-method returns a *failed* `ToolResult` (`.FailureReason` names the symbol-table need) — distinct from a successful
-empty `.Value` (ran clean, nothing found).
+method returns a *failed* `ToolResult` (`.Message` names the symbol-table need) — distinct from a successful
+empty `.Result` (ran clean, nothing found).
 
 - `LinuxPsListAsync(filename: string, pid?: int)` → `ToolResult<LinuxPsList[]>` — task-list processes (live view).
 - `LinuxPsScanAsync(filename: string)` → `ToolResult<LinuxPsScan[]>` — pool-scan processes (finds unlinked/hidden).
@@ -268,7 +268,7 @@ The Sleuth Kit (TSK), libewf (EWF/E01), loopback/NTFS mounting, file recovery, *
 The optional `offset: int` argument is a **partition start sector** (from `MmlsAsync` / `ListPartitionsAsync`);
 omit it for a single-volume image. All carving/recovery tools ship with SIFT — no installs needed.
 
-The **data** methods return `ToolResult<T>` (check `.Ok`, read `.Value` or `.FailureReason`); the **mount/extract/
+The **data** methods return `ToolResult<T>` (check `.IsSuccess`, read `.Result` or `.Message`); the **mount/extract/
 recovery-action** methods return `bool` (true on success), and the two `FindFilesAsync` overloads return `FsFile[]`
 directly (empty when nothing matches).
 
@@ -297,9 +297,9 @@ directly (empty when nothing matches).
 - `FindFilesAsync(directory: string, namePatterns: string[], maxDepth?: int)` → `FsFile[]` — find by any of several globs (one traversal).
 - `Sha256Async(path: string)` → `ToolResult<string>` — SHA-256 of a mounted file.
 - `GrepLinesAsync(path: string, patterns: string[], ignoreCase?: bool, maxMatches?: int)` → `ToolResult<string[]>` —
-  server-side `grep -E -f`; `.Value` is the matching lines (`[]` on no match; failed result on an unreadable file).
+  server-side `grep -E -f`; `.Result` is the matching lines (`[]` on no match; failed result on an unreadable file).
 - `TskRecoverAsync(image: string, outputDir: string, all: bool, dirInode?: long, offset?: int)` → `ToolResult<int>` —
-  bulk-recover files (count in `.Value`); `all=true` includes deleted/unallocated.
+  bulk-recover files (count in `.Result`); `all=true` includes deleted/unallocated.
 - `IcatByAddrAsync(image: string, inode: string, outputFile: string, offset?: int)` → `bool` — extract a file by
   TSK inode **address string** (plain ext inode, or NTFS `mft-type-id`, as `FlsEntry.Inode` carries).
 - `BlklsAsync(image: string, outputFile: string, offset?: int, slackOnly?: bool)` → `ToolResult<long>` (bytes) — extract a
@@ -315,14 +315,14 @@ directly (empty when nothing matches).
 - `BdeInfoAsync(source: string, offset?: int, recoveryPassword?: string, password?: string, bekFile?: string, fullKey?: string)`
   → `ToolResult<BitLockerInfo>` — read BitLocker (BDE) volume metadata + key protectors via `bdeinfo` (`source` = a raw device
   like `ewf1`, or a raw image; `offset` = partition start sector). No credential needed to read metadata. A failed
-  result when there is no BDE volume at the offset (i.e. not BitLocker-encrypted) — else check `.Value.IsBitLockerVolume`.
+  result when there is no BDE volume at the offset (i.e. not BitLocker-encrypted) — else check `.Result.IsBitLockerVolume`.
 - `BdeMountAsync(volume: string, mountDir: string, recoveryPassword?: string, password?: string, bekFile?: string, fullKey?: string, offset?: int)`
   → `bool` — unlock + mount a BitLocker volume RO with `bdemount`, exposing the decrypted volume as `<mountDir>/bde1`
   (a raw device the TSK tools and a loopback mount use just like `ewf1`). Supply one credential. False on a wrong
   credential.
 - `SearchBitLockerRecoveryKeysAsync(input: string, maxMatches?: int)` → `ToolResult<string[]>` — string-search `input` (image/
   device/extract/memory dump) for 48-digit BitLocker recovery keys (`strings | grep`). The FOR508 "no key supplied"
-  fallback. `.Value` is the distinct candidate keys (`[]` if none; failed result if unreadable).
+  fallback. `.Result` is the distinct candidate keys (`[]` if none; failed result if unreadable).
 - `DeleteFileAsync(path: string)` → `bool` — delete a non-evidence temp file (e.g. an unallocated extract).
 - `FlsBodyfileAsync(image: string, outputFile: string, offset?: int, mountPoint?: string)` → `bool` — `fls -r -m` bodyfile.
 - `MactimeAsync(bodyfile: string, timezone?: string)` → `ToolResult<MactimeEntry[]>` — render a sorted timeline (default UTC).
@@ -333,8 +333,8 @@ directly (empty when nothing matches).
 ## WindowsAnalysisToolkit
 
 Eric Zimmerman (EZ) tools, RegRipper, and bespoke parsers for Windows host artifacts. Every method below returns a
-**`ToolResult<T>`** — check `.Ok`, read the payload from `.Value`, or read `.FailureReason` (it distinguishes "tool
-not installed on this platform" from "the command failed / the artifact was unreadable"). An empty `.Value`
+**`ToolResult<T>`** — check `.IsSuccess`, read the payload from `.Result`, or read `.Message` (it distinguishes "tool
+not installed on this platform" from "the command failed / the artifact was unreadable"). An empty `.Result`
 collection means "ran clean, found nothing", not a failure.
 
 - `LoadLolbasAsync()` → `ToolResult<LolbasReference>` — the LOLBAS index (methods `IsLolbin`, `IsCanonicalPath`).
@@ -400,7 +400,7 @@ Plaso (`log2timeline`/`psort`/`pinfo`/`psteal`/`image_export`) and `hayabusa`. T
 - `HayabusaLogMetricsAsync(evtxPath: string, directory?: bool)` → `ToolResult<LogMetric[]>`.
 - `HayabusaLogonSummaryAsync(evtxPath: string, directory?: bool)` → `ToolResult<LogonSummaryEntry[]>` (each flagged `.Successful`).
 
-(The data methods above return `ToolResult<T>` — check `.Ok`, read `.Value` or `.FailureReason`; the three
+(The data methods above return `ToolResult<T>` — check `.IsSuccess`, read `.Result` or `.Message`; the three
 `bool` methods report success directly. See the `ToolResult` schema.)
 
 ---
@@ -411,8 +411,8 @@ Classic `yara` scanner + the bundled Yara-Rules community pack (at `/opt/yara-ru
 such as `malware_index.yar`, `webshells_index.yar`).
 
 - `ScanAsync(rules: string, scanPath: string, options?: YaraOptions)` → `ToolResult<YaraMatch[]>` — scan a file or
-  (with `options.Recurse`) a directory; one match per rule/file hit. Check `.Ok`, read `.Value` (empty = ran clean)
-  or `.FailureReason` (yara not installed vs. scan failed).
+  (with `options.Recurse`) a directory; one match per rule/file hit. Check `.IsSuccess`, read `.Result` (empty = ran clean)
+  or `.Message` (yara not installed vs. scan failed).
 - `CompileAsync(rules: string, output: string)` → `bool` — compile rules to a binary file (true on success).
 
 `options` is passed as a JS object literal (all fields optional), e.g. `{ Recurse: true, Timeout: 120 }`. See the
@@ -473,7 +473,7 @@ an explicit artifact path, and is read-only. Reads default to **sudo** (forensic
 in Bruce Nikkel, *Practical Linux Forensics*. Tooling note: everything here is satisfied by the base SIFT image —
 no installs are needed for the default Debian/Ubuntu (dpkg) path.
 
-(Each data method below returns `ToolResult<T>` — check `.Ok`, read `.Value` or `.FailureReason`; the reason
+(Each data method below returns `ToolResult<T>` — check `.IsSuccess`, read `.Result` or `.Message`; the reason
 distinguishes "tool not installed" / "artifact not readable under this root" from a real failure.)
 
 - `SystemInfoAsync(rootDir: string, sudo?: bool)` → `ToolResult<LinuxSystemInfo>` — os-release/hostname/timezone/machine-id.
@@ -503,9 +503,9 @@ via **tshark** plus tcpdump/capinfos/tcptrace/tcpflow/ngrep/p0f/nfdump and the *
 auto-provisions `tshark` + `suricata` (+ ET rules) if missing (the worthwhile installs; Zeek has no apt package
 and is not auto-provisioned). Grounded in SANS FOR501.2. Pass `sudo: true` for a root-owned capture on a mounted image.
 
-Each data method returns a **`ToolResult<T>`**: check `.Ok`, read the payload from `.Value`, or read why it
-produced nothing from `.FailureReason` (it distinguishes "tool not installed on this platform" from "the command
-ran but failed"). An empty `.Value` array means "ran clean, found nothing" — not a failure.
+Each data method returns a **`ToolResult<T>`**: check `.IsSuccess`, read the payload from `.Result`, or read why it
+produced nothing from `.Message` (it distinguishes "tool not installed on this platform" from "the command
+ran but failed"). An empty `.Result` array means "ran clean, found nothing" — not a failure.
 
 - `CapInfoAsync(pcap: string)` → `ToolResult<PcapInfo>` — capture metadata (packets/bytes/duration/time span/hashes).
 - `ProtocolHierarchyAsync(pcap: string)` → `ToolResult<ProtocolLayer[]>` — protocol mix tree (frames/bytes, nesting `Depth`).
@@ -543,9 +543,9 @@ methods are synchronous** (no `await`).
 
 ```js
 const ev = await TimelineAnalysisToolkit.PsortReducedAsync("/cases/host.plaso");
-if (!ev.Ok) { error(ev.FailureReason); }
+if (!ev.IsSuccess) { error(ev.Message); }
 else {
-  const report = AnomalyDetectionToolkit.TriageTimeline(ev.Value, 200, true);
+  const report = AnomalyDetectionToolkit.TriageTimeline(ev.Result, 200, true);
   log(AnomalyDetectionToolkit.Summarize(report, 25));
 }
 ```

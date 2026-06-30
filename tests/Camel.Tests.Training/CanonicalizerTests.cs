@@ -122,7 +122,7 @@ public class CanonicalizerTests : TestsRuntime
         // the ~35k winreg_default emits, so the SSH transfer stays fast.
         if (!sshenv.ExecuteCommand("test", $"-f {RegPlaso}", out _, false))
             Assert.True(await api.Timeline.Log2TimelineAsync(SystemHive, RegPlaso, parsers: "winreg"));
-        var events = (await api.Timeline.PsortAsync(RegPlaso, "data_type contains 'appcompatcache'")).Value;
+        var events = (await api.Timeline.PsortAsync(RegPlaso, "data_type contains 'appcompatcache'")).Result;
         Assert.NotNull(events);
         Assert.NotEmpty(events);
 

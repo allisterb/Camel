@@ -57,10 +57,10 @@ public partial class DiskAnalysisWorkflow
         var bytesR = await DiskAnalysis.BlklsAsync(image, extract, offset);
         try
         {
-            if (!bytesR.Ok)
-                return WorkflowResult<CarveReport>.Failure(bytesR.FailureReason ??
+            if (!bytesR.IsSuccess)
+                return WorkflowResult<CarveReport>.Failure(bytesR.Message ??
                     $"blkls failed to extract unallocated space from '{image}' (offset {offset}). Check the offset (mmls) and that a filesystem exists there.");
-            var bytes = bytesR.Value;
+            var bytes = bytesR.Result;
             if (bytes == 0)
                 return WorkflowResult<CarveReport>.Failure(
                     $"No unallocated space extracted from '{image}' (offset {offset}) — nothing to carve.");
@@ -94,7 +94,7 @@ public partial class DiskAnalysisWorkflow
         using var _audit = AuditScope();
         using var op = Begin("Extracting forensic features from {0} into {1}", image, outputDir);
 
-        var features = (await DiskAnalysis.BulkExtractorAsync(image, outputDir)).Value;
+        var features = (await DiskAnalysis.BulkExtractorAsync(image, outputDir)).Result;
         if (features is null)
             return WorkflowResult<FeatureExtractionReport>.Failure(
                 $"bulk_extractor failed on '{image}'; check the path and that '{outputDir}' does not already exist.");
@@ -138,7 +138,7 @@ public partial class DiskAnalysisWorkflow
 
         // The bodyfile names every deleted entry with a "(deleted)" / "(deleted-realloc)" suffix; pull just those
         // server-side rather than transferring the whole bodyfile.
-        var lines = (await DiskAnalysis.GrepLinesAsync(bodyfile, ["deleted"], ignoreCase: false)).Value;
+        var lines = (await DiskAnalysis.GrepLinesAsync(bodyfile, ["deleted"], ignoreCase: false)).Result;
         if (lines is null)
             return WorkflowResult<DeletedFilesReport>.Failure($"Could not read the bodyfile '{bodyfile}'.");
 
@@ -182,10 +182,10 @@ public partial class DiskAnalysisWorkflow
     private async Task<CarvedFile[]?> RunCarverAsync(string carver, string input, string outputDir, string? fileTypes) =>
         carver.ToLowerInvariant() switch
         {
-            "scalpel" => (await DiskAnalysis.ScalpelAsync(input, outputDir)).Value,
-            "photorec" => (await DiskAnalysis.PhotoRecAsync(input, outputDir)).Value is { } paths
+            "scalpel" => (await DiskAnalysis.ScalpelAsync(input, outputDir)).Result,
+            "photorec" => (await DiskAnalysis.PhotoRecAsync(input, outputDir)).Result is { } paths
                 ? paths.Select(PathToCarved).ToArray() : null,
-            _ => (await DiskAnalysis.ForemostAsync(input, outputDir, fileTypes ?? "all")).Value,
+            _ => (await DiskAnalysis.ForemostAsync(input, outputDir, fileTypes ?? "all")).Result,
         };
 
     private static CarvedFile PathToCarved(string path)

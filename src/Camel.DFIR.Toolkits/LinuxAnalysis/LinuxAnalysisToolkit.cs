@@ -197,7 +197,7 @@ public class LinuxAnalysisToolkit : Toolkit
     {
         var path = wtmpPath ?? Combine(rootDir, "var/log/wtmp");
         var res = await RunAsync("Last", $"-F -i -w -f {Q(path)}", sudo);
-        return res.Ok ? ParseLast(res.Value!) : ToolResult<LinuxLogin[]>.Fail(res.FailureReason!);
+        return res.IsSuccess ? ParseLast(res.Result!) : ToolResult<LinuxLogin[]>.Fail(res.Message!);
     }
 
     /// <summary>
@@ -209,7 +209,7 @@ public class LinuxAnalysisToolkit : Toolkit
     {
         var path = btmpPath ?? Combine(rootDir, "var/log/btmp");
         var res = await RunAsync("Lastb", $"-F -i -w -f {Q(path)}", sudo);
-        return res.Ok ? ParseLast(res.Value!) : ToolResult<LinuxLogin[]>.Fail(res.FailureReason!);
+        return res.IsSuccess ? ParseLast(res.Result!) : ToolResult<LinuxLogin[]>.Fail(res.Message!);
     }
 
     /// <summary>
@@ -220,8 +220,8 @@ public class LinuxAnalysisToolkit : Toolkit
     public async Task<ToolResult<UtmpRecord[]>> UtmpDumpAsync(string path, bool sudo = true)
     {
         var res = await RunAsync("Utmpdump", Q(path), sudo);
-        if (!res.Ok) return ToolResult<UtmpRecord[]>.Fail(res.FailureReason!);
-        var o = res.Value!;
+        if (!res.IsSuccess) return ToolResult<UtmpRecord[]>.Fail(res.Message!);
+        var o = res.Result!;
         var records = new List<UtmpRecord>();
         foreach (var line in Lines(o))
         {
@@ -260,8 +260,8 @@ public class LinuxAnalysisToolkit : Toolkit
                    (maxEntries is int n and > 0 ? $" -n {n}" : "") +
                    (unit is not null ? $" -u {Q(unit)}" : "");
         var res = await RunAsync("Journalctl", args, sudo);
-        if (!res.Ok) return ToolResult<JournalEntry[]>.Fail(res.FailureReason!);
-        var o = res.Value!;
+        if (!res.IsSuccess) return ToolResult<JournalEntry[]>.Fail(res.Message!);
+        var o = res.Result!;
         var entries = new List<JournalEntry>();
         foreach (var line in Lines(o))
         {

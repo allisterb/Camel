@@ -28,7 +28,7 @@ public partial class DiskAnalysisWorkflow
         using var _audit = AuditScope();
         using var op = Begin("Inspecting BitLocker volume at sector {0} of {1}", offset, imageMount.RawDevice);
 
-        var info = (await DiskAnalysis.BdeInfoAsync(imageMount.RawDevice, offset)).Value;
+        var info = (await DiskAnalysis.BdeInfoAsync(imageMount.RawDevice, offset)).Result;
         if (info is null || !info.IsBitLockerVolume)
             return WorkflowResult<BitLockerInfo>.Failure(
                 $"No BitLocker volume found at sector offset {offset} of '{imageMount.RawDevice}'. " +
@@ -78,7 +78,7 @@ public partial class DiskAnalysisWorkflow
                 "(.BEK) file, or the full volume key (FVEK:TWEAK).");
 
         // 1. Confirm a BitLocker volume actually lives at this offset (and capture its protectors for the report).
-        var info = (await DiskAnalysis.BdeInfoAsync(imageMount.RawDevice, offset)).Value;
+        var info = (await DiskAnalysis.BdeInfoAsync(imageMount.RawDevice, offset)).Result;
         if (info is null || !info.IsBitLockerVolume)
             return WorkflowResult<BitLockerVolumeMount>.Failure(
                 $"No BitLocker volume found at sector offset {offset} of '{imageMount.RawDevice}'. " +
@@ -104,7 +104,7 @@ public partial class DiskAnalysisWorkflow
         if (mountFilesystem)
         {
             fsMountDir ??= $"{bdeMountDir.TrimEnd('/')}_fs";
-            fsInfo = (await DiskAnalysis.FsStatAsync(decrypted)).Value;
+            fsInfo = (await DiskAnalysis.FsStatAsync(decrypted)).Result;
             if (fsInfo is not null && !string.IsNullOrWhiteSpace(fsInfo.FileSystemType)
                 && await DiskAnalysis.MakeDirAsync(fsMountDir)
                 && (await DiskAnalysis.EwfMountLoopbackAsync(decrypted, fsMountDir)
@@ -167,7 +167,7 @@ public partial class DiskAnalysisWorkflow
         using var _audit = AuditScope();
         using var op = Begin("Searching {0} for BitLocker recovery keys", input);
 
-        var keys = (await DiskAnalysis.SearchBitLockerRecoveryKeysAsync(input, maxMatches)).Value;
+        var keys = (await DiskAnalysis.SearchBitLockerRecoveryKeysAsync(input, maxMatches)).Result;
         if (keys is null)
             return WorkflowResult<string[]>.Failure($"Could not read '{input}' for the recovery-key search.");
 

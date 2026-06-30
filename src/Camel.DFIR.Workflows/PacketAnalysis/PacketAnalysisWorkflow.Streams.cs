@@ -25,7 +25,7 @@ public partial class PacketAnalysisWorkflow
         using var _audit = AuditScope();
         using var op = Begin("Following {0} stream {1} in {2}", proto, index, pcap);
 
-        var content = (await PacketAnalysis.FollowStreamAsync(pcap, proto, index)).Value;
+        var content = (await PacketAnalysis.FollowStreamAsync(pcap, proto, index)).Result;
         if (content is null)
             return WorkflowResult<StreamReport>.Failure(
                 $"Could not follow {proto} stream {index} in '{pcap}'; check the path and that the stream index exists.");

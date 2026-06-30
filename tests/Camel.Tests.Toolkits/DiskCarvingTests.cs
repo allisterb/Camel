@@ -60,7 +60,7 @@ public class DiskCarvingTests : TestsRuntime, IClassFixture<CarveImageFixture>
         var outFile = $"/tmp/camel_unalloc_{Guid.NewGuid():N}.blk";
         try
         {
-            var bytes = (await toolkit.BlklsAsync(fx.ImagePath, outFile)).Value;
+            var bytes = (await toolkit.BlklsAsync(fx.ImagePath, outFile)).Result;
             Assert.NotNull(bytes);
             Assert.True(bytes > 0);
         }
@@ -73,7 +73,7 @@ public class DiskCarvingTests : TestsRuntime, IClassFixture<CarveImageFixture>
         var dir = $"/tmp/camel_fm_{Guid.NewGuid():N}";
         try
         {
-            var carved = (await toolkit.ForemostAsync(fx.ImagePath, dir, "jpeg,png")).Value;
+            var carved = (await toolkit.ForemostAsync(fx.ImagePath, dir, "jpeg,png")).Result;
             Assert.NotNull(carved);
             Assert.Contains(carved, c => c.Type == "jpg" && c.Size > 0);
             Assert.Contains(carved, c => c.Type == "png");
@@ -87,7 +87,7 @@ public class DiskCarvingTests : TestsRuntime, IClassFixture<CarveImageFixture>
         var dir = $"/tmp/camel_be_{Guid.NewGuid():N}";
         try
         {
-            var feats = (await toolkit.BulkExtractorAsync(fx.ImagePath, dir)).Value;
+            var feats = (await toolkit.BulkExtractorAsync(fx.ImagePath, dir)).Result;
             Assert.NotNull(feats);
             var email = feats.FirstOrDefault(f => f.Category == "email");
             Assert.NotNull(email);

@@ -75,7 +75,7 @@ public class AuditSampleGenerator : TestsRuntime
                     {
                         const string mft = "/tmp/rd01_mft_head";
                         env.ExecuteCommand("head", $"-c 16000000 '{Rd01}/$MFT' > {mft}", out _, false);
-                        var r = (await api.WindowsAnalysis.MFTECmdAsync(mft)).Value;
+                        var r = (await api.WindowsAnalysis.MFTECmdAsync(mft)).Result;
                         Print("MFT records", r is not null, $"records={r?.Length} firstFile={r?.FirstOrDefault()?.FileName}");
                         return r is not null;
                     });

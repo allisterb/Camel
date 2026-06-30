@@ -25,12 +25,12 @@ public partial class PacketAnalysisWorkflow
             ["http.request.method", "http.host", "http.request.uri", "http.user_agent"]);
         await Task.WhenAll(filesT, txT);
 
-        var files = filesT.Result.Value;
+        var files = filesT.Result.Result;
         if (files is null)
             return WorkflowResult<HttpObjectReport>.Failure(
                 $"HTTP object export from '{pcap}' failed; check the path and that '{outDir}' is writable.");
 
-        var transactions = (txT.Result.Value ?? [])
+        var transactions = (txT.Result.Result ?? [])
             .Where(r => r.Any(c => c.Length > 0))
             .Select(r => new HttpTransaction
             {

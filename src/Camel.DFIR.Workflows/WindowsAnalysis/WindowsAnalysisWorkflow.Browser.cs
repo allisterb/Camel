@@ -50,7 +50,7 @@ public partial class WindowsAnalysisWorkflow
             var browser = db.Contains("/Edge/", StringComparison.OrdinalIgnoreCase) ? "Edge"
                         : db.Contains("/Chrome/", StringComparison.OrdinalIgnoreCase) ? "Chrome" : "Chromium";
             var urls = (await WindowsAnalysis.SqliteQueryAsync(db,
-                "SELECT url,title,visit_count,last_visit_time FROM urls WHERE last_visit_time>0 ORDER BY last_visit_time DESC LIMIT 5000")).Value;
+                "SELECT url,title,visit_count,last_visit_time FROM urls WHERE last_visit_time>0 ORDER BY last_visit_time DESC LIMIT 5000")).Result;
             if (urls is { Length: > 0 })
             {
                 sources.Add(db);
@@ -63,7 +63,7 @@ public partial class WindowsAnalysisWorkflow
             var dls = (await WindowsAnalysis.SqliteQueryAsync(db,
                 "SELECT d.target_path AS target_path, d.total_bytes AS total_bytes, d.start_time AS start_time, " +
                 "(SELECT url FROM downloads_url_chains c WHERE c.id=d.id ORDER BY chain_index DESC LIMIT 1) AS url " +
-                "FROM downloads d ORDER BY d.start_time DESC LIMIT 2000")).Value;
+                "FROM downloads d ORDER BY d.start_time DESC LIMIT 2000")).Result;
             if (dls is { Length: > 0 })
                 downloads.AddRange(dls.Select(r => new BrowserDownload
                 {
@@ -76,7 +76,7 @@ public partial class WindowsAnalysisWorkflow
         foreach (var db in (await DiskAnalysis.FindFilesAsync(root, ["places.sqlite"])).Select(f => f.Path))
         {
             var urls = (await WindowsAnalysis.SqliteQueryAsync(db,
-                "SELECT url,title,visit_count,last_visit_date FROM moz_places WHERE last_visit_date IS NOT NULL ORDER BY last_visit_date DESC LIMIT 5000")).Value;
+                "SELECT url,title,visit_count,last_visit_date FROM moz_places WHERE last_visit_date IS NOT NULL ORDER BY last_visit_date DESC LIMIT 5000")).Result;
             if (urls is not { Length: > 0 }) continue;
             sources.Add(db);
             history.AddRange(urls.Select(r => new BrowserHistoryEntry
@@ -91,7 +91,7 @@ public partial class WindowsAnalysisWorkflow
             : (await DiskAnalysis.FindFilesAsync(root, ["WebCacheV01.dat"])).Select(f => f.Path).ToArray();
         foreach (var wc in webCaches)
         {
-            var entries = (await WindowsAnalysis.WebCacheHistoryAsync(wc)).Value;
+            var entries = (await WindowsAnalysis.WebCacheHistoryAsync(wc)).Result;
             if (entries is not { Length: > 0 }) continue;
             sources.Add(wc);
             history.AddRange(entries
@@ -107,7 +107,7 @@ public partial class WindowsAnalysisWorkflow
         if (useHindsight)
         {
             var chromeProfile = $"{root}/AppData/Local/Google/Chrome/User Data";
-            var hs = (await WindowsAnalysis.HindsightAsync(chromeProfile)).Value;
+            var hs = (await WindowsAnalysis.HindsightAsync(chromeProfile)).Result;
             foreach (var r in hs ?? [])
                 if (Str(r, "url") is { Length: > 0 } url && r.ContainsKey("timestamp"))
                     history.Add(new BrowserHistoryEntry

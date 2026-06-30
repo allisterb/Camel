@@ -45,7 +45,7 @@ public partial class LinuxAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Triaging Linux host at {0}", rootDir);
 
-        var system = (await LinuxAnalysis.SystemInfoAsync(rootDir)).Value;
+        var system = (await LinuxAnalysis.SystemInfoAsync(rootDir)).Result;
         // Run the independent hunts concurrently — the environment fans these out fine (see the parallelism memo).
         var accountsT = AnalyzeUserAccountsAsync(rootDir);
         var loginsT = AnalyzeLoginActivityAsync(rootDir);

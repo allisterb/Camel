@@ -33,7 +33,7 @@ public partial class LinuxAnalysisWorkflow
         var items = new List<PersistenceItem>();
 
         // 1) cron (the toolkit already collects every cron location).
-        var cron = (await LinuxAnalysis.CronEntriesAsync(rootDir)).Value ?? [];
+        var cron = (await LinuxAnalysis.CronEntriesAsync(rootDir)).Result ?? [];
         foreach (var c in cron)
         {
             var (bonus, reasons) = ScoreContent(c.Command);

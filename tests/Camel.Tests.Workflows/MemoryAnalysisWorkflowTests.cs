@@ -28,7 +28,7 @@ public class MemoryAnalysisWorkflowTests : TestsRuntime
         Assert.True(r.Result.PsScanCount > 0);
 
         // Neither bucket may contain a PID that the pslist walk reports as active.
-        var pslist = (await api.MemoryAnalysis.WindowsPsListAsync(Image)).Value;
+        var pslist = (await api.MemoryAnalysis.WindowsPsListAsync(Image)).Result;
         Assert.NotNull(pslist);
         var listedPids = pslist!.Select(p => p.PID).ToHashSet();
         Assert.All(r.Result.HiddenProcesses, h => Assert.DoesNotContain(h.PID, listedPids));

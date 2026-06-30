@@ -21,14 +21,14 @@ public class MemoryAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunWindowsPsList()
     {
-        var r = (await toolkit.WindowsPsListAsync(Image)).Value;
+        var r = (await toolkit.WindowsPsListAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
     [Fact]
     public async Task CanRunWindowsPsScan()
     {
-        var r = (await toolkit.WindowsPsScanAsync(Image)).Value;
+        var r = (await toolkit.WindowsPsScanAsync(Image)).Result;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         // psscan returns EPROCESS structures with valid PIDs; SessionId/CreateTime can be null on some
@@ -39,7 +39,7 @@ public class MemoryAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunWindowsPsTree()
     {
-        var r = (await toolkit.WindowsPsTreeAsync(Image)).Value;
+        var r = (await toolkit.WindowsPsTreeAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
@@ -48,7 +48,7 @@ public class MemoryAnalysisTests : TestsRuntime
     {
         // Filtering to a PID narrows the forest to the single ancestry branch containing that PID (rooted at
         // the top-most ancestor, with the target nested among __children).
-        var r = (await toolkit.WindowsPsTreeAsync(Image, 988)).Value;
+        var r = (await toolkit.WindowsPsTreeAsync(Image, 988)).Result;
         Assert.NotNull(r);
         Assert.Single(r);
         Assert.Contains(Flatten(r), p => p.PID == 988);
@@ -61,35 +61,35 @@ public class MemoryAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunWindowsSvcScan()
     {
-        var r = (await toolkit.WindowsSvcScanAsync(Image)).Value;
+        var r = (await toolkit.WindowsSvcScanAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
     [Fact]
     public async Task CanRunWindowsCmdLine()
     {
-        var r = (await toolkit.WindowsCmdLineAsync(Image)).Value;
+        var r = (await toolkit.WindowsCmdLineAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
     [Fact]
     public async Task CanRunWindowsEnvVars()
     {
-        var r = (await toolkit.WindowsEnvVarsAsync(Image)).Value;
+        var r = (await toolkit.WindowsEnvVarsAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
     [Fact]
     public async Task CanRunWindowsGetSids()
     {
-        var r = (await toolkit.WindowsGetSidsAsync(Image)).Value;
+        var r = (await toolkit.WindowsGetSidsAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
     [Fact]
     public async Task CanRunWindowsPrivs()
     {
-        var r = (await toolkit.WindowsPrivsAsync(Image)).Value;
+        var r = (await toolkit.WindowsPrivsAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
@@ -98,7 +98,7 @@ public class MemoryAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunWindowsCmdLineForPid()
     {
-        var r = (await toolkit.WindowsCmdLineAsync(Image, 988)).Value;
+        var r = (await toolkit.WindowsCmdLineAsync(Image, 988)).Result;
         Assert.NotNull(r);
         Assert.All(r, e => Assert.Equal(988, e.PID));
     }
@@ -106,7 +106,7 @@ public class MemoryAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunWindowsEnvVarsForPid()
     {
-        var r = (await toolkit.WindowsEnvVarsAsync(Image, 988)).Value;
+        var r = (await toolkit.WindowsEnvVarsAsync(Image, 988)).Result;
         Assert.NotNull(r);
         Assert.All(r, e => Assert.Equal(988, e.PID));
     }
@@ -114,7 +114,7 @@ public class MemoryAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunWindowsGetSidsForPid()
     {
-        var r = (await toolkit.WindowsGetSidsAsync(Image, 988)).Value;
+        var r = (await toolkit.WindowsGetSidsAsync(Image, 988)).Result;
         Assert.NotNull(r);
         Assert.All(r, e => Assert.Equal(988, e.PID));
     }
@@ -122,7 +122,7 @@ public class MemoryAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunWindowsPrivsForPid()
     {
-        var r = (await toolkit.WindowsPrivsAsync(Image, 988)).Value;
+        var r = (await toolkit.WindowsPrivsAsync(Image, 988)).Result;
         Assert.NotNull(r);
         Assert.All(r, e => Assert.Equal(988, e.PID));
     }
@@ -130,14 +130,14 @@ public class MemoryAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunWindowsHandles()
     {
-        var r = (await toolkit.WindowsHandlesAsync(Image)).Value;
+        var r = (await toolkit.WindowsHandlesAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
     [Fact]
     public async Task CanRunWindowsHandlesFiltered()
     {
-        var r = (await toolkit.WindowsHandlesAsync(Image, 988, "Key")).Value;
+        var r = (await toolkit.WindowsHandlesAsync(Image, 988, "Key")).Result;
         Assert.NotNull(r);
         Assert.All(r, h => Assert.Equal(988, h.PID));
         Assert.All(r, h => Assert.Equal("Key", h.Type));
@@ -146,70 +146,70 @@ public class MemoryAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunWindowsMalFind()
     {
-        var r = (await toolkit.WindowsMalFindAsync(Image)).Value;
+        var r = (await toolkit.WindowsMalFindAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
     [Fact]
     public async Task CanRunWindowsDllList()
     {
-        var r = (await toolkit.WindowsDllListAsync(Image)).Value;
+        var r = (await toolkit.WindowsDllListAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
     [Fact]
     public async Task CanRunWindowsGetServiceSids()
     {
-        var r = (await toolkit.WindowsGetServiceSidsAsync(Image)).Value;
+        var r = (await toolkit.WindowsGetServiceSidsAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
     [Fact]
     public async Task CanRunWindowsModules()
     {
-        var r = (await toolkit.WindowsModulesAsync(Image)).Value;
+        var r = (await toolkit.WindowsModulesAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
     [Fact]
     public async Task CanRunWindowsModScan()
     {
-        var r = (await toolkit.WindowsModScanAsync(Image)).Value;
+        var r = (await toolkit.WindowsModScanAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
     [Fact]
     public async Task CanRunWindowsFileScan()
     {
-        var r = (await toolkit.WindowsFileScanAsync(Image)).Value;
+        var r = (await toolkit.WindowsFileScanAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
     [Fact]
     public async Task CanRunWindowsVadInfo()
     {
-        var r = (await toolkit.WindowsVadInfoAsync(Image, 988)).Value;
+        var r = (await toolkit.WindowsVadInfoAsync(Image, 988)).Result;
         Assert.NotNull(r);
     }
 
     [Fact]
     public async Task CanRunWindowsRegistryHiveList()
     {
-        var r = (await toolkit.WindowsRegistryHiveListAsync(Image)).Value;
+        var r = (await toolkit.WindowsRegistryHiveListAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
     [Fact]
     public async Task CanRunWindowsRegistryPrintKey()
     {
-        var r = (await toolkit.WindowsRegistryPrintKeyAsync(Image, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run")).Value;
+        var r = (await toolkit.WindowsRegistryPrintKeyAsync(Image, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run")).Result;
         Assert.NotNull(r);
     }
 
     [Fact]
     public async Task CanRunWindowsRegistryUserAssist()
     {
-        var r = (await toolkit.WindowsRegistryUserAssistAsync(Image)).Value;
+        var r = (await toolkit.WindowsRegistryUserAssistAsync(Image)).Result;
         Assert.NotNull(r);
     }
 
@@ -219,7 +219,7 @@ public class MemoryAnalysisTests : TestsRuntime
         const string dir = "/tmp/camel_dump_exe";
         sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, true); // clean slate
 
-        var files = (await toolkit.DumpProcessExecutableAsync(Image, 988, dir)).Value; // services.exe
+        var files = (await toolkit.DumpProcessExecutableAsync(Image, 988, dir)).Result; // services.exe
         Assert.NotNull(files);
         Assert.NotEmpty(files);
         Assert.All(files, f => Assert.StartsWith(dir, f));
@@ -235,7 +235,7 @@ public class MemoryAnalysisTests : TestsRuntime
         const string dir = "/tmp/camel_dump_mem";
         sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, true);
 
-        var files = (await toolkit.DumpProcessMemoryAsync(Image, 988, dir)).Value;
+        var files = (await toolkit.DumpProcessMemoryAsync(Image, 988, dir)).Result;
         Assert.NotNull(files);
         Assert.NotEmpty(files);
         // memmap writes a single pid.<PID>.dmp for the process.
@@ -252,7 +252,7 @@ public class MemoryAnalysisTests : TestsRuntime
         sshenv.ExecuteCommand("rm", $"-rf {dir}", out _, true);
 
         // Dump a process's memory, then extract ASCII and Unicode strings (min 8 chars) from it.
-        var dumps = (await toolkit.DumpProcessMemoryAsync(Image, 988, dir)).Value;
+        var dumps = (await toolkit.DumpProcessMemoryAsync(Image, 988, dir)).Result;
         Assert.NotNull(dumps);
         var dmp = Assert.Single(dumps);
 
@@ -273,7 +273,7 @@ public class MemoryAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunWindowsNetStat()
     {
-        var r = (await toolkit.WindowsNetStatAsync("/mnt/artifacts/Rocba-Memory.raw")).Value;
+        var r = (await toolkit.WindowsNetStatAsync("/mnt/artifacts/Rocba-Memory.raw")).Result;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.All(r, c => Assert.NotEmpty(c.Proto));
@@ -282,7 +282,7 @@ public class MemoryAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunWindowsNetScan()
     {
-        var r = (await toolkit.WindowsNetScanAsync("/mnt/artifacts/Rocba-Memory.raw")).Value;
+        var r = (await toolkit.WindowsNetScanAsync("/mnt/artifacts/Rocba-Memory.raw")).Result;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.All(r, c => Assert.NotEmpty(c.Proto));
@@ -291,7 +291,7 @@ public class MemoryAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunWindowsHashdump()
     {
-        var r = (await toolkit.WindowsHashdumpAsync(Image)).Value;
+        var r = (await toolkit.WindowsHashdumpAsync(Image)).Result;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, h => h.Rid == 500 && !string.IsNullOrEmpty(h.NtHash)); // built-in Administrator
@@ -300,7 +300,7 @@ public class MemoryAnalysisTests : TestsRuntime
     [Fact]
     public async Task CanRunWindowsLsadump()
     {
-        var r = (await toolkit.WindowsLsadumpAsync(Image)).Value;
+        var r = (await toolkit.WindowsLsadumpAsync(Image)).Result;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, s => !string.IsNullOrEmpty(s.Key));
@@ -310,7 +310,7 @@ public class MemoryAnalysisTests : TestsRuntime
     public async Task CanRunWindowsCachedump()
     {
         // This standalone image has no cached domain creds; verify the call path returns a (possibly empty) set.
-        var r = (await toolkit.WindowsCachedumpAsync(Image)).Value;
+        var r = (await toolkit.WindowsCachedumpAsync(Image)).Result;
         Assert.NotNull(r);
     }
 

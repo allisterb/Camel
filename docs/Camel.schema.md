@@ -29,19 +29,19 @@ types are defined once (in the toolkit that owns them) and referenced by name el
 
 ## ToolResult (returned by toolkit data methods that can fail)
 
-Some toolkit methods (currently `PacketAnalysisToolkit`'s data methods) return their payload wrapped in a
-`ToolResult<T>` instead of a bare value, so a failure carries a reason rather than an opaque `null`. Check `.Ok`
-first; read `.Value` on success or `.FailureReason` on failure. An empty `.Value` collection means "ran clean,
-found nothing" — not a failure.
+Every toolkit's data methods return their payload wrapped in a `ToolResult<T>` instead of a bare value, so a
+failure carries a reason rather than an opaque `null`. Its members mirror `WorkflowResult<T>`: check `.IsSuccess`
+first; read `.Result` on success or `.Message` on failure. An empty `.Result` collection means "ran clean, found
+nothing" — not a failure. (A handful of pure-action toolkit methods — mount / dump / extract — return a plain `bool`.)
 
 ### ToolResult Schema
 ```json
 {
   "type": "object",
   "properties": {
-    "Ok":            { "type": "boolean", "description": "True when the operation succeeded and Value is populated." },
-    "Value":         { "description": "The typed payload (type T) on success; null when Ok is false." },
-    "FailureReason": { "type": "string", "description": "On failure, why no value was produced (tool not installed vs. command failed); null on success." }
+    "IsSuccess": { "type": "boolean", "description": "True when the operation succeeded and Result is populated." },
+    "Result":    { "description": "The typed payload (type T) on success; null when IsSuccess is false." },
+    "Message":   { "type": "string", "description": "On failure, why no value was produced (tool not installed vs. command failed); null on success." }
   }
 }
 ```

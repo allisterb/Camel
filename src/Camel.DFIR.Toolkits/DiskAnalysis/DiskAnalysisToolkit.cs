@@ -397,7 +397,7 @@ public class DiskAnalysisToolkit : Toolkit
         if (ParentDir(outputDir) is { Length: > 0 } parent)
             await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {Q(parent)}", false);
         var res = await RunAsync("Foremost", $"-t {fileTypes} -i {Q(input)} -o {Q(outputDir)}", sudo);
-        if (!res.Ok) return ToolResult<CarvedFile[]>.Fail(res.FailureReason!);
+        if (!res.IsSuccess) return ToolResult<CarvedFile[]>.Fail(res.Message!);
         await ChownBackAsync(outputDir, sudo || Tools["Foremost"].Sudo);
         var audit = await auditEnvironment.ExecuteCommandAsync("cat", $"{Q(outputDir.TrimEnd('/'))}/audit.txt", false);
         if (!audit.IsCompleted) return ToolResult<CarvedFile[]>.Pass([]);
@@ -417,7 +417,7 @@ public class DiskAnalysisToolkit : Toolkit
             await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {Q(parent)}", false);
         var conf = confFile is not null ? $"-c {Q(confFile)} " : "";
         var res = await RunAsync("Scalpel", $"{conf}-o {Q(outputDir)} {Q(input)}", sudo);
-        if (!res.Ok) return ToolResult<CarvedFile[]>.Fail(res.FailureReason!);
+        if (!res.IsSuccess) return ToolResult<CarvedFile[]>.Fail(res.Message!);
         await ChownBackAsync(outputDir, sudo || Tools["Scalpel"].Sudo);
         return await ListCarvedAsync(outputDir);
     }
@@ -433,7 +433,7 @@ public class DiskAnalysisToolkit : Toolkit
         await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {Q(outputDir)}", false);
         // Non-interactive batch form: write the recovered tree under <outputDir>/recup, carve the whole input.
         var res = await RunAsync("PhotoRec", $"/log /d {Q(outputDir.TrimEnd('/') + "/recup")} /cmd {Q(input)} options,search", sudo);
-        if (!res.Ok) return ToolResult<string[]>.Fail(res.FailureReason!);
+        if (!res.IsSuccess) return ToolResult<string[]>.Fail(res.Message!);
         await ChownBackAsync(outputDir, sudo || Tools["PhotoRec"].Sudo);
         var r = await auditEnvironment.ExecuteCommandAsync("find", $"{Q(outputDir)} -type f ! -name 'report.xml' ! -name '*.log' -printf '%p\\n'", false);
         return r.IsCompleted ? r.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToArray() : System.Array.Empty<string>();
@@ -451,7 +451,7 @@ public class DiskAnalysisToolkit : Toolkit
         if (ParentDir(outputDir) is { Length: > 0 } parent)
             await auditEnvironment.ExecuteCommandAsync("mkdir", $"-p {Q(parent)}", false);
         var res = await RunAsync("BulkExtractor", $"-o {Q(outputDir)} {Q(input)}", sudo);
-        if (!res.Ok) return ToolResult<BulkFeatureFile[]>.Fail(res.FailureReason!);
+        if (!res.IsSuccess) return ToolResult<BulkFeatureFile[]>.Fail(res.Message!);
         await ChownBackAsync(outputDir, sudo || Tools["BulkExtractor"].Sudo);
         // For each non-empty feature file emit "path<TAB>count<TAB>top|values" — the top values come from the
         // category's *_histogram.txt (lines "n=<count>\t<value>", most-frequent first). One pass, one round trip.
@@ -503,7 +503,7 @@ public class DiskAnalysisToolkit : Toolkit
         // extundelete writes RECOVERED_FILES into the CWD, so run it inside outputDir.
         var arg = restoreAll ? "--restore-all" : "";
         var res = await RunAsync("Extundelete", $"{arg} {Q(image)}", sudo, workingDir: outputDir);
-        if (!res.Ok) return ToolResult<int>.Fail(res.FailureReason!);
+        if (!res.IsSuccess) return ToolResult<int>.Fail(res.Message!);
         await ChownBackAsync(outputDir, sudo || Tools["Extundelete"].Sudo);
         var r = await auditEnvironment.ExecuteCommandAsync("find", $"{Q(outputDir.TrimEnd('/') + "/RECOVERED_FILES")} -type f 2>/dev/null | wc -l", false);
         return r.IsCompleted && int.TryParse(r.Output.Trim(), out var n) ? n : 0;

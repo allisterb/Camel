@@ -24,7 +24,7 @@ public partial class LinuxAnalysisWorkflow
         using var _audit = AuditScope();
         using var op = Begin("Analyzing Linux shell history under {0}", rootDir);
 
-        var entries = (await LinuxAnalysis.ShellHistoryAsync(rootDir)).Value;
+        var entries = (await LinuxAnalysis.ShellHistoryAsync(rootDir)).Result;
         if (entries is null)
             return WorkflowResult<ShellHistoryReport>.Failure(
                 $"No readable shell history under '{rootDir}' (looked under home/ and root/).");

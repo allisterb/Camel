@@ -49,15 +49,15 @@ public partial class PacketAnalysisWorkflow : Workflow
         var httpT = PacketAnalysis.FieldsAsync(pcap, "http.request", ["http.host"]);
         await Task.WhenAll(infoT, phsT, convT, epT, dnsT, httpT);
 
-        var info = infoT.Result.Value; var phs = phsT.Result.Value;
+        var info = infoT.Result.Result; var phs = phsT.Result.Result;
         if (info is null && phs is null)
             return WorkflowResult<PcapTriageReport>.Failure(
                 $"Could not read capture '{pcap}'; the path may be wrong, the file not a capture, or the volume not mounted.");
 
-        var topConvs = (convT.Result.Value ?? []).OrderByDescending(c => c.TotalBytes).Take(top).ToArray();
-        var topEps = (epT.Result.Value ?? []).OrderByDescending(e => e.Bytes).Take(top).ToArray();
-        var topDns = TopNames(dnsT.Result.Value, top);
-        var topHttp = TopNames(httpT.Result.Value, top);
+        var topConvs = (convT.Result.Result ?? []).OrderByDescending(c => c.TotalBytes).Take(top).ToArray();
+        var topEps = (epT.Result.Result ?? []).OrderByDescending(e => e.Bytes).Take(top).ToArray();
+        var topDns = TopNames(dnsT.Result.Result, top);
+        var topHttp = TopNames(httpT.Result.Result, top);
 
         op.Complete();
         var report = new PcapTriageReport

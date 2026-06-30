@@ -60,7 +60,7 @@ public class TimelineTests : TestsRuntime
 
         Assert.True(await toolkit.Log2TimelineAsync(WindowsMount, plaso, parsers: "winreg", filterFile: filter));
 
-        var info = (await toolkit.PinfoAsync(plaso)).Value;
+        var info = (await toolkit.PinfoAsync(plaso)).Result;
         Assert.NotNull(info);
         Assert.True(info.TotalEvents > 0);
     }
@@ -74,7 +74,7 @@ public class TimelineTests : TestsRuntime
         // --hashers md5,sha256 hashes the processed source files; md5_hash then appears on events.
         Assert.True(await toolkit.Log2TimelineAsync(SystemHive, plaso, parsers: "winreg", hash: true));
 
-        var r = (await toolkit.PsortAsync(plaso)).Value;
+        var r = (await toolkit.PsortAsync(plaso)).Result;
         Assert.NotNull(r);
         Assert.Contains(r, e => !string.IsNullOrEmpty(e.Md5Hash));
     }
@@ -88,19 +88,19 @@ public class TimelineTests : TestsRuntime
 
         // Tagging persists labels into the storage file; a tag filter then returns events carrying them inline.
         Assert.True(await toolkit.PsortTagAsync(plaso, "/usr/share/plaso/tag_windows.txt"));
-        var tagged = (await toolkit.PsortAsync(plaso, "tag contains 'application_execution'")).Value;
+        var tagged = (await toolkit.PsortAsync(plaso, "tag contains 'application_execution'")).Result;
         Assert.NotNull(tagged);
         Assert.NotEmpty(tagged);
         Assert.All(tagged, e => Assert.Contains("application_execution", e.Labels));
 
         // A slice around one tagged event's time returns events within the window.
         var pivot = tagged[0].Time.ToString("yyyy-MM-ddTHH:mm:sszzz");
-        var slice = (await toolkit.PsortAsync(plaso, slice: pivot, sliceSize: 60)).Value;
+        var slice = (await toolkit.PsortAsync(plaso, slice: pivot, sliceSize: 60)).Result;
         Assert.NotNull(slice);
         Assert.NotEmpty(slice);
 
         // Grep-search the rendered timeline for a token present in the message text.
-        var found = (await toolkit.PsortSearchAsync(plaso, "appcompatcache")).Value;
+        var found = (await toolkit.PsortSearchAsync(plaso, "appcompatcache")).Result;
         Assert.NotNull(found);
         Assert.NotEmpty(found);
     }
@@ -108,7 +108,7 @@ public class TimelineTests : TestsRuntime
     [Fact]
     public async Task CanRunPinfo()
     {
-        var r = (await toolkit.PinfoAsync(Plaso)).Value;
+        var r = (await toolkit.PinfoAsync(Plaso)).Result;
         Assert.NotNull(r);
         Assert.True(r.TotalEvents > 0);
         Assert.NotEmpty(r.ParserCounts);
@@ -118,7 +118,7 @@ public class TimelineTests : TestsRuntime
     [Fact]
     public async Task CanRunPsort()
     {
-        var r = (await toolkit.PsortAsync(Plaso)).Value;
+        var r = (await toolkit.PsortAsync(Plaso)).Result;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => (e.Parser ?? "").StartsWith("winreg"));
@@ -128,7 +128,7 @@ public class TimelineTests : TestsRuntime
     public async Task CanRunPsortWithFilter()
     {
         // Narrow to just the AppCompatCache (shimcache) registry events; proves the filter is applied.
-        var r = (await toolkit.PsortAsync(Plaso, "data_type contains 'appcompatcache'")).Value;
+        var r = (await toolkit.PsortAsync(Plaso, "data_type contains 'appcompatcache'")).Result;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.All(r, e => Assert.Contains("appcompatcache", e.DataType ?? ""));
@@ -137,7 +137,7 @@ public class TimelineTests : TestsRuntime
     [Fact]
     public async Task CanRunPsteal()
     {
-        var r = (await toolkit.PstealAsync(SystemHive, parsers: "winreg")).Value;
+        var r = (await toolkit.PstealAsync(SystemHive, parsers: "winreg")).Result;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => (e.Parser ?? "").StartsWith("winreg"));
@@ -157,7 +157,7 @@ public class TimelineTests : TestsRuntime
     public async Task CanRunHayabusaJsonTimeline()
     {
         // System.evtx yields a small set of medium+ Sigma detections on this image (fast, bounded).
-        var r = (await toolkit.HayabusaJsonTimelineAsync($"{EvtxLogs}/System.evtx", minLevel: "medium")).Value;
+        var r = (await toolkit.HayabusaJsonTimelineAsync($"{EvtxLogs}/System.evtx", minLevel: "medium")).Result;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.All(r, a => Assert.False(string.IsNullOrEmpty(a.RuleTitle)));
@@ -167,7 +167,7 @@ public class TimelineTests : TestsRuntime
     [Fact]
     public async Task CanRunHayabusaComputerMetrics()
     {
-        var r = (await toolkit.HayabusaComputerMetricsAsync($"{EvtxLogs}/System.evtx")).Value;
+        var r = (await toolkit.HayabusaComputerMetricsAsync($"{EvtxLogs}/System.evtx")).Result;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, c => c.Computer == "SRL-FORGE" && c.Events > 0);
@@ -176,7 +176,7 @@ public class TimelineTests : TestsRuntime
     [Fact]
     public async Task CanRunHayabusaEidMetrics()
     {
-        var r = (await toolkit.HayabusaEidMetricsAsync($"{EvtxLogs}/System.evtx")).Value;
+        var r = (await toolkit.HayabusaEidMetricsAsync($"{EvtxLogs}/System.evtx")).Result;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => e.EventId > 0 && e.Total > 0);
@@ -185,7 +185,7 @@ public class TimelineTests : TestsRuntime
     [Fact]
     public async Task CanRunHayabusaLogMetrics()
     {
-        var r = (await toolkit.HayabusaLogMetricsAsync($"{EvtxLogs}/System.evtx")).Value;
+        var r = (await toolkit.HayabusaLogMetricsAsync($"{EvtxLogs}/System.evtx")).Result;
         Assert.NotNull(r);
         var m = Assert.Single(r);
         Assert.Equal("System.evtx", m.Filename);
@@ -195,7 +195,7 @@ public class TimelineTests : TestsRuntime
     [Fact]
     public async Task CanRunHayabusaLogonSummary()
     {
-        var r = (await toolkit.HayabusaLogonSummaryAsync($"{EvtxLogs}/Security.evtx")).Value;
+        var r = (await toolkit.HayabusaLogonSummaryAsync($"{EvtxLogs}/Security.evtx")).Result;
         Assert.NotNull(r);
         Assert.NotEmpty(r);
         Assert.Contains(r, e => !e.Successful && e.Count > 0); // brute-force failures present

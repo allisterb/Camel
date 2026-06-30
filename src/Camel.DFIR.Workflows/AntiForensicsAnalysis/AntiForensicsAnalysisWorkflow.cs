@@ -40,7 +40,7 @@ public class AntiForensicsAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Detecting timestomping in {0}", mftFile);
 
-        var entries = (await WindowsAnalysis.MFTECmdAsync(mftFile)).Value;
+        var entries = (await WindowsAnalysis.MFTECmdAsync(mftFile)).Result;
         if (entries is null)
             return WorkflowResult<TimestompReport>.Failure($"MFTECmd failed to parse the MFT '{mftFile}'.");
 
@@ -67,7 +67,7 @@ public class AntiForensicsAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Analyzing USN journal {0} for anomalous file activity (budget {1})", usnFile, budget);
 
-        var records = (await WindowsAnalysis.MFTECmdUsnAsync(usnFile)).Value;
+        var records = (await WindowsAnalysis.MFTECmdUsnAsync(usnFile)).Result;
         if (records is null)
             return WorkflowResult<UsnAnomalyReport>.Failure($"MFTECmd failed to parse the USN journal '{usnFile}'.");
 

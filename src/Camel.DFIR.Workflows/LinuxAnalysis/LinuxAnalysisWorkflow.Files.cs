@@ -25,7 +25,7 @@ public partial class LinuxAnalysisWorkflow
         using var _audit = AuditScope();
         using var op = Begin("Hunting anomalous files under {0}", rootDir);
 
-        var setuid = (await LinuxAnalysis.SetuidFilesAsync(rootDir)).Value;
+        var setuid = (await LinuxAnalysis.SetuidFilesAsync(rootDir)).Result;
         if (setuid is null)
             return WorkflowResult<FileAnomalyReport>.Failure(
                 $"Could not enumerate SUID files under '{rootDir}'; the path may be wrong or the volume not mounted.");
@@ -35,12 +35,12 @@ public partial class LinuxAnalysisWorkflow
             .Where(f => !SetuidBaseline.Contains(Basename(f.Path)))
             .OrderByDescending(f => f.Modified ?? DateTime.MinValue).ToArray();
 
-        var worldWritable = ((await LinuxAnalysis.WorldWritableFilesAsync(rootDir)).Value ?? [])
+        var worldWritable = ((await LinuxAnalysis.WorldWritableFilesAsync(rootDir)).Result ?? [])
             .Where(f => !IsExpectedWorldWritable(f.Path))
             .Take(200).ToArray();
 
         var tempDirs = new[] { "tmp", "var/tmp", "dev/shm" }.Select(d => Combine(rootDir, d));
-        var tempExec = ((await LinuxAnalysis.FilesInDirsAsync(tempDirs)).Value ?? [])
+        var tempExec = ((await LinuxAnalysis.FilesInDirsAsync(tempDirs)).Result ?? [])
             .Where(f => f.IsExecutable)
             .OrderByDescending(f => f.Modified ?? DateTime.MinValue).Take(200).ToArray();
 
@@ -86,8 +86,8 @@ public partial class LinuxAnalysisWorkflow
         var clamT = LinuxAnalysis.ClamScanAsync(target);
         var yaraT = Yara.ScanAsync(yaraRulesFile, target, new YaraOptions { Recurse = true, Timeout = 120, NoFollowSymlinks = true });
         await Task.WhenAll(clamT, yaraT);
-        var clam = clamT.Result.Value;
-        var yara = yaraT.Result.Value;
+        var clam = clamT.Result.Result;
+        var yara = yaraT.Result.Result;
 
         if (clam is null && yara is null)
             return WorkflowResult<LinuxMalwareReport>.Failure(

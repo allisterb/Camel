@@ -31,6 +31,34 @@ public record Tool
     }
 }
 
+/// <summary>
+/// The envelope every PenTest (red-team) toolkit method returns: either a successful <see cref="Result"/> or a
+/// <see cref="Message"/> explaining why the operation produced nothing — the tool was unavailable on the
+/// platform, the command failed, the target did not respond, etc. The toolkit counterpart of the workflow layer's
+/// <c>WorkflowResult&lt;T&gt;</c>. Always check <see cref="IsSuccess"/> before reading <see cref="Result"/>.
+/// </summary>
+public record ToolResult<T>
+{
+    /// <summary>True when the operation succeeded and <see cref="Result"/> is populated.</summary>
+    public bool IsSuccess { get; init; }
+
+    /// <summary>The payload on success; <c>default</c>/null when <see cref="IsSuccess"/> is false.</summary>
+    public T? Result { get; init; }
+
+    /// <summary>On failure, a human-readable reason the operation produced no value; null on success.</summary>
+    public string? Message { get; init; }
+
+    /// <summary>A successful result carrying <paramref name="value"/>.</summary>
+    public static ToolResult<T> Pass(T value) => new() { IsSuccess = true, Result = value };
+
+    /// <summary>A failed result carrying an explanatory <paramref name="reason"/> and no value.</summary>
+    public static ToolResult<T> Fail(string reason) => new() { IsSuccess = false, Message = reason };
+
+    /// <summary>Implicitly wraps a non-null value as a successful result, so a method can <c>return value;</c>
+    /// directly on the success path (failures use the explicit <see cref="Fail"/>).</summary>
+    public static implicit operator ToolResult<T>(T value) => Pass(value);
+}
+
 public abstract class Toolkit : Runtime
 {
     #region Constructors

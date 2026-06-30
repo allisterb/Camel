@@ -30,13 +30,13 @@ public class MemoryAnalysisWorkflow : Workflow
         using var op = Begin("Finding hidden processes in {0}", imageFile);
 
         // Active-process linked-list walk: fast, but misses unlinked (hidden) and exited processes.
-        var psList = (await MemoryAnalysis.WindowsPsListAsync(imageFile)).Value;
+        var psList = (await MemoryAnalysis.WindowsPsListAsync(imageFile)).Result;
         if (psList is null)
             return WorkflowResult<HiddenProcessReport>.Failure(
                 $"windows.pslist failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
 
         // Pool-tag scan: finds EPROCESS structures the list walk can't, including hidden/exited processes.
-        var psScan = (await MemoryAnalysis.WindowsPsScanAsync(imageFile)).Value;
+        var psScan = (await MemoryAnalysis.WindowsPsScanAsync(imageFile)).Result;
         if (psScan is null)
             return WorkflowResult<HiddenProcessReport>.Failure(
                 $"windows.psscan failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
@@ -79,7 +79,7 @@ public class MemoryAnalysisWorkflow : Workflow
         using var op = Begin("Finding services with suspicious binary paths in {0}", imageFile);
 
         // Pool-tag service scan: surfaces every service, including hidden/deleted/not-yet-loaded ones.
-        var services = (await MemoryAnalysis.WindowsSvcScanAsync(imageFile)).Value;
+        var services = (await MemoryAnalysis.WindowsSvcScanAsync(imageFile)).Result;
         if (services is null)
             return WorkflowResult<SuspiciousServiceReport>.Failure(
                 $"windows.svcscan failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
@@ -123,7 +123,7 @@ public class MemoryAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Finding process-hollowing indicators in {0}", imageFile);
 
-        var hits = (await MemoryAnalysis.WindowsMalFindAsync(imageFile)).Value;
+        var hits = (await MemoryAnalysis.WindowsMalFindAsync(imageFile)).Result;
         if (hits is null)
             return WorkflowResult<AnomalousMemoryReport>.Failure(
                 $"windows.malfind failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
@@ -179,7 +179,7 @@ public class MemoryAnalysisWorkflow : Workflow
         using var op = Begin("Finding unique remote IPs in {0}", imageFile);
 
         // Pool-tag scan of network structures: includes closed/historical connections, not just active ones.
-        var connections = (await MemoryAnalysis.WindowsNetScanAsync(imageFile)).Value;
+        var connections = (await MemoryAnalysis.WindowsNetScanAsync(imageFile)).Result;
         if (connections is null)
             return WorkflowResult<RemoteIpReport>.Failure(
                 $"windows.netscan failed for '{imageFile}'; the image may be unreadable, its symbols unavailable, or the OS version unsupported.");
@@ -213,13 +213,13 @@ public class MemoryAnalysisWorkflow : Workflow
         using var op = Begin("Extracting credential material from {0}", imageFile);
 
         // SAM local-account hashes; if this fails the image is unreadable / its symbols are unavailable.
-        var hashes = (await MemoryAnalysis.WindowsHashdumpAsync(imageFile)).Value;
+        var hashes = (await MemoryAnalysis.WindowsHashdumpAsync(imageFile)).Result;
         if (hashes is null)
             return WorkflowResult<CredentialReport>.Failure(
                 $"windows.hashdump failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
 
-        var lsa = (await MemoryAnalysis.WindowsLsadumpAsync(imageFile)).Value ?? [];
-        var cached = (await MemoryAnalysis.WindowsCachedumpAsync(imageFile)).Value ?? [];
+        var lsa = (await MemoryAnalysis.WindowsLsadumpAsync(imageFile)).Result ?? [];
+        var cached = (await MemoryAnalysis.WindowsCachedumpAsync(imageFile)).Result ?? [];
 
         // Decode each LSA secret's bytes; plaintext secrets (e.g. UTF-16 passwords) surface, key material doesn't.
         var secrets = lsa.Select(s => new LsaSecret { Key = s.Key, Hex = s.Hex ?? s.Secret, DecodedText = DecodeSecret(s.Hex ?? s.Secret) }).ToArray();
@@ -269,7 +269,7 @@ public class MemoryAnalysisWorkflow : Workflow
         int slash = timelineOutputPath.LastIndexOf('/');
         string outputDir = slash switch { > 0 => timelineOutputPath[..slash], 0 => "/", _ => "." };
 
-        var bodyfile = (await MemoryAnalysis.TimelinerBodyfileAsync(imageFile, outputDir)).Value;
+        var bodyfile = (await MemoryAnalysis.TimelinerBodyfileAsync(imageFile, outputDir)).Result;
         if (bodyfile is null)
             return WorkflowResult<MemoryTimeline>.Failure(
                 $"timeliner failed to create a bodyfile for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
@@ -290,7 +290,7 @@ public class MemoryAnalysisWorkflow : Workflow
     {
         var paths = new List<string>();
         foreach (var pid in pids)
-            if ((await dump(imageFile, pid, dir)).Value is { } files)
+            if ((await dump(imageFile, pid, dir)).Result is { } files)
                 paths.AddRange(files);
         return paths.ToArray();
     }
@@ -348,12 +348,12 @@ public class MemoryAnalysisWorkflow : Workflow
         var malfindTask = FindAnomalousMemoryIndicatorsAsync(imageFile);
         await Task.WhenAll(ldrTask, hollowTask, malfindTask);
 
-        var ldr = ldrTask.Result.Value;
+        var ldr = ldrTask.Result.Result;
         if (ldr is null)
             return WorkflowResult<CodeInjectionReport>.Failure(
                 $"windows.ldrmodules failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
         var unlinked = ldr.Where(IsLdrUnlinked).ToArray();
-        var hollow = hollowTask.Result.Value ?? [];
+        var hollow = hollowTask.Result.Result ?? [];
         var malfind = malfindTask.Result;
         if (!malfind.IsSuccess)
             return WorkflowResult<CodeInjectionReport>.Failure(malfind.Message ?? "windows.malfind failed.");
@@ -399,12 +399,12 @@ public class MemoryAnalysisWorkflow : Workflow
         var driverIrpTask = MemoryAnalysis.WindowsDriverIrpAsync(imageFile);
         await Task.WhenAll(ssdtTask, callbacksTask, driverIrpTask);
 
-        var ssdt = ssdtTask.Result.Value;
+        var ssdt = ssdtTask.Result.Result;
         if (ssdt is null)
             return WorkflowResult<KernelRootkitReport>.Failure(
                 $"windows.ssdt failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
-        var callbacks = callbacksTask.Result.Value ?? [];
-        var driverIrp = driverIrpTask.Result.Value ?? [];
+        var callbacks = callbacksTask.Result.Result ?? [];
+        var driverIrp = driverIrpTask.Result.Result ?? [];
 
         var ssdtHooks = ssdt.Where(e => !IsCanonicalKernelModule(e.Module)).Select(e => new KernelHook
         {
@@ -471,7 +471,7 @@ public class MemoryAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Cross-view hidden-process scan in {0}", imageFile);
 
-        var rows = (await MemoryAnalysis.WindowsPsxViewAsync(imageFile)).Value;
+        var rows = (await MemoryAnalysis.WindowsPsxViewAsync(imageFile)).Result;
         if (rows is null)
             return WorkflowResult<CrossViewHiddenProcessReport>.Failure(
                 $"windows.psxview failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
@@ -511,11 +511,11 @@ public class MemoryAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Reconstructing console history from {0}", imageFile);
 
-        var cmd = (await MemoryAnalysis.WindowsCmdScanAsync(imageFile)).Value;
+        var cmd = (await MemoryAnalysis.WindowsCmdScanAsync(imageFile)).Result;
         if (cmd is null)
             return WorkflowResult<ConsoleHistoryReport>.Failure(
                 $"windows.cmdscan failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
-        var consoles = (await MemoryAnalysis.WindowsConsolesAsync(imageFile)).Value ?? [];
+        var consoles = (await MemoryAnalysis.WindowsConsolesAsync(imageFile)).Result ?? [];
 
         // Aggregate per (PID, process). cmdscan provides typed lines via Cmd; consoles provides screen-buffer Data.
         var byPid = cmd.Select(c => (c.PID, c.Process, App: c.Application, Cmd: c.Cmd, Data: (string?)null))
@@ -569,7 +569,7 @@ public class MemoryAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("YARA-scanning {0} with rules {1}", imageFile, yaraRulesFile);
 
-        var matches = (await MemoryAnalysis.WindowsVadYaraScanAsync(imageFile, yaraRulesFile, pid, wide)).Value;
+        var matches = (await MemoryAnalysis.WindowsVadYaraScanAsync(imageFile, yaraRulesFile, pid, wide)).Result;
         if (matches is null)
             return WorkflowResult<MemoryYaraReport>.Failure(
                 $"windows.vadyarascan failed for '{imageFile}' with rules '{yaraRulesFile}'; check the rules file and image.");
@@ -595,7 +595,7 @@ public class MemoryAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Checking {0} for Skeleton Key", imageFile);
 
-        var findings = (await MemoryAnalysis.WindowsSkeletonKeyCheckAsync(imageFile)).Value;
+        var findings = (await MemoryAnalysis.WindowsSkeletonKeyCheckAsync(imageFile)).Result;
         if (findings is null)
             return WorkflowResult<SkeletonKeyReport>.Failure(
                 $"windows.skeleton_key_check failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");
@@ -698,8 +698,8 @@ public class MemoryAnalysisWorkflow : Workflow
         var rootkitNote = rootkit.IsSuccess ? "" : " (rootkit scan skipped: kernel plugins unavailable — e.g. memory smear)";
 
         // Step 2 enrichment data — pulled image-wide (cheaper than per-PID), indexed by PID below.
-        var cmdlines = cmdlinesTask.Result.Value ?? [];
-        var sids = sidsTask.Result.Value ?? [];
+        var cmdlines = cmdlinesTask.Result.Result ?? [];
+        var sids = sidsTask.Result.Result ?? [];
 
         var inj = injection.Result!;
 
@@ -792,7 +792,7 @@ public class MemoryAnalysisWorkflow : Workflow
             var dumpedByPid = new Dictionary<int, string[]>();
             foreach (var s in targets)
             {
-                var files = (await MemoryAnalysis.DumpProcessExecutableAsync(imageFile, s.Pid, dumpDir)).Value ?? [];
+                var files = (await MemoryAnalysis.DumpProcessExecutableAsync(imageFile, s.Pid, dumpDir)).Result ?? [];
                 dumpedByPid[s.Pid] = files;
                 dumpedAll.AddRange(files);
             }
@@ -806,7 +806,7 @@ public class MemoryAnalysisWorkflow : Workflow
         var dumpYaraMatches = Array.Empty<YaraMatch>();
         if (dumpDir is not null && dumpedAll.Count > 0)
         {
-            dumpYaraMatches = (await Yara.ScanAsync(dumpYaraRules, dumpDir, new YaraOptions { Recurse = true, Timeout = 120 })).Value ?? [];
+            dumpYaraMatches = (await Yara.ScanAsync(dumpYaraRules, dumpDir, new YaraOptions { Recurse = true, Timeout = 120 })).Result ?? [];
             if (dumpYaraMatches.Length > 0)
             {
                 suspects = suspects.Select(s =>
@@ -887,7 +887,7 @@ public class MemoryAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Triaging process ancestry/integrity in {0}", imageFile);
 
-        var tree = (await MemoryAnalysis.WindowsPsTreeAsync(imageFile)).Value;
+        var tree = (await MemoryAnalysis.WindowsPsTreeAsync(imageFile)).Result;
         if (tree is null)
             return WorkflowResult<ProcessTriageReport>.Failure(
                 $"windows.pstree failed for '{imageFile}'; the image may be unreadable or its symbols unavailable.");

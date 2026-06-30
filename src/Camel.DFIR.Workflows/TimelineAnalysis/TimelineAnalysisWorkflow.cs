@@ -120,11 +120,11 @@ public class TimelineAnalysisWorkflow : Workflow
         using var op = Begin("Slicing timeline around {0} (±{1} min) in {2}", pivot, sliceSizeMinutes, storageFile);
 
         var iso = Iso(pivot);
-        var events = (await Timeline.PsortAsync(storageFile, slice: iso, sliceSize: sliceSizeMinutes)).Value;
+        var events = (await Timeline.PsortAsync(storageFile, slice: iso, sliceSize: sliceSizeMinutes)).Result;
         if (events is null)
             return WorkflowResult<SuperTimeline>.Failure($"psort failed to slice '{storageFile}' around {iso}.");
 
-        var info = (await Timeline.PinfoAsync(storageFile)).Value;
+        var info = (await Timeline.PinfoAsync(storageFile)).Result;
         op.Complete();
         var result = new SuperTimeline
         {
@@ -164,7 +164,7 @@ public class TimelineAnalysisWorkflow : Workflow
 
         // One pass: pull every event carrying any of the categories — each comes back with its labels inline.
         var filter = string.Join(" OR ", categories.Select(c => $"tag contains '{c}'"));
-        var events = (await Timeline.PsortAsync(storageFile, filter)).Value;
+        var events = (await Timeline.PsortAsync(storageFile, filter)).Result;
         if (events is null)
             return WorkflowResult<CategorizedTimeline>.Failure($"psort failed to export tagged events from '{storageFile}'.");
 
@@ -209,7 +209,7 @@ public class TimelineAnalysisWorkflow : Workflow
         using var _audit = AuditScope();
         using var op = Begin("Detecting timeline pivots in {0} from hayabusa alerts on {1}", storageFile, evtxPath);
 
-        var alerts = (await Timeline.HayabusaJsonTimelineAsync(evtxPath, evtxDirectory, minLevel)).Value;
+        var alerts = (await Timeline.HayabusaJsonTimelineAsync(evtxPath, evtxDirectory, minLevel)).Result;
         if (alerts is null)
             return WorkflowResult<TimelinePivotReport>.Failure(
                 $"hayabusa failed to scan '{evtxPath}'; check the path and that it points to Windows event log(s).");
@@ -227,7 +227,7 @@ public class TimelineAnalysisWorkflow : Workflow
         // Slice the super timeline around each pivot in parallel (independent psort calls).
         var pivots = await Task.WhenAll(distinct.Select(async x =>
         {
-            var surrounding = (await Timeline.PsortAsync(storageFile, slice: Iso(x.Time!.Value), sliceSize: sliceSizeMinutes)).Value ?? [];
+            var surrounding = (await Timeline.PsortAsync(storageFile, slice: Iso(x.Time!.Value), sliceSize: sliceSizeMinutes)).Result ?? [];
             return new TimelinePivot { Alert = x.Alert, PivotTime = x.Time!.Value, Surrounding = surrounding };
         }));
 
@@ -271,7 +271,7 @@ public class TimelineAnalysisWorkflow : Workflow
 
         // Reduced export: only the canonical-relevant fields (with truncated messages) cross the wire, so this
         // scales to large super timelines that would overrun PsortAsync's whole-file transfer.
-        var events = (await Timeline.PsortReducedAsync(storageFile, filter)).Value;
+        var events = (await Timeline.PsortReducedAsync(storageFile, filter)).Result;
         if (events is null)
             return WorkflowResult<TimelineTriageReport>.Failure($"psort export/reduction failed for '{storageFile}'.");
 
@@ -334,7 +334,7 @@ public class TimelineAnalysisWorkflow : Workflow
         // Slice the timeline around each pivot in parallel (psort --slice is near-instant; the env throttles concurrency).
         var expanded = await Task.WhenAll(top.Select(async p =>
         {
-            var slice = (await Timeline.PsortAsync(storageFile, slice: Iso(p.Time), sliceSize: sliceSizeMinutes)).Value ?? [];
+            var slice = (await Timeline.PsortAsync(storageFile, slice: Iso(p.Time), sliceSize: sliceSizeMinutes)).Result ?? [];
             return new ExpandedPivot { Pivot = p, Surrounding = slice };
         }));
 
@@ -399,7 +399,7 @@ public class TimelineAnalysisWorkflow : Workflow
 
         var pattern = string.Join("|", keywords.Where(k => !string.IsNullOrEmpty(k)).Select(EscapeEre));
         var filter = BuildDateFilter(from, to);
-        var matches = (await Timeline.PsortSearchAsync(storageFile, pattern, filter)).Value;
+        var matches = (await Timeline.PsortSearchAsync(storageFile, pattern, filter)).Result;
         if (matches is null)
             return WorkflowResult<TimelineSearchReport>.Failure($"psort keyword search failed for '{storageFile}'.");
 
@@ -475,14 +475,14 @@ public class TimelineAnalysisWorkflow : Workflow
     private async Task<WorkflowResult<SuperTimeline>> FinalizeAsync(
         Operation op, string storageFile, string? from, string? to)
     {
-        var info = (await Timeline.PinfoAsync(storageFile)).Value;
+        var info = (await Timeline.PinfoAsync(storageFile)).Result;
         if (info is null || info.TotalEvents == 0)
             return WorkflowResult<SuperTimeline>.Failure(
                 $"The timeline '{storageFile}' contains no events — the source had no parsable artifacts in scope " +
                 "(check the parser/filter selection and that the source is the expected data).");
 
         var filter = BuildDateFilter(from, to);
-        var events = (await Timeline.PsortAsync(storageFile, filter)).Value;
+        var events = (await Timeline.PsortAsync(storageFile, filter)).Result;
         if (events is null)
             return WorkflowResult<SuperTimeline>.Failure($"psort failed to export events from '{storageFile}'.");
 
