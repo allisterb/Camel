@@ -412,7 +412,13 @@ public abstract class Toolkit : Runtime
     /// or null if the command failed. Used by tools (e.g. The Sleuth Kit / EWF) that do
     /// not support structured JSON output.
     /// </summary>
-    public async Task<string?> ExecuteToolTextAsync(string name, string args)
+    /// <param name="timeoutSeconds">Optional wall-clock bound (seconds). When set on a Unix environment the command
+    /// runs under coreutils <c>timeout -k 5 &lt;n&gt;</c>, so a tool that wedges on a network stall (e.g.
+    /// enum4linux's polenum sub-process against a flaky SMB host) is killed — with its whole process group —
+    /// server-side after the bound instead of hanging the awaiting caller (and any workflow orchestrating it)
+    /// forever. Ignored on non-Unix environments and when null/0. On a timeout the tool returns whatever partial
+    /// output it produced, which the parsers tolerate.</param>
+    public async Task<string?> ExecuteToolTextAsync(string name, string args, int? timeoutSeconds = null)
     {
         OnBeforeExecute(name);
         if (!Tools[name].Available) { ReportToolUnavailable(name); return null; }
@@ -420,14 +426,21 @@ public abstract class Toolkit : Runtime
         // awaited execution so the properties flow onto the command-execution event emitted in the environment.
         using var _tk = PushAuditProperty("Toolkit", this.name);
         using var _op = PushAuditProperty("Operation", name);
-        var r = await auditEnvironment.ExecuteCommandAsync(Tools[name].Command, args, Tools[name].Sudo);
+        // Bound a wedge-prone tool with coreutils `timeout` so a stalled sub-process can't hang the await forever;
+        // `-k 5` follows the SIGTERM with a SIGKILL after 5s if the tool ignores it. Unix-only (no `timeout` shim on
+        // Windows). `timeout` runs the tool in its own process group and signals the whole group, so descendants
+        // (e.g. enum4linux -> polenum) die too.
+        var (cmd, cmdArgs) = timeoutSeconds is int secs && secs > 0 && auditEnvironment.IsUnix
+            ? ("timeout", $"-k 5 {secs} {Tools[name].Command} {args}")
+            : (Tools[name].Command, args);
+        var r = await auditEnvironment.ExecuteCommandAsync(cmd, cmdArgs, Tools[name].Sudo);
         if (r.IsCompleted)
         {
             return r.Output;
         }
         else
         {
-            Error($"Failed to execute tool command ${Tools[name].Command} {args}: {r.Output}.");
+            Error($"Failed to execute tool command ${cmd} {cmdArgs}: {r.Output}.");
             return null;
         }
     }
