@@ -19,8 +19,12 @@ public enum KbTransport { Http, Cli, File }
 /// <param name="Name">Logical id used by the facade and in the audit trail (e.g. "nvd", "shodan").</param>
 /// <param name="BaseUrl">API base URL the facade builds request paths under.</param>
 /// <param name="Auth">How the key is presented (none / a header / a query param).</param>
-/// <param name="AuthName">Header name (e.g. "apiKey") or query-param name (e.g. "key") when Auth != None.</param>
+/// <param name="AuthName">Header name (e.g. "apiKey", "Authorization") or query-param name (e.g. "key") when Auth != None.</param>
 /// <param name="KeyRef">Name of the secret to resolve (e.g. "SHODAN_API_KEY"). Empty when the KB needs no key.</param>
+/// <param name="AuthScheme">Optional scheme prefix for a header credential, so the header value becomes
+/// "<c>{AuthScheme} {key}</c>" (e.g. <c>Bearer</c> for the many paid intel APIs that use
+/// <c>Authorization: Bearer &lt;token&gt;</c>). Empty (default) injects the raw key, as NVD's <c>apiKey</c> header
+/// does. Only applies to <see cref="KbAuth.Header"/>.</param>
 /// <param name="RateLimitPerMinute">Client-side throttle; 0 = unlimited.</param>
 /// <param name="CacheTtlMinutes">Response cache lifetime; 0 = no cache.</param>
 /// <param name="DisclosesTarget">True for target-keyed KBs (Shodan/Censys): queries send a client asset to a third
@@ -37,6 +41,7 @@ public record KnowledgeBase(
     KbAuth Auth = KbAuth.None,
     string AuthName = "",
     string KeyRef = "",
+    string AuthScheme = "",
     int RateLimitPerMinute = 0,
     int CacheTtlMinutes = 0,
     bool DisclosesTarget = false,

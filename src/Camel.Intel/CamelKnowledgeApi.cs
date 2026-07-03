@@ -33,6 +33,7 @@ public class CamelKnowledgeApi : Runtime
     private ExploitDbKnowledgeBase? _exploitDb;
     private OsvKnowledgeBase? _osv;
     private ShodanKnowledgeBase? _shodan;
+    private VulnCheckKnowledgeBase? _vulnCheck;
     #endregion
 
     #region Properties
@@ -58,5 +59,10 @@ public class CamelKnowledgeApi : Runtime
     /// <summary>Shodan host intelligence (target-keyed — gated by engagement scope + external-disclosure).
     /// Lazily constructed.</summary>
     public ShodanKnowledgeBase Shodan => _shodan ??= new ShodanKnowledgeBase(client, env);
+
+    /// <summary>VulnCheck exploited-vulnerability intelligence — a paid, keyed, CVE-keyed <em>knowledge</em> source
+    /// (ungated), the worked example of integrating a commercial feed. Available only when the analyst's
+    /// <c>VULNCHECK_API_KEY</c> secret resolves; unavailable (and skipped by callers) otherwise. Lazily constructed.</summary>
+    public VulnCheckKnowledgeBase VulnCheck => _vulnCheck ??= new VulnCheckKnowledgeBase(client);
     #endregion
 }

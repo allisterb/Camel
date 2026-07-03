@@ -275,10 +275,15 @@ public class KnowledgeBaseClient : Runtime
     #endregion
 
     #region Transports
+    // The value for a header credential: "{AuthScheme} {key}" when a scheme is set (e.g. "Bearer <token>"), else the
+    // raw key. Lets a paid API that uses Authorization: Bearer be configured without baking the scheme into the secret.
+    private static string HeaderCredential(KnowledgeBase kb, string key) =>
+        string.IsNullOrWhiteSpace(kb.AuthScheme) ? key : $"{kb.AuthScheme} {key}";
+
     private async Task<FetchResult> HttpFetch(KnowledgeBase kb, string path, IReadOnlyDictionary<string, string> query, string? key)
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, BuildUrl(kb, path, query, key));
-        if (kb.Auth == KbAuth.Header && key is not null) req.Headers.TryAddWithoutValidation(kb.AuthName, key);
+        if (kb.Auth == KbAuth.Header && key is not null) req.Headers.TryAddWithoutValidation(kb.AuthName, HeaderCredential(kb, key));
         var resp = await http.SendAsync(req);
         var body = await resp.Content.ReadAsStringAsync();
         return new FetchResult(body, resp.IsSuccessStatusCode, ((int)resp.StatusCode).ToString());
@@ -291,7 +296,7 @@ public class KnowledgeBaseClient : Runtime
         {
             Content = new StringContent(jsonBody, Encoding.UTF8, "application/json"),
         };
-        if (kb.Auth == KbAuth.Header && key is not null) req.Headers.TryAddWithoutValidation(kb.AuthName, key);
+        if (kb.Auth == KbAuth.Header && key is not null) req.Headers.TryAddWithoutValidation(kb.AuthName, HeaderCredential(kb, key));
         var resp = await http.SendAsync(req);
         var body = await resp.Content.ReadAsStringAsync();
         return new FetchResult(body, resp.IsSuccessStatusCode, ((int)resp.StatusCode).ToString());
@@ -392,7 +397,7 @@ public class KnowledgeBaseClient : Runtime
             dict[kb.Key] = new KnowledgeBase(
                 kb.Key, baseUrl,
                 Enum.TryParse<KbAuth>(kb["Auth"], true, out var a) ? a : KbAuth.None,
-                kb["AuthName"] ?? "", kb["KeyRef"] ?? "",
+                kb["AuthName"] ?? "", kb["KeyRef"] ?? "", kb["AuthScheme"] ?? "",
                 int.TryParse(kb["RateLimitPerMinute"], out var r) ? r : 0,
                 int.TryParse(kb["CacheTtlMinutes"], out var c) ? c : 0,
                 bool.TryParse(kb["DisclosesTarget"], out var d) && d,

@@ -164,6 +164,7 @@ configured KB without a facade yet.
 | Metasploit | `Msf.ModulesForAsync(serviceOrCve)` | `MsfModule[]` | knowledge |
 | Shodan | `Shodan.HostAsync(ip)` | `ShodanHost` | **target-keyed** |
 | Censys | `Censys.HostAsync(ip)` | `CensysHost` | **target-keyed** |
+| VulnCheck (paid) | `VulnCheck.CveAsync(cveId)` | `VulnCheckCve` | knowledge |
 
 A **target-keyed** facade does two extra things before the core call, using the session's `AuditEnvironment` (the
 same object that holds the engagement, see [RedTeamEngagementGate.md](RedTeamEngagementGate.md)):
@@ -185,6 +186,25 @@ This needs one new field on the engagement and one guard:
   engagement is registered or the flag is false — mirroring `FailIfOutOfScope`.
 
 Knowledge facades skip both gates (no target, no disclosure) — they just run and audit.
+
+#### Paid / keyed sources
+
+A commercial feed the analyst subscribes to is integrated exactly like the open-source KBs — the class (knowledge
+vs. target-keyed) is decided by *what the query carries*, not by whether it costs money:
+
+- **The key is a reference, never a literal.** The config names a `KeyRef` (e.g. `VULNCHECK_API_KEY`) resolved at
+  call time by the `ISecretsProvider`; it is injected into the request and added to the redaction set, so it never
+  reaches config, the audited `Query`, the `KbResult`, or a report.
+- **Bearer and other schemes.** `KnowledgeBase.AuthScheme` prefixes a header credential, so the many paid APIs that
+  use `Authorization: Bearer <token>` are a config line (`Auth=Header, AuthName=Authorization, AuthScheme=Bearer`),
+  not a code change. Empty scheme = the raw key (NVD's `apiKey` header).
+- **Graceful absence.** `KeyRequired=true` makes the source *unavailable* when the analyst has no key
+  (`KnowledgeBaseClient.IsAvailable(source)` is false); callers (e.g. `VulnAnalysisWorkflow`) skip it and fall back
+  to the open-source KBs, recording the skip — no error.
+- **Same authorization posture.** A CVE-keyed paid source (VulnCheck — the worked example, feeding the
+  `AttackPlan` score) discloses no client asset, so it is ungated knowledge; a *target-keyed* paid source (Censys,
+  GreyNoise-by-IP) sends a client asset out and is gated on scope + external-disclosure exactly like Shodan. Paid
+  status changes nothing about the gate.
 
 ### 5. Provenance & audit — the centerpiece
 
