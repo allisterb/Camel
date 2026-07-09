@@ -84,6 +84,41 @@ public class SshEnvironmentTests : TestsRuntime
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2.5), $"expected concurrent execution but took {sw.Elapsed}.");
     }
 
+    // Live provisioning test for EnsurePasswordlessSudoAsync. Opt-in via CAMEL_SUDO_PROVISION_TEST=1 because it
+    // makes a PERSISTENT change to the SSH host's sudoers (writes /etc/sudoers.d/<user>-camel), unlike the other
+    // read-only tests here. Run it only against a lab box you own (e.g. the Kali platform). It exercises all three
+    // paths - fresh configure, already-configured no-op, and re-configure after removal - and leaves the host with
+    // passwordless sudo working (the standard state for a Camel offensive/forensic workstation).
+    [SkippableFact]
+    public async Task EnsurePasswordlessSudoConfiguresAndIsIdempotent()
+    {
+        Skip.IfNot(Environment.GetEnvironmentVariable("CAMEL_SUDO_PROVISION_TEST") == "1",
+            "Set CAMEL_SUDO_PROVISION_TEST=1 to run the live passwordless-sudo provisioning test (it modifies the SSH host's sudoers).");
+        var env = NewEnv();
+
+        // (1) Provision: succeeds whether or not passwordless sudo was already configured, and `sudo -n true` then
+        //     completes without a password.
+        var provisioned = await env.EnsurePasswordlessSudoAsync();
+        Assert.True(provisioned.Success, provisioned.Message);
+        Assert.Equal(ProcessExecuteStatus.Completed, (await env.ExecuteAsync("sudo", "-n true")).Status);
+
+        // (2) Idempotent: a second call still succeeds but reports no change.
+        var repeat = await env.EnsurePasswordlessSudoAsync();
+        Assert.True(repeat.Success, repeat.Message);
+        Assert.False(repeat.Changed);
+
+        // (3) Fresh-configure path: remove the drop-in (passwordless sudo works now, so `sudo rm` needs no password),
+        //     then re-provision. When removal actually disabled passwordless sudo (no other NOPASSWD source), the
+        //     re-provision must report Changed; either way it must succeed and leave sudo passwordless again.
+        var dropin = $"/etc/sudoers.d/{env.User}-camel";
+        await env.ExecuteCommandAsync("rm", $"-f {dropin}", admin: true);
+        var disabled = (await env.ExecuteAsync("sudo", "-n true")).Status != ProcessExecuteStatus.Completed;
+        var reconfigured = await env.EnsurePasswordlessSudoAsync();
+        Assert.True(reconfigured.Success, reconfigured.Message);
+        if (disabled) Assert.True(reconfigured.Changed, "expected a fresh drop-in to be written after removal");
+        Assert.Equal(ProcessExecuteStatus.Completed, (await env.ExecuteAsync("sudo", "-n true")).Status);
+    }
+
     [Fact]
     public async Task DisconnectIdleReleasesConnectionAndNextCommandReconnects()
     {

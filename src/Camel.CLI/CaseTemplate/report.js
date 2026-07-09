@@ -169,6 +169,11 @@ function renderFindingsList() {
   list.innerHTML = "";
   const findings = findingEvents();
   $("#findCount").textContent = `(${findings.length})`;
+  // A pen-test case records scored issues via auditVulnerability (the Vulnerabilities tab); its narrative Findings
+  // tab is often empty. Hide the tab when it is empty on a pen-test case (engagement present) so a blank tab does
+  // not sit next to the populated Vulnerabilities tab. A DFIR case always keeps Findings — its primary surface.
+  const findTab = $("#tabFindings");
+  if (findTab) findTab.classList.toggle("hidden", findings.length === 0 && !!window.__ENGAGEMENT__);
   if (!findings.length) {
     list.append(el("p", { class: "empty" }, "No findings recorded in this audit log."));
     return;
