@@ -67,6 +67,25 @@ public abstract class CamelMCPTools : Runtime
         return $"Case id set to '{session.CaseId}' for this session. Audit trail file: audit-{session.CaseId}.clef";
     }
 
+    [McpServerTool(Name = "EnsurePasswordlessSudo"), Description(
+        "Provisioning action (SSH platforms only): make the login user able to run 'sudo' without a password so " +
+        "the privileged tools (nmap SYN/OS scans, packet capture, mounts, ...) work over the non-interactive SSH " +
+        "channel. This writes a visudo-validated /etc/sudoers.d/<user>-camel NOPASSWD drop-in - a PERSISTENT, " +
+        "security-relevant change to the target host - so run it ONLY deliberately, on a workstation you own/control " +
+        "(e.g. a dedicated Kali or SIFT box), never automatically. Idempotent: a no-op when passwordless sudo " +
+        "already works. The login password is fed to sudo over an interactive stream and never appears on a command " +
+        "line or in the audit trail. Returns a summary of what it did.")]
+    public async Task<string> EnsurePasswordlessSudo(RequestContext<CallToolRequestParams> context)
+    {
+        var session = registry.GetOrCreate(SessionId(context.Server));
+        var result = await session.Environment.EnsurePasswordlessSudoAsync();
+        // Record the provisioning outcome in the case audit trail (the message carries no password).
+        using (PushAuditProperty("CaseId", session.CaseId))
+            AuditEvent("information", "EnsurePasswordlessSudo: success={Success} changed={Changed} {Message}",
+                result.Success, result.Changed, result.Message);
+        return result.Message;
+    }
+
 
 
     [McpServerTool(Name = "Execute"), Description(
@@ -118,6 +137,13 @@ public abstract class CamelMCPTools : Runtime
           .SetValue("auditFinding", new Action<string, string, string, string>(
               (observation, interpretation, confidence, evidenceExecutionIds) =>
                   AuditFinding(observation, interpretation, confidence, evidenceExecutionIds, output)))
+          // auditVulnerability stages a pen-test vulnerability finding as a `vulnerability` event carrying the
+          // severity/CVSS/affected-asset/remediation/references the report card and Findings section need (the
+          // red counterpart of auditFinding, whose observation/interpretation/confidence can't carry those). Red
+          // sessions call it; a DFIR session simply never does.
+          .SetValue("auditVulnerability", new Action<string, string, string, string, string, string, string, string>(
+              (title, severity, cvss, affectedAsset, description, remediation, references, evidenceExecutionIds) =>
+                  AuditVulnerability(title, severity, cvss, affectedAsset, description, remediation, references, evidenceExecutionIds, output)))
           .SetValue("auditReviewRec", new Action<string>((s) => AuditReviewRec(s, output)))
           // IR-accuracy events: auditFalsePositive (a lead checked and rejected as benign), auditMissingEvidence
           // (a gap — absent/cleared/disabled logs), auditHallucination (the agent caught itself inventing an
@@ -297,6 +323,23 @@ public abstract class CamelMCPTools : Runtime
             "FINDING [{Confidence}] {Observation} => {Interpretation} (evidence: {EvidenceExecutionIds})",
             confidence, observation, interpretation, evidenceExecutionIds);
         output.AppendLine($"[finding {confidence}] {observation} => {interpretation} (evidence: {evidenceExecutionIds})");
+    }
+
+    /// <summary>
+    /// Records a pen-test vulnerability finding to the per-case audit trail as a <c>vulnerability</c> event — the
+    /// red counterpart of <see cref="AuditFinding"/>, carrying the fields a pen-test report requires per finding
+    /// (Basta/OSSTMM/PTES): title, normalized severity, CVSS base score, affected asset, description, remediation,
+    /// references (CVE / NIST 800-53), and the <c>execution</c> ids that prove it. Feeds the report's severity
+    /// "report card" and the ranked Technical Findings section. Also echoes a one-line summary to the response.
+    /// </summary>
+    protected void AuditVulnerability(string title, string severity, string cvss, string affectedAsset,
+        string description, string remediation, string references, string evidenceExecutionIds, StringBuilder output)
+    {
+        AuditEvent("vulnerability",
+            "VULN [{Severity}] (CVSS {Cvss}) {Title} on {AffectedAsset}: {Description} | remediation: {Remediation} " +
+            "| refs: {References} (evidence: {EvidenceExecutionIds})",
+            severity, cvss, title, affectedAsset, description, remediation, references, evidenceExecutionIds);
+        output.AppendLine($"[vulnerability {severity}{(cvss.Length > 0 ? $" CVSS {cvss}" : "")}] {title} on {affectedAsset} (evidence: {evidenceExecutionIds})");
     }
 
     /// <summary>

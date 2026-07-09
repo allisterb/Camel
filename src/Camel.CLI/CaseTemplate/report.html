@@ -16,6 +16,7 @@
     --bg: #ffffff; --panel: #f2f4f7; --panel2: #e8ecf1; --border: #d3d9e1;
     --fg: #1b2330; --muted: #5b6573; --accent: #1668d6; --accent2: #0c8275;
     --hi: #e23b3b; --med: #e0860a; --low: #c09b00; --spec: #8a93a1;
+    --crit: #a01030; --info: #6b7480;
     --ok: #2f9e44; --bad: #d63030; --chip: #e8ecf1;
     --code-bg: #f5f6f8; --code-fg: #243044;
     --t-finding: #b9700a; --t-command: #1668d6; --t-execution: #0c7e72; --t-human: #7c3aed;
@@ -27,6 +28,7 @@
     --bg: #0e1116; --panel: #161b22; --panel2: #1c2230; --border: #2b333f;
     --fg: #d7dde5; --muted: #8b97a6; --accent: #4ea1ff; --accent2: #6fd3c7;
     --hi: #ff6b6b; --med: #ffb454; --low: #ffd866; --spec: #8b97a6;
+    --crit: #ff4d6d; --info: #8b97a6;
     --ok: #5ad17e; --bad: #ff6b6b; --chip: #232b38;
     --code-bg: #0b0e13; --code-fg: #b8cce0;
     --t-finding: #ffb454; --t-command: #4ea1ff; --t-execution: #6fd3c7; --t-human: #c792ea;
@@ -244,6 +246,63 @@
   .tp-models th { color: var(--muted); font-weight: 600; }
   .tp-models td { font-family: var(--mono); }
   .tp-models td:first-child { font-family: var(--sans); }
+
+  /* Authorization & Scope tab (pen-test cases only; rendered from engagement-data.js). Hidden for a DFIR case. */
+  #authView.active { display: block; overflow-y: auto; }
+  .authdoc { max-width: 1000px; margin: 0 auto; padding: 16px 24px 60px; }
+  .authdoc h2.title { font-size: 18px; margin: 4px 0 2px; }
+  .authdoc .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  /* Compliance attestation banner: the fail-closed audit trail turned into positive proof. */
+  .att { border: 1px solid var(--border); border-left: 4px solid var(--ok); border-radius: 10px;
+         background: var(--panel); padding: 13px 16px; margin: 6px 0 22px; }
+  .att.warn { border-left-color: var(--med); }
+  .att .att-h { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+                font-weight: 600; margin-bottom: 6px; }
+  .att .att-line { line-height: 1.55; }
+  .att b { font-family: var(--mono); }
+  .att .ok { color: var(--ok); } .att .bad { color: var(--bad); } .att .warnc { color: var(--med); }
+  .authsec { margin: 20px 0; }
+  .authsec > h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+                  margin: 0 0 10px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+  .authgrid { display: grid; grid-template-columns: max-content 1fr; gap: 5px 18px; font-size: 13px; line-height: 1.5; }
+  .authgrid .gk { color: var(--muted); }
+  .authgrid .gv { word-break: break-word; }
+  .authgrid .gv.mono { font-family: var(--mono); font-size: 12px; }
+  /* activity-class chips: on = authorized (green), danger+on = a never-baseline class explicitly opted in (red) */
+  .acts { display: flex; flex-wrap: wrap; gap: 6px; }
+  .act { display: inline-block; padding: 2px 9px; border-radius: 11px; font-size: 11.5px; border: 1px solid var(--border); color: var(--muted); }
+  .act.on { background: color-mix(in srgb, var(--ok) 20%, var(--panel)); border-color: var(--ok); color: var(--fg); }
+  .act.on .base { color: var(--muted); font-size: 10px; }
+  .act.danger.on { background: color-mix(in srgb, var(--bad) 22%, var(--panel)); border-color: var(--bad); }
+  .doc-hash { font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; }
+  .scope-in { color: var(--ok); } .scope-ex { color: var(--bad); }
+
+  /* Vulnerabilities tab (pen-test cases): severity "report card" + ranked master-detail. */
+  #vulnsList { width: 44%; min-width: 340px; overflow-y: auto; border-right: 1px solid var(--border); }
+  #vulnDetail { flex: 1; overflow-y: auto; padding: 16px 20px; }
+  .sev { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 10px; font-weight: 700;
+         letter-spacing: .3px; color: #fff; text-transform: uppercase; }
+  .sev-critical { background: var(--crit); } .sev-high { background: var(--hi); }
+  .sev-medium { background: var(--med); color: #0e1116; } .sev-low { background: var(--low); color: #0e1116; }
+  .sev-info, .sev-unknown { background: var(--info); }
+  .cvss { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  /* report card: severity stat tiles + a stacked severity bar */
+  .reportcard { padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .rc-title { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+              font-weight: 600; margin-bottom: 10px; }
+  .rc-tiles { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 11px; }
+  .rc-tile { flex: 1; min-width: 62px; border: 1px solid var(--border); border-radius: 9px; padding: 8px 6px;
+             text-align: center; background: var(--bg); }
+  .rc-tile .n { font-size: 21px; font-weight: 700; font-family: var(--mono); line-height: 1; }
+  .rc-tile .l { font-size: 9.5px; text-transform: uppercase; letter-spacing: .3px; color: var(--muted); margin-top: 4px; }
+  .rc-tile.critical .n { color: var(--crit); } .rc-tile.high .n { color: var(--hi); }
+  .rc-tile.medium .n { color: var(--med); } .rc-tile.low .n { color: var(--low); } .rc-tile.info .n { color: var(--info); }
+  .rc-tile.zero .n { color: var(--muted); opacity: .5; }
+  .rc-bar { display: flex; height: 12px; border-radius: 5px; overflow: hidden; border: 1px solid var(--border); }
+  .rc-bar > span { display: block; height: 100%; }
+  .rc-bar .s-critical { background: var(--crit); } .rc-bar .s-high { background: var(--hi); }
+  .rc-bar .s-medium { background: var(--med); } .rc-bar .s-low { background: var(--low); } .rc-bar .s-info { background: var(--info); }
+  .vcard .obs { font-weight: 600; }
 </style>
 </head>
 <body data-case-id="__CASE_ID__">
@@ -257,6 +316,10 @@
   </header>
 
   <nav class="tabs">
+    <!-- Authorization & Scope: shown only for a pen-test case (engagement-data.js present); hidden for DFIR. -->
+    <button id="tabAuth" class="hidden" data-view="authView">Authorization &amp; Scope</button>
+    <!-- Vulnerabilities: shown only when the case recorded `vulnerability` events (pen-test); hidden for DFIR. -->
+    <button id="tabVulns" class="hidden" data-view="vulnsView">Vulnerabilities <span class="count" id="vulnCount"></span></button>
     <button id="tabFindings" class="active" data-view="findingsView">Findings <span class="count" id="findCount"></span></button>
     <button id="tabAudit" data-view="auditView">Audit Log <span class="count" id="auditCount"></span></button>
     <button id="tabIocs" data-view="iocsView">IOCs <span class="count" id="iocCount"></span></button>
@@ -265,6 +328,17 @@
   </nav>
 
   <main>
+    <!-- Authorization & Scope (pen-test): rendered from engagement-data.js + the compliance attestation from the CLEF -->
+    <section class="view" id="authView">
+      <div class="authdoc" id="authDoc"></div>
+    </section>
+
+    <!-- Vulnerabilities (pen-test): severity report card + ranked master-detail, from `vulnerability` CLEF events -->
+    <section class="view" id="vulnsView">
+      <div id="vulnsList"></div>
+      <div id="vulnDetail"><p class="empty">Select a vulnerability to see its detail and evidence trace.</p></div>
+    </section>
+
     <!-- Findings master-detail -->
     <section class="view active" id="findingsView">
       <div id="findingsList"></div>
@@ -322,6 +396,9 @@
        with data by double-click, no server. Absent in a fresh case - the viewer then auto-fetches the log over
        HTTP or offers a file picker. A 404 here when the file is absent is harmless. -->
   <script src="audit-data.js"></script>
+  <!-- Generated engagement-data.js sets window.__ENGAGEMENT__ (the structured authorization) for a PEN-TEST case's
+       Authorization & Scope tab. Absent for a DFIR case (that tab stays hidden). A 404 here is harmless. -->
+  <script src="engagement-data.js"></script>
   <!-- reports/accuracy.md and reports/iocs.csv embedded as base64 at case-build time (small files, kept inline
        rather than sibling .js). Empty in a fresh case - those tabs then show a placeholder. -->
   <script>window.__ACCURACY_MD_B64__ = "__ACCURACY_B64__";</script>

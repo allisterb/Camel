@@ -805,6 +805,20 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     }
 
     /// <summary>
+    /// Ensures the login user can run <c>sudo</c> without a password prompt, so the toolkits' privileged tools
+    /// (nmap SYN/-O scans, packet captures, mounts, ...) work over the non-interactive command channel. On an SSH
+    /// host this writes a <c>/etc/sudoers.d/&lt;user&gt;-camel</c> NOPASSWD drop-in, validated with
+    /// <c>visudo -cf</c> - a persistent, security-relevant change to the target host, so it is an explicit,
+    /// deliberately-invoked provisioning action and is never run automatically. Idempotent: a no-op when
+    /// passwordless sudo already works. The bootstrap feeds the login password to sudo over an interactive stream,
+    /// so the password never appears on a command line, in the process table, or in the audit trail. The base
+    /// (local) implementation reports "not applicable"; <see cref="SshAuditEnvironment"/> overrides it.
+    /// </summary>
+    public virtual Task<SudoProvisionResult> EnsurePasswordlessSudoAsync() =>
+        Task.FromResult(new SudoProvisionResult(false, false,
+            "EnsurePasswordlessSudo applies only to an SSH audit environment; there is nothing to provision locally."));
+
+    /// <summary>
     /// The host name recorded in the audit trail for commands run on this environment. The base (local)
     /// environment reports the machine name; the SSH environment overrides this with the remote host.
     /// </summary>
@@ -1575,3 +1589,10 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     }
     #endregion
 }
+
+/// <summary>The outcome of an <see cref="AuditEnvironment.EnsurePasswordlessSudoAsync"/> call.</summary>
+/// <param name="Success">True if passwordless sudo is in effect for the login user after the call.</param>
+/// <param name="Changed">True if this call modified the host (wrote a sudoers drop-in); false if passwordless
+/// sudo was already configured or nothing was done.</param>
+/// <param name="Message">Human-readable summary for the operator and the audit trail (never contains the password).</param>
+public record SudoProvisionResult(bool Success, bool Changed, string Message);

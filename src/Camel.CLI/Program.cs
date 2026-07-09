@@ -342,6 +342,19 @@ internal class Program : Runtime
                 $"window.__TOKEN_USAGE__={tokens.ToJsonString(JsDataOpts)};\n");
             return true;
         });
+
+        // engagement-data.js — the structured engagement authorization for a pen-test case's Authorization & Scope
+        // tab. SetEngagement serializes it to reports/authorization/engagement.json; a DFIR case has none, so the
+        // sidecar is simply skipped. The JSON is embedded directly as the JS object (JSON is valid JS-literal syntax).
+        dataFiles += TryWriteSidecar("engagement-data.js", () =>
+        {
+            var engPath = Path.Combine(reportsDir, "authorization", "engagement.json");
+            if (!File.Exists(engPath)) return false;
+            File.WriteAllText(Path.Combine(reportsDir, "engagement-data.js"),
+                "/* Structured engagement authorization for the Authorization & Scope tab (from reports/authorization/engagement.json). */\n" +
+                $"window.__ENGAGEMENT__={ReadAllTextShared(engPath)};\n");
+            return true;
+        });
         return dataFiles;
     }
 

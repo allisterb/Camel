@@ -430,6 +430,72 @@ public class SshAuditEnvironment : AuditEnvironment
         }
     }
 
+    /// <inheritdoc />
+    public override async Task<SudoProvisionResult> EnsurePasswordlessSudoAsync()
+    {
+        if (!this.IsConnected) return new SudoProvisionResult(false, false, "The SSH session is not connected.");
+
+        // Already passwordless? `sudo -n true` completes (exit 0) only when no password is required.
+        if (await SudoNonInteractiveWorksAsync())
+            return new SudoProvisionResult(true, false,
+                $"Passwordless sudo already works for '{this.User}' on {this.HostName}; no change made.");
+
+        // The user name is interpolated into the bootstrap command, so refuse anything but a plain identifier.
+        if (!Regex.IsMatch(this.User, "^[A-Za-z0-9._-]+$"))
+            return new SudoProvisionResult(false, false,
+                $"Refusing to provision sudo for an unexpected login name '{this.User}'.");
+
+        // Bootstrap: write a visudo-validated NOPASSWD drop-in as root, feeding the login password to sudo over the
+        // command's stdin (never on the command line / in the audit trail). Single-quotes wrap the sudoers line
+        // inside the double-quoted `bash -c` body; the user name is already validated as a plain identifier.
+        string dropin = $"/etc/sudoers.d/{this.User}-camel";
+        string inner = $"umask 077; echo '{this.User} ALL=(ALL:ALL) NOPASSWD:ALL' > {dropin} && chmod 440 {dropin} && visudo -cf {dropin}";
+        var (ok, output) = RunSudoBootstrap(inner);
+        if (!ok)
+            return new SudoProvisionResult(false, false,
+                $"Could not configure passwordless sudo for '{this.User}' on {this.HostName} (the login account may lack sudo rights or the password was not accepted). {Scrub(output)}");
+
+        // Confirm it now verifies non-interactively.
+        if (await SudoNonInteractiveWorksAsync())
+            return new SudoProvisionResult(true, true,
+                $"Configured passwordless sudo for '{this.User}' on {this.HostName} via {dropin} (visudo-validated).");
+        return new SudoProvisionResult(false, true,
+            $"Wrote {dropin} but passwordless sudo still does not verify on {this.HostName}; check the host's sudo configuration.");
+    }
+
+    // True when `sudo -n true` completes without a password prompt (ExecuteAsync returns Completed only on exit 0).
+    private async Task<bool> SudoNonInteractiveWorksAsync() =>
+        (await this.ExecuteAsync("sudo", "-n true")).Status == ProcessExecuteStatus.Completed;
+
+    // Runs a command under sudo, feeding the login password to `sudo -S` over the command's STDIN (not the command
+    // line, the process table, or the audit trail). Uses SSH.NET's exec input stream - no PTY, no expect parsing,
+    // so it is not subject to terminal echo/line-wrap corruption. Blocking; used only by EnsurePasswordlessSudoAsync
+    // to bootstrap the NOPASSWD drop-in. Returns (exit-0?, combined stdout+stderr).
+    private (bool Ok, string Output) RunSudoBootstrap(string innerCommand)
+    {
+        // -k ignores any cached credential; -S reads the password from stdin; -p '' suppresses the prompt text.
+        using var cmd = this.sshClient.CreateCommand($"sudo -k -S -p '' bash -c \"{innerCommand}\"");
+        var async = cmd.BeginExecute();                 // the input stream is only valid once execution has begun
+        using (var stdin = cmd.CreateInputStream())
+        {
+            var pw = Encoding.UTF8.GetBytes((this.ssh_client_pass ?? "") + "\n");
+            stdin.Write(pw, 0, pw.Length);
+            stdin.Flush();
+        }                                                // dispose -> EOF: sudo has the whole password line
+        cmd.EndExecute(async);
+        bool ok = cmd.ExitStatus == 0;
+        return (ok, ((cmd.Result ?? "") + (cmd.Error ?? "")).Trim());
+    }
+
+    // Defence-in-depth for the failure message: strip the prompt token and, should it ever surface, the password.
+    private string Scrub(string s)
+    {
+        s = s.Replace("CAMEL_SUDO_PW:", "").Replace("CAMEL_SUDO_OK", "").Replace("CAMEL_SUDO_FAIL", "");
+        if (!string.IsNullOrEmpty(this.ssh_client_pass)) s = s.Replace(this.ssh_client_pass, "***");
+        s = s.Trim();
+        return s.Length > 200 ? s[^200..] : s;
+    }
+
     public List<Tuple<string, ProcessExecuteStatus, string, string>> ExecuteMany(List<Tuple<string, string>> commands)
     {
         CallerInformation caller = this.Here();

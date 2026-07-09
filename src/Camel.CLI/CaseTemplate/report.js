@@ -444,13 +444,22 @@ function parseCsvLine(line) {
 }
 
 function renderIocs() {
+  // For a pen-test engagement these indicators are the client's compromise evidence / purple-team handoff, not
+  // DFIR indicators-of-compromise — relabel the tab + empty state. Same iocs.csv source, gated on the engagement.
+  const penTest = !!window.__ENGAGEMENT__;
+  const tab = $("#tabIocs");
+  if (tab && tab.firstChild && tab.firstChild.nodeType === 3)
+    tab.firstChild.textContent = penTest ? "Compromise Evidence " : "IOCs ";
+
   const csv = iocsCsv();
   const head = $("#iocsHead"), body = $("#iocsBody");
   head.innerHTML = ""; body.innerHTML = "";
   const rows = csv.replace(/\r\n/g, "\n").split("\n").filter((l) => l.trim()).map(parseCsvLine);
   if (rows.length < 2) {
     $("#iocCount").textContent = "";
-    body.append(el("tr", {}, el("td", { class: "empty" }, "No IOC data embedded. It is generated from this case's reports/iocs.csv.")));
+    body.append(el("tr", {}, el("td", { class: "empty" }, penTest
+      ? "No compromise-evidence rows embedded. Generated from this engagement's reports/iocs.csv (hosts, services, credentials, and indicators for purple-team handoff)."
+      : "No IOC data embedded. It is generated from this case's reports/iocs.csv.")));
     return;
   }
   const header = rows[0];
@@ -491,6 +500,238 @@ function renderIocs() {
     });
     body.append(tr);
   }
+}
+
+// ---------- Vulnerabilities tab (pen-test cases; from `vulnerability` CLEF events) ----------
+// The red counterpart of the Findings tab: a severity "report card" over the ranked master-detail. A `vulnerability`
+// event carries Title / Severity / Cvss / AffectedAsset / Description / Remediation / References / EvidenceExecutionIds
+// (see AuditVulnerability). Absent for a DFIR case, so the tab stays hidden.
+const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3, info: 4, unknown: 5 };
+const SEV_CLASSES = ["critical", "high", "medium", "low", "info"];
+let SELECTED_VULN = -1;   // index into EVENTS of the selected vulnerability
+
+const sevOf = (e) => String(e.Severity || "unknown").toLowerCase();
+const cvssOf = (e) => { const n = parseFloat(e.Cvss); return isNaN(n) ? -1 : n; };
+
+// Rank most-critical-first: severity band, then CVSS desc, then time.
+function vulnerabilityEvents() {
+  return EVENTS.map((e, i) => ({ e, i }))
+    .filter((x) => x.e.EventType === "vulnerability")
+    .sort((a, b) => {
+      const sa = SEV_ORDER[sevOf(a.e)] ?? 5, sb = SEV_ORDER[sevOf(b.e)] ?? 5;
+      return sa - sb || (cvssOf(b.e) - cvssOf(a.e)) || (a.e._t - b.e._t);
+    });
+}
+
+// Severity "report card": one stat tile per band + a stacked severity bar. Basta/OSSTMM "vulnerability summary".
+function renderReportCard(vulns) {
+  const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  for (const { e } of vulns) { const s = sevOf(e); if (s in counts) counts[s]++; else counts.info++; }
+  const total = vulns.length;
+  const card = el("div", { class: "reportcard", id: "reportCard" });
+  card.append(el("div", { class: "rc-title" }, `Vulnerability summary — ${total} finding${total === 1 ? "" : "s"}`));
+  const tiles = el("div", { class: "rc-tiles" });
+  for (const s of SEV_CLASSES) {
+    tiles.append(el("div", { class: "rc-tile " + s + (counts[s] ? "" : " zero") },
+      el("div", { class: "n" }, String(counts[s])),
+      el("div", { class: "l" }, s)));
+  }
+  card.append(tiles);
+  if (total) {
+    const bar = el("div", { class: "rc-bar", title: SEV_CLASSES.map((s) => `${counts[s]} ${s}`).join(" / ") });
+    for (const s of SEV_CLASSES) {
+      if (!counts[s]) continue;
+      const seg = el("span", { class: "s-" + s }); seg.style.width = (counts[s] / total * 100) + "%";
+      bar.append(seg);
+    }
+    card.append(bar);
+  }
+  return card;
+}
+
+function renderVulns() {
+  const tab = $("#tabVulns"), list = $("#vulnsList");
+  const vulns = vulnerabilityEvents();
+  if (!vulns.length) { tab.classList.add("hidden"); return false; }
+  tab.classList.remove("hidden");
+  $("#vulnCount").textContent = `(${vulns.length})`;
+
+  list.innerHTML = "";
+  list.append(renderReportCard(vulns));
+  for (const { e, i } of vulns) {
+    const s = sevOf(e);
+    const card = el("div", { class: "fcard vcard" + (i === SELECTED_VULN ? " sel" : ""), "data-i": i, onclick: () => selectVuln(i) },
+      el("div", { class: "frow" },
+        el("span", { class: "sev sev-" + (s in SEV_ORDER ? s : "unknown") }, s),
+        cvssOf(e) >= 0 ? el("span", { class: "cvss" }, "CVSS " + e.Cvss) : null,
+        el("span", { style: "margin-left:auto" }, e.AffectedAsset || "")),
+      el("p", { class: "obs" }, truncate(e.Title, 200)));
+    list.append(card);
+  }
+  return true;
+}
+
+function selectVuln(i) {
+  SELECTED_VULN = i;
+  $$("#vulnsList .vcard").forEach((c) => c.classList.toggle("sel", +c.dataset.i === i));
+  renderVulnDetail(EVENTS[i]);
+}
+
+function renderVulnDetail(v) {
+  const d = $("#vulnDetail");
+  d.innerHTML = "";
+  const s = sevOf(v);
+  d.append(
+    el("h2", { class: "detail-h" }, v.Title || "(untitled)"),
+    el("div", {},
+      el("span", { class: "sev sev-" + (s in SEV_ORDER ? s : "unknown") }, s),
+      cvssOf(v) >= 0 ? el("span", { class: "cvss", style: "margin-left:10px" }, "CVSS " + v.Cvss) : null,
+      el("span", { class: "pill", style: "margin-left:10px" }, fmtTime(v._t))),
+    kv("Affected asset", v.AffectedAsset),
+    kv("Description", v.Description),
+    kv("Remediation", v.Remediation),
+    kv("References", v.References),
+  );
+
+  // Evidence trace: reuse the Findings tab's exec-block renderer over the cited execution ids.
+  const evidenceIds = splitIds(v.EvidenceExecutionIds);
+  const recordedIn = v.ExecutionId;
+  d.append(el("div", { class: "k", style: "margin-top:18px" }, "Evidence — audit-log entries"));
+  const trace = el("div", { class: "trace" });
+  const seen = new Set();
+  const order = [...evidenceIds, recordedIn].filter((id) => id && !seen.has(id) && seen.add(id));
+  if (!order.length) trace.append(el("p", { class: "empty" }, "No execution ids associated with this vulnerability."));
+  for (const id of order) trace.append(renderExecBlock(id, id === recordedIn && !evidenceIds.includes(id)));
+  d.append(trace);
+}
+
+// ---------- Authorization & Scope tab (pen-test cases; from engagement-data.js + the CLEF attestation) ----------
+// window.__ENGAGEMENT__ is the serialized EngagementInfo (or absent for a DFIR case, when the tab stays hidden).
+const BASELINE_ACTS = ["Recon", "Scan", "Enumerate", "VulnScan"];
+const ALL_ACTS = [...BASELINE_ACTS, "Exploit", "CredentialAttack", "PostExploit", "Exfiltration", "SocialEngineering", "DenialOfService"];
+const DANGER_ACTS = new Set(["SocialEngineering", "DenialOfService"]);
+
+const authSec = (title, ...nodes) => el("div", { class: "authsec" }, el("h3", {}, title), ...nodes.filter(Boolean));
+function authGrid(pairs) {
+  const g = el("div", { class: "authgrid" });
+  for (const [k, v, mono] of pairs) {
+    if (v === null || v === undefined || v === "") continue;
+    g.append(el("div", { class: "gk" }, k), el("div", { class: "gv" + (mono ? " mono" : "") }, v));
+  }
+  return g;
+}
+const fmtTestingHours = (h) => !h ? "any time (validity window enforced)"
+  : `${(h.StartLocal || h.EndLocal) ? `${h.StartLocal || "?"}-${h.EndLocal || "?"}` : "any time"} ` +
+    `${h.TimeZone || "UTC"} ${Array.isArray(h.Days) && h.Days.length ? h.Days.join("/") : "any day"}`;
+
+function renderAuthorization() {
+  const e = window.__ENGAGEMENT__;
+  const tab = $("#tabAuth"), doc = $("#authDoc");
+  if (!e || typeof e !== "object") { tab.classList.add("hidden"); return false; }
+  tab.classList.remove("hidden");
+  doc.innerHTML = "";
+
+  doc.append(el("h2", { class: "title" }, "Engagement " + (e.EngagementId || "(unnamed)")));
+  doc.append(el("div", { class: "sub" },
+    (e.Client || "?") + " — authorized by " + (e.AuthorizedBy || "?") + (e.TestType ? " · " + e.TestType : "")));
+  doc.append(el("div", { id: "attBanner" }));   // filled by renderAttestation() once the audit log loads
+
+  doc.append(authSec("Engagement", authGrid([
+    ["Client", e.Client], ["Authorized by", e.AuthorizedBy], ["RoE reference", e.RulesOfEngagementRef, true],
+    ["Posture", e.Posture], ["Test type", e.TestType], ["Announced", e.Announced === false ? "No (covert)" : "Yes"],
+    ["Valid from (UTC)", (e.ValidFromUtc || "").replace("T", " ").slice(0, 19), true],
+    ["Valid until (UTC)", (e.ValidUntilUtc || "").replace("T", " ").slice(0, 19), true],
+    ["Testing hours", fmtTestingHours(e.TestingHours)],
+    ["External disclosure", e.AllowExternalTargetDisclosure ? "Permitted" : "Not permitted"],
+  ])));
+
+  // Scope table (in-scope + excluded carve-outs)
+  const scope = Array.isArray(e.Scope) ? e.Scope : [];
+  const inScope = scope.filter((s) => !s.Excluded), exScope = scope.filter((s) => s.Excluded);
+  const scopeTbl = el("table", { class: "log" });
+  scopeTbl.append(el("thead", {}, el("tr", {},
+    el("th", { style: "width:120px" }, "Kind"), el("th", {}, "Target"), el("th", { style: "width:130px" }, "Disposition"))));
+  const stb = el("tbody");
+  for (const s of inScope) stb.append(el("tr", {}, el("td", {}, s.Kind), el("td", { class: "mono" }, s.Value), el("td", { class: "scope-in" }, "in scope")));
+  for (const s of exScope) stb.append(el("tr", {}, el("td", {}, s.Kind), el("td", { class: "mono" }, s.Value), el("td", { class: "scope-ex" }, "EXCLUDED")));
+  if (!scope.length) stb.append(el("tr", {}, el("td", { colspan: "3", class: "empty" }, "No scope entries — nothing is in scope (fail-closed).")));
+  scopeTbl.append(stb);
+  doc.append(authSec(`Scope — ${inScope.length} in-scope / ${exScope.length} excluded`, scopeTbl));
+
+  // Authorized activity classes (baseline greyed, opted-in green, never-baseline explicit = red)
+  const allowed = new Set([...BASELINE_ACTS, ...(Array.isArray(e.AllowedActivities) ? e.AllowedActivities : [])]);
+  const acts = el("div", { class: "acts" });
+  for (const a of ALL_ACTS) {
+    const on = allowed.has(a), base = BASELINE_ACTS.includes(a), danger = DANGER_ACTS.has(a);
+    acts.append(el("span", { class: "act" + (on ? " on" : " off") + (danger ? " danger" : "") },
+      a, base ? el("span", { class: "base" }, " (baseline)") : null));
+  }
+  doc.append(authSec("Authorized activity classes", acts, el("div", { class: "sub", style: "margin-top:8px" },
+    "Baseline (recon/scan/enumerate/vuln-scan) is always permitted within scope; intrusive classes are opt-in. " +
+    "Denial-of-service and social-engineering are never baseline — red = explicitly authorized.")));
+
+  doc.append(authSec("Intensity caps", authGrid([
+    ["Max packet rate", e.MaxPacketRate != null ? e.MaxPacketRate + " pkt/s" : "server default (fail-safe, never uncapped)"],
+    ["Max concurrent targets", e.MaxConcurrentTargets != null ? String(e.MaxConcurrentTargets) : "server default"],
+    ["Test source addresses", Array.isArray(e.SourceAddresses) && e.SourceAddresses.length ? e.SourceAddresses.join(", ") : null, true],
+    ["Authorized tools", Array.isArray(e.AuthorizedTools) && e.AuthorizedTools.length ? e.AuthorizedTools.join(", ") : null],
+  ])));
+
+  // Authorization documents (the signed proof — OSSTMM RoE): preserved copy + SHA-256
+  const docs = Array.isArray(e.Documents) ? e.Documents : [];
+  if (docs.length) {
+    const dtbl = el("table", { class: "log" });
+    dtbl.append(el("thead", {}, el("tr", {},
+      el("th", { style: "width:150px" }, "Kind"), el("th", {}, "Preserved copy"), el("th", {}, "SHA-256"))));
+    const dtb = el("tbody");
+    for (const d of docs) dtb.append(el("tr", {},
+      el("td", {}, d.Kind),
+      el("td", {}, d.StoredPath ? el("a", { href: d.StoredPath.replace(/^reports\//, ""), target: "_blank" }, d.StoredPath) : (d.FilePath || "")),
+      el("td", { class: "doc-hash" }, d.HashValue || "(unhashed)")));
+    dtbl.append(dtb);
+    doc.append(authSec("Authorization documents (signed proof)", dtbl));
+  } else {
+    doc.append(authSec("Authorization documents",
+      el("p", { class: "empty" }, "No documents recorded — self-attested (a lab / self-owned engagement).")));
+  }
+
+  if (e.InternalAuthorizationWaiver)
+    doc.append(authSec("Authorization waiver (residual risk)",
+      el("div", { class: "att warn" }, el("div", { class: "att-line" },
+        "Internal targets authorized by operator WAIVER (no signed document): " + e.InternalAuthorizationWaiver))));
+
+  const contacts = Array.isArray(e.Contacts) ? e.Contacts : [];
+  if (contacts.length) {
+    const ctbl = el("table", { class: "log" });
+    ctbl.append(el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Role"), el("th", {}, "Email"), el("th", {}, "Phone"))));
+    const ctb = el("tbody");
+    for (const c of contacts) ctb.append(el("tr", {}, el("td", {}, c.Name), el("td", {}, c.Role), el("td", {}, c.Email || ""), el("td", {}, c.Phone || "")));
+    ctbl.append(ctb);
+    doc.append(authSec("Points of contact", ctbl));
+  }
+  return true;
+}
+
+// Compliance attestation: turn the fail-closed gate's CLEF events into positive proof the engagement stayed
+// authorized and in scope (every scope-violation is a refusal — evidence the gate held). Called from load().
+function renderAttestation() {
+  const banner = $("#attBanner");
+  if (!banner) return;
+  const n = (t) => EVENTS.filter((e) => e.EventType === t).length;
+  const violations = n("scope-violation"), waivers = n("authorization-waiver");
+  const disclosures = n("external-disclosure") + n("kb-disclosure"), engEvents = n("engagement");
+  banner.innerHTML = "";
+  const b = el("div", { class: "att" + (waivers > 0 ? " warn" : "") });
+  b.append(el("div", { class: "att-h" }, "Scope-compliance attestation"));
+  const line = el("div", { class: "att-line" });
+  line.append("Every offensive action was confined to the authorized engagement. ");
+  line.append(el("b", { class: violations ? "warnc" : "ok" }, String(violations)), " out-of-scope attempt(s) refused — ",
+              el("b", { class: "ok" }, "0"), " succeeded. ");
+  if (waivers) line.append(el("b", { class: "warnc" }, String(waivers)), " authorization-waiver(s) recorded (residual risk). ");
+  line.append(el("b", {}, String(disclosures)), " external-disclosure event(s). ");
+  if (engEvents) line.append("Engagement registered and enforced across the session.");
+  b.append(line);
+  banner.append(b);
 }
 
 // ---------- Conversation tab (read-only chat reconstruction from chatlog-data.js) ----------
@@ -699,11 +940,20 @@ function load(text, sourceName) {
   renderLog();
   renderFindingsList();
 
+  // Vulnerabilities tab (pen-test): report card + ranked list; hidden when no `vulnerability` events. Auto-select
+  // the first (most-critical) so its detail is visible immediately.
+  SELECTED_VULN = -1;
+  if (renderVulns()) { const v = vulnerabilityEvents()[0]; if (v) selectVuln(v.i); }
+
   // Auto-select the first (highest-confidence) finding so the trace is visible immediately.
   const f = findingEvents()[0];
   if (f) selectFinding(f.i); else $("#findingDetail").innerHTML = '<p class="empty">No findings to trace.</p>';
 
-  showView(EVENTS.length ? "findingsView" : "loadView");
+  renderAttestation();   // compliance banner on the Authorization tab (no-op when there is no engagement)
+
+  // A pen-test case lands on Authorization & Scope (the authorization record is where a red report opens); a DFIR
+  // case (no engagement) lands on Findings.
+  showView(!EVENTS.length ? "loadView" : (window.__ENGAGEMENT__ ? "authView" : "findingsView"));
 }
 
 // An optional sibling audit-data.js (generated once a case has run) may assign window.__AUDIT_CLEF__ with the raw
@@ -785,6 +1035,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   renderAccuracy();                      // independent of the audit log; render once on load
   renderIocs();
   renderChat();
+  renderAuthorization();                 // pen-test Authorization & Scope tab (hidden when there's no engagement)
   if (loadEmbedded()) return;            // embedded data (works offline, file://)
   if (!await autoLoad()) showView("loadView");  // else fetch over HTTP, else file picker
 });

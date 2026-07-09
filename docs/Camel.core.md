@@ -76,6 +76,12 @@ that produced it. Two things are expected of you:
    reviewer can trace each finding to its tool executions in the case's audit file. Treat it as the evidence
    citation for everything that script established.
 
+**Privileged tools & sudo.** Some tools run under `sudo` on the platform (e.g. mounting an image). If one fails
+with "sudo: a password is required" on an SSH platform (SIFT), the login user lacks passwordless sudo. On a
+workstation **you own/control**, the operator can run the **`EnsurePasswordlessSudo`** MCP tool once — it writes a
+visudo-validated `/etc/sudoers.d/<user>-camel` NOPASSWD drop-in (idempotent; the password is fed over stdin, never
+logged). It is a deliberate provisioning action that persistently changes the host, so it is never run automatically.
+
 ## Global Functions
 
 `log(message: string)` — write an informational line to the script's output buffer (the text returned to the
