@@ -496,6 +496,35 @@ public class SshAuditEnvironment : AuditEnvironment
         return s.Length > 200 ? s[^200..] : s;
     }
 
+    /// <summary>
+    /// Opens an SSH local port-forward over the existing connection: binds <c>127.0.0.1:&lt;localPort&gt;</c> on this
+    /// (the Camel server) machine and tunnels it to <paramref name="remoteHost"/>:<paramref name="remotePort"/> as
+    /// seen from the platform. Used to reach a service the platform binds to its own loopback (e.g. a headless
+    /// browser's CDP debug port) securely, without exposing it on the network. Returns the running
+    /// <see cref="ForwardedPortLocal"/> (dispose/<c>Stop()</c> to tear it down); read its <c>BoundPort</c> for the
+    /// local port to connect to. Pass <paramref name="localPort"/> 0 to auto-pick a free local port.
+    /// </summary>
+    public ForwardedPortLocal ForwardLocalPort(int remotePort, int localPort = 0, string remoteHost = "127.0.0.1")
+    {
+        EnsureConnected();
+        if (localPort == 0) localPort = FreeLocalPort();
+        var fwd = new ForwardedPortLocal("127.0.0.1", (uint)localPort, remoteHost, (uint)remotePort);
+        sshClient.AddForwardedPort(fwd);
+        fwd.Start();
+        Info("SSH local port-forward 127.0.0.1:{0} -> {1}:{2} started.", fwd.BoundPort, remoteHost, remotePort);
+        return fwd;
+    }
+
+    // Ask the OS for a free loopback TCP port (bind :0, read the assignment, release) to bind a forward to.
+    static int FreeLocalPort()
+    {
+        var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        l.Start();
+        var p = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
+        l.Stop();
+        return p;
+    }
+
     public List<Tuple<string, ProcessExecuteStatus, string, string>> ExecuteMany(List<Tuple<string, string>> commands)
     {
         CallerInformation caller = this.Here();

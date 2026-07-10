@@ -106,6 +106,9 @@ public sealed class SessionContext : IDisposable
 
     public void Dispose()
     {
+        // Tear down any live headless browser FIRST — it kills the platform Chromium + stops the port-forward over
+        // the still-open SSH connection, so it must run before the environment is disposed. Best-effort, time-bounded.
+        try { PenTestToolkitsApi.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(10)); } catch { /* best-effort */ }
         try { Environment.CancelExecutions(); } catch { /* best-effort */ }
         try { Environment.Dispose(); } catch { /* best-effort */ }
     }

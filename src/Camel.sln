@@ -87,6 +87,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Camel.Tests.Intel", "..\tes
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Camel.PenTest.Workflows", "Camel.PenTest.Workflows\Camel.PenTest.Workflows.csproj", "{2B0AD5D7-294C-4C09-8EEF-0D2BA7C7CF8C}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Camel.PenTest.Browser", "Camel.PenTest.Browser\Camel.PenTest.Browser.csproj", "{784E4553-7BD2-45E4-9473-FFA0390A6E01}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -337,6 +339,18 @@ Global
 		{2B0AD5D7-294C-4C09-8EEF-0D2BA7C7CF8C}.Release|x64.Build.0 = Release|Any CPU
 		{2B0AD5D7-294C-4C09-8EEF-0D2BA7C7CF8C}.Release|x86.ActiveCfg = Release|Any CPU
 		{2B0AD5D7-294C-4C09-8EEF-0D2BA7C7CF8C}.Release|x86.Build.0 = Release|Any CPU
+		{784E4553-7BD2-45E4-9473-FFA0390A6E01}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{784E4553-7BD2-45E4-9473-FFA0390A6E01}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{784E4553-7BD2-45E4-9473-FFA0390A6E01}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{784E4553-7BD2-45E4-9473-FFA0390A6E01}.Debug|x64.Build.0 = Debug|Any CPU
+		{784E4553-7BD2-45E4-9473-FFA0390A6E01}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{784E4553-7BD2-45E4-9473-FFA0390A6E01}.Debug|x86.Build.0 = Debug|Any CPU
+		{784E4553-7BD2-45E4-9473-FFA0390A6E01}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{784E4553-7BD2-45E4-9473-FFA0390A6E01}.Release|Any CPU.Build.0 = Release|Any CPU
+		{784E4553-7BD2-45E4-9473-FFA0390A6E01}.Release|x64.ActiveCfg = Release|Any CPU
+		{784E4553-7BD2-45E4-9473-FFA0390A6E01}.Release|x64.Build.0 = Release|Any CPU
+		{784E4553-7BD2-45E4-9473-FFA0390A6E01}.Release|x86.ActiveCfg = Release|Any CPU
+		{784E4553-7BD2-45E4-9473-FFA0390A6E01}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
