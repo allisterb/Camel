@@ -77,8 +77,17 @@ These survive across sessions — no re-setup needed on resume:
    (zsh) pre-expanded the `$$`/`$()` fix attempt — so every browser session was orphaning `/var/tmp/camel-pw-*` dirs.
    Now kills by pgrep-excluding-`$$` inside a **single-quoted** bash program; Kali left clean after each run.
    **Uncommitted.**
-2. **SPA content discovery / crawl** — follow the extracted same-origin `Links`, render each, accumulate the app's
-   real (client-rendered) route/endpoint surface — the thing gobuster misses on JS apps.
+2. ~~**SPA content discovery / crawl**~~ — **DONE + LIVE-VALIDATED.** `BrowserToolkit.CrawlAsync(url, maxPages?,
+   maxDepth?, timeoutSeconds?)` → `ToolResult<CrawlResult>`. Renders the seed, follows same-origin links BFS
+   (bounded by maxPages=20/maxDepth=2), and accumulates the real client-rendered surface: `Urls` (route surface,
+   superset of rendered when truncated), `Endpoints` (same-origin XHR/fetch the app calls — the API surface gobuster
+   can't see), `Pages[]` (Url/Depth/StatusCode/Title/LinkCount), `OffOriginHosts`, `RequestsBlocked`, `Truncated`.
+   Navigation-only (GET; no form-submit/click). **Gated `Enumerate`** (baseline content discovery, the JS-aware
+   analogue of gobuster — allowed without opting into Exploit; it does render pages so it runs the target's JS).
+   Scope-gated on the seed host + every subrequest; same-origin links only. URL dedup drops fragments except SPA
+   hash-routes (`#/...`). 3 offline gate tests (14 total in `PenTestBrowserTests`) + 1 host-gated live test. **Live vs
+   BWA Mutillidae**: depth-1 crawl from `/mutillidae/` rendered 8 pages and surfaced dozens of distinct same-origin
+   routes (the seed alone exposes 48 `index.php?page=` routes), all same-origin, Kali left clean. **Uncommitted.**
 3. **Form interaction** — fill + submit forms in the rendered DOM (auth flows, multi-step, CSRF-token-carrying).
 4. **Evidence into the case** — write screenshots to the case `reports/` (evidence) dir instead of a temp dir, and
    surface them in the report viewer (ties into the reporting layer).
