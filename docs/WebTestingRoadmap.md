@@ -88,7 +88,17 @@ These survive across sessions — no re-setup needed on resume:
    hash-routes (`#/...`). 3 offline gate tests (14 total in `PenTestBrowserTests`) + 1 host-gated live test. **Live vs
    BWA Mutillidae**: depth-1 crawl from `/mutillidae/` rendered 8 pages and surfaced dozens of distinct same-origin
    routes (the seed alone exposes 48 `index.php?page=` routes), all same-origin, Kali left clean. **Uncommitted.**
-3. **Form interaction** — fill + submit forms in the rendered DOM (auth flows, multi-step, CSRF-token-carrying).
+3. ~~**Form interaction**~~ — **DONE + LIVE-VALIDATED.** `BrowserToolkit.SubmitFormAsync(url, fields, formSelector?,
+   submitSelector?, screenshot?, timeoutSeconds?)` → `ToolResult<FormSubmitResult>`. Fills the rendered form (`fields`
+   = `"name=value"[]`, by name→id) and submits it; because it submits the ACTUAL rendered form, hidden/CSRF fields
+   are carried automatically (the hand-built-POST-can't-do-this property). Returns the post-submit page +
+   outcome signals — `Navigated`, `CookiesSet`, `FormStillPresent`, `FieldsFilled`/`FieldsNotFound`, real
+   `StatusCode` (captured from the nav Response) — rather than guessing "success". **Gated `Exploit`** (mutates
+   state / can carry a payload; bulk cred-guessing stays in PasswordsToolkit). Scope-gated on URL + every subrequest.
+   3 offline gate tests (17 total in `PenTestBrowserTests`) + 2 host-gated live. **Live vs BWA bWAPP login**: bee/bug
+   filling only login+password authenticated (browser auto-carried the `<select security_level>` + hidden
+   `form=submit`) → redirect to portal.php, login form gone, screenshot shows "Welcome Bee"/Logout; a wrong-password
+   control left the login form present (no false positive). **Uncommitted.**
 4. **Evidence into the case** — write screenshots to the case `reports/` (evidence) dir instead of a temp dir, and
    surface them in the report viewer (ties into the reporting layer).
 5. **Local-platform support** — currently `NotSupported`; a local-chromium path for an analyst-box-only setup.
