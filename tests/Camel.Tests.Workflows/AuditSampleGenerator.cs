@@ -27,7 +27,7 @@ public class AuditSampleGenerator : TestsRuntime
     {
         if (Environment.GetEnvironmentVariable("CAMEL_GEN_AUDIT_SAMPLE") != "1") return; // skipped unless asked
 
-        var cfg = LoadConfigFile("sshtestappsettings.json");
+        var cfg = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         var env = AuditEnvironment.CreateFromConfig(cfg);
         var api = new CamelToolkitsApi(env, cfg);
         var win = new WindowsAnalysisWorkflow(api);

@@ -12,7 +12,7 @@ public class CanonicalizerTests : TestsRuntime
 {
     public CanonicalizerTests()
     {
-        var sshconfig = LoadConfigFile("sshtestappsettings.json");
+        var sshconfig = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         api = new CamelToolkitsApi(sshenv, sshconfig);
         EvidenceMounts.EnsureAll(sshenv);   // self-heal the /mnt/dlpc evidence mount (one file-reading test) on a reset VM

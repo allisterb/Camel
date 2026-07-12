@@ -19,7 +19,7 @@ public class CarveImageFixture : TestsRuntime, IDisposable
 
     public CarveImageFixture()
     {
-        var cfg = LoadConfigFile("sshtestappsettings.json");
+        var cfg = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         Env = AuditEnvironment.CreateFromConfig(cfg);
         var id = Guid.NewGuid().ToString("N");
         ImagePath = $"/tmp/camel_carve_{id}.img";
@@ -48,7 +48,7 @@ public class DiskCarvingTests : TestsRuntime, IClassFixture<CarveImageFixture>
 {
     public DiskCarvingTests(CarveImageFixture fx)
     {
-        var cfg = LoadConfigFile("sshtestappsettings.json");
+        var cfg = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         sshenv = AuditEnvironment.CreateFromConfig(cfg);
         toolkit = new DiskAnalysisToolkit(sshenv, cfg);
         this.fx = fx;

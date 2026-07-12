@@ -8,7 +8,7 @@ public class DiskAnalysisWorkflowTests : TestsRuntime
 {
     public DiskAnalysisWorkflowTests()
     {
-        var sshconfig = LoadConfigFile("sshtestappsettings.json");
+        var sshconfig = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         api = new CamelToolkitsApi(sshenv, sshconfig);
         workflow = new DiskAnalysisWorkflow(api);

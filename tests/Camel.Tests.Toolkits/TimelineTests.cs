@@ -10,7 +10,7 @@ public class TimelineTests : TestsRuntime
 {
     public TimelineTests()
     {
-        var sshconfig = LoadConfigFile("sshtestappsettings.json");
+        var sshconfig = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         localenv = new LocalEnvironment();
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         toolkit = new TimelineToolkit(sshenv, sshconfig);

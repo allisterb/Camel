@@ -15,7 +15,7 @@ public class PacketAnalysisTests : TestsRuntime
 {
     public PacketAnalysisTests()
     {
-        var sshconfig = LoadConfigFile("sshtestappsettings.json");
+        var sshconfig = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         toolkit = new PacketAnalysisToolkit(sshenv, sshconfig);
     }

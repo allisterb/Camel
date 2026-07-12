@@ -8,7 +8,7 @@ public class WindowsAnalysisTests : TestsRuntime
 {
     public WindowsAnalysisTests()
     {
-        var sshconfig = LoadConfigFile("sshtestappsettings.json");
+        var sshconfig = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         localenv = new LocalEnvironment();
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         toolkit = new WindowsAnalysisToolkit(sshenv, sshconfig);

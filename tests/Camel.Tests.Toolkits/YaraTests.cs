@@ -13,7 +13,7 @@ public class YaraTests : TestsRuntime
 {
     public YaraTests()
     {
-        var sshconfig = LoadConfigFile("sshtestappsettings.json");
+        var sshconfig = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         localenv = new LocalEnvironment();
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         toolkit = new YaraToolkit(sshenv, sshconfig);

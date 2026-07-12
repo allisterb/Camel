@@ -19,7 +19,7 @@ public class LinuxAnalysisWorkflowTests : TestsRuntime, IDisposable
 {
     public LinuxAnalysisWorkflowTests()
     {
-        var sshconfig = LoadConfigFile("sshtestappsettings.json");
+        var sshconfig = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         api = new CamelToolkitsApi(sshenv, sshconfig);
         workflow = new LinuxAnalysisWorkflow(api);

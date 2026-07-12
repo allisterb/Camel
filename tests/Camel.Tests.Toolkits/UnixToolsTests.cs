@@ -10,7 +10,7 @@ public class UnixToolsTests : TestsRuntime
 {
     public UnixToolsTests()
     {
-        var sshconfig = LoadConfigFile("sshtestappsettings.json");
+        var sshconfig = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         toolkit = new UnixToolsToolkit(sshenv, sshconfig);
     }

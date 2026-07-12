@@ -16,7 +16,7 @@ public class LinuxAnalysisTests : TestsRuntime
 {
     public LinuxAnalysisTests()
     {
-        var sshconfig = LoadConfigFile("sshtestappsettings.json");
+        var sshconfig = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         toolkit = new LinuxAnalysisToolkit(sshenv, sshconfig);
     }

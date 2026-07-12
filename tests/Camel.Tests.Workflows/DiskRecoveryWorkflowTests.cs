@@ -16,7 +16,7 @@ public class RecoveryImageFixture : TestsRuntime, IDisposable
 
     public RecoveryImageFixture()
     {
-        var cfg = LoadConfigFile("sshtestappsettings.json");
+        var cfg = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         Env = AuditEnvironment.CreateFromConfig(cfg);
         var id = Guid.NewGuid().ToString("N");
         ImagePath = $"/tmp/camel_recov_{id}.img";
@@ -45,7 +45,7 @@ public class DiskRecoveryWorkflowTests : TestsRuntime, IClassFixture<RecoveryIma
 {
     public DiskRecoveryWorkflowTests(RecoveryImageFixture fx)
     {
-        var cfg = LoadConfigFile("sshtestappsettings.json");
+        var cfg = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         sshenv = AuditEnvironment.CreateFromConfig(cfg);
         api = new CamelToolkitsApi(sshenv, cfg);
         workflow = new DiskAnalysisWorkflow(api);

@@ -10,7 +10,7 @@ public class MemoryAnalysisTests : TestsRuntime
 {
     public MemoryAnalysisTests()
     {
-        var sshconfig = LoadConfigFile("sshtestappsettings.json");
+        var sshconfig = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         localenv = new LocalEnvironment();
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         toolkit = new MemoryAnalysisToolkit(sshenv, sshconfig);

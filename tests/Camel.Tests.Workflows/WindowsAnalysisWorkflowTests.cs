@@ -12,7 +12,7 @@ public class WindowsAnalysisWorkflowTests : TestsRuntime
 {
     public WindowsAnalysisWorkflowTests()
     {
-        var sshconfig = LoadConfigFile("sshtestappsettings.json");
+        var sshconfig = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         api = new CamelToolkitsApi(sshenv, sshconfig);
         workflow = new WindowsAnalysisWorkflow(api);

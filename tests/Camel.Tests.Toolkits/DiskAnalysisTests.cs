@@ -11,7 +11,7 @@ public class DiskAnalysisTests : TestsRuntime
 {
     public DiskAnalysisTests()
     {
-        var sshconfig = LoadConfigFile("sshtestappsettings.json");
+        var sshconfig = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));
         localenv = new LocalEnvironment();
         sshenv = AuditEnvironment.CreateFromConfig(sshconfig);
         toolkit = new DiskAnalysisToolkit(sshenv, sshconfig);
