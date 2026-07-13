@@ -99,33 +99,42 @@ public abstract class Runtime
     }
 
     public static void Initialize(string toolname, string logname, bool debug = false) => Initialize(toolname, logname, debug, NullLoggerFactory.Instance, NullLoggerProvider.Instance);
-        
+
     public static void WithFileLogging(string toolname, string logname, bool debug, string? logdir = null)
-    {        
-        var filePath= logdir is null ? Path.Combine(AssemblyLocation, toolname + ".log") : Path.Combine(logdir, toolname + ".log");
-        _logger = new LoggerConfiguration()
+    {
+        var filePath = logdir is null ? Path.Combine(AssemblyLocation, toolname + "-" + logname + ".log") : Path.Combine(logdir, toolname + "-" + logname + ".log");
+        var logger = new LoggerConfiguration()
              .Enrich.FromLogContext()
-             .MinimumLevel.Is(debug ? Serilog.Events.LogEventLevel.Verbose : Serilog.Events.LogEventLevel.Information)    
-             .WriteTo.File(filePath)
+             .MinimumLevel.Is(debug ? Serilog.Events.LogEventLevel.Verbose : Serilog.Events.LogEventLevel.Information)
+             .WriteTo.File(filePath,
+                rollingInterval: RollingInterval.Day,
+                rollOnFileSizeLimit: true,
+                fileSizeLimitBytes: 1 * 1024 * 1024,
+                retainedFileCountLimit: 7)
              .CreateLogger();
-        var lf = new SerilogLoggerFactory(_logger);
-        var lp = new SerilogLoggerProvider(_logger, false);        
+        var lf = new SerilogLoggerFactory(logger);
+        var lp = new SerilogLoggerProvider(logger, false);
         Initialize(toolname, logname, debug, lf, lp);
     }
 
     public static void WithFileAndConsoleLogging(string toolname, string logname, bool debug, string? logdir = null)
     {
-        var filePath = logdir is null ? Path.Combine(AssemblyLocation, toolname + "-" + ".log") : Path.Combine(logdir, toolname + ".log");
-        _logger = new LoggerConfiguration()
+        var filePath = logdir is null ? Path.Combine(AssemblyLocation, toolname + "-" + logname + ".log") : Path.Combine(logdir, toolname + "-" + logname + ".log");
+        var logger = new LoggerConfiguration()
              .Enrich.FromLogContext()
              .MinimumLevel.Is(debug ? Serilog.Events.LogEventLevel.Verbose : Serilog.Events.LogEventLevel.Information)
-             .WriteTo.File(filePath)
+             .WriteTo.File(filePath,
+                rollingInterval: RollingInterval.Day,
+                rollOnFileSizeLimit: true,                
+                fileSizeLimitBytes: 1 * 1024 * 1024,
+                retainedFileCountLimit: 7)
              .WriteTo.Console()
              .CreateLogger();
-        var lf = new SerilogLoggerFactory(_logger);
-        var lp = new SerilogLoggerProvider(_logger, false);        
+        var lf = new SerilogLoggerFactory(logger);
+        var lp = new SerilogLoggerProvider(logger, false);
         Initialize(toolname, logname, debug, lf, lp);
     }
+
 
     [DebuggerStepThrough]
     public static void Info(string messageTemplate, params object[] args) => logger.LogInformation(messageTemplate, args);

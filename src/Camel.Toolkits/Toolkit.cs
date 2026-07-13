@@ -446,6 +446,26 @@ public abstract class Toolkit : Runtime
     }
 
     /// <summary>
+    /// Like <see cref="ExecuteToolTextAsync"/> but returns the tool's output <b>even when it exits non-zero</b>,
+    /// together with the exit code and whether it completed cleanly — so a caller can decide for itself. Some tools
+    /// deliver a perfectly usable result yet exit non-zero (e.g. <c>curl</c> exits 18 on a streamed/Content-Length-less
+    /// response but still received the full HTTP response). Returns null only when the tool is unavailable / never ran.
+    /// </summary>
+    public async Task<(string Output, bool Completed, int ExitCode)?> ExecuteToolTextRawAsync(
+        string name, string args, int? timeoutSeconds = null)
+    {
+        OnBeforeExecute(name);
+        if (!Tools[name].Available) { ReportToolUnavailable(name); return null; }
+        using var _tk = PushAuditProperty("Toolkit", this.name);
+        using var _op = PushAuditProperty("Operation", name);
+        var (cmd, cmdArgs) = timeoutSeconds is int secs && secs > 0 && auditEnvironment.IsUnix
+            ? ("timeout", $"-k 5 {secs} {Tools[name].Command} {args}")
+            : (Tools[name].Command, args);
+        var r = await auditEnvironment.ExecuteCommandAsync(cmd, cmdArgs, Tools[name].Sudo);
+        return (r.Output ?? "", r.IsCompleted, r.ExitCode ?? -1);   // -1 = exit code unknown
+    }
+
+    /// <summary>
     /// Runs a tool that writes JSON-lines output to a directory (EZ Tools <c>--json</c>), reads the
     /// produced file, and deserializes each line to <typeparamref name="T"/>. Returns an empty array
     /// when the tool produced no records, or null when the command itself failed.
