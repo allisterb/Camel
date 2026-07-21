@@ -70,3 +70,6 @@ dotnet build <csproj_file>                                     # Build a project
 dotnet test <csproj_file>                                      # Run unit tests in project.
 dotnet run --project src\Camel.CLI\Camel.CLI.csproj            # Run Camel MCP server using HTTP transport
 ```
+## Project guardrails
+**Do not ** commit any changes automatically, always prompt the user to commit changes manually.
+**Do not ** install any NuGet or other packages automatically, always prompt the user to install packages manually.

@@ -267,7 +267,33 @@ internal class Program : Runtime
         var n = BakeReport(caseDir);
         Info($"Baked report for {caseDir} ({n} data file(s) embedded).");
         AnsiConsole.MarkupLine($"[grey]Open {Path.Combine(caseDir, "reports", "report.html")} in a browser.[/]");
+        // The manual verb is a deliberate "regenerate the deliverables" action, so it also emits the PDF (the
+        // automatic SessionEnd-only gate applies to the hook path, not to an explicit bake-report invocation).
+        var pdf = BakePdfReport(caseDir);
+        if (pdf is not null) AnsiConsole.MarkupLine($"[grey]PDF: {pdf}[/]");
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Compiles the deterministic PDF deliverable (<c>reports/report.pdf</c>) from the case's <c>engagement.json</c>
+    /// (pen-test) or absence of it (DFIR), the CLEF audit trail, and the agent-authored <c>report.md</c> /
+    /// <c>accuracy.md</c>, via <see cref="Camel.Reporting.ReportBaker"/>. Deterministic and agent-independent — the
+    /// compliance content is machine-built; only the narrative comes from the agent. Best-effort: never fails the
+    /// caller (a session must still end cleanly). Returns the PDF path, or null when there is nothing to render yet.
+    /// </summary>
+    static string? BakePdfReport(string caseDir)
+    {
+        try
+        {
+            var path = Camel.Reporting.ReportBaker.Bake(caseDir);
+            if (path is not null) Console.Out.WriteLine($"[bake-report] Baked PDF report -> {path}");
+            return path;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[bake-report] PDF report skipped: {ex.Message}");
+            return null;
+        }
     }
 
     // JSON serialization for the generated *.js data files: relaxed escaping (these are standalone .js, not inline
@@ -547,6 +573,13 @@ internal class Program : Runtime
                 Console.Out.WriteLine($"[preserve-chatlog] Baked report ({n} data file(s)) -> {Path.Combine(baseDir, "reports", "report.html")}");
             }
             catch (Exception ex) { Console.Error.WriteLine($"[preserve-chatlog] Report bake skipped: {ex.Message}"); }
+
+            // The PDF deliverable (reports/report.pdf) is the FINAL client artifact, not a per-turn live view, so it
+            // is baked on SessionEnd only — never on the per-turn Stop hook (both hooks share this verb). The HTML
+            // viewer above stays current every turn; the PDF is compiled once when the case closes.
+            var hookEvent = payload?["hook_event_name"]?.GetValue<string>() ?? "";
+            if (string.Equals(hookEvent, "SessionEnd", StringComparison.OrdinalIgnoreCase))
+                BakePdfReport(baseDir);
         }
         catch (Exception ex)
         {
