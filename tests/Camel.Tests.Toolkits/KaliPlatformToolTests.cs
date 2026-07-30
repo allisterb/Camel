@@ -20,7 +20,7 @@ public class KaliPlatformToolTests
     {
         ["Platform"] = "Kali",
         ["Kali:Environment"] = "Ssh",
-        ["Kali:Host"] = "192.168.8.190",
+        ["Kali:Host"] = "192.168.8.168",
         ["Kali:Port"] = "22",
         ["Kali:User"] = "kali",
         ["Kali:Password"] = "kali",
