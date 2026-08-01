@@ -174,6 +174,63 @@ public class PassiveChecksTests
         Assert.Empty(f);
     }
 
+    #region Web Storage (WSTG-CLNT-12)
+    static PassiveFinding[] Storage(params StorageEntry[] entries) =>
+        PassiveChecks.Analyze(Https, Hardened(), SafeCookie(), entries);
+
+    [Fact]
+    public void Jwt_InLocalStorage_IsDetectedByShape_EvenWithAnInnocuousKey()
+    {
+        // Shape detection matters because the key name is often meaningless ('u', 'data', 'ls.0').
+        var f = Storage(new StorageEntry("localStorage", "u",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc123signature"));
+
+        var finding = Assert.Single(f);
+        Assert.Equal("storage-sensitive-value", finding.Check);
+        Assert.Contains("JWT", finding.Detail);
+    }
+
+    [Fact]
+    public void SensitiveKeyName_IsDetected_EvenWhenTheValueLooksOrdinary()
+    {
+        var f = Storage(new StorageEntry("sessionStorage", "access_token", "abc123"));
+        Assert.Contains("storage-sensitive-value", Checks(f));
+    }
+
+    [Theory]
+    [InlineData("theme", "dark")]
+    [InlineData("locale", "en-GB")]
+    [InlineData("sidebar_collapsed", "true")]
+    [InlineData("cart_count", "3")]
+    public void OrdinaryStorage_IsNotFlagged(string key, string value)
+    {
+        // The anti-noise case: SPAs keep a lot of harmless state here. Flagging it all would drown the real finding.
+        Assert.Empty(Storage(new StorageEntry("localStorage", key, value)));
+    }
+
+    [Fact]
+    public void EmptyValue_IsNotFlagged_EvenUnderASensitiveKey()
+    {
+        Assert.Empty(Storage(new StorageEntry("localStorage", "auth_token", "")));
+    }
+
+    [Fact]
+    public void StorageFinding_NeverContainsTheValue_OnlyTheKeyAndLength()
+    {
+        // The value IS the credential. A finding that quotes it puts a live token in the report and the audit log.
+        const string secret = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiJ9.s3cr3t-signature-material";
+        var finding = Assert.Single(Storage(new StorageEntry("localStorage", "id_token", secret)));
+
+        Assert.DoesNotContain(secret, finding.Evidence);
+        Assert.DoesNotContain(secret, finding.Detail);
+        Assert.Contains("id_token", finding.Evidence);
+        Assert.Contains(secret.Length.ToString(), finding.Evidence);
+    }
+
+    [Fact]
+    public void NoStorage_ProducesNoStorageFindings() => Assert.Empty(Storage());
+    #endregion
+
     [Fact]
     public void NothingIsRatedHigh_NoneOfItIsProvenExploitable()
     {
