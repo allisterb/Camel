@@ -24,7 +24,8 @@ public class PassiveChecksTests
         ["referrer-policy"] = "no-referrer",
     };
 
-    static ObservedCookie[] SafeCookie() => [new ObservedCookie("sid", HttpOnly: true, Secure: true, SameSite: "Strict")];
+    static ObservedCookie[] SafeCookie() =>
+        [new ObservedCookie("sid", HttpOnly: true, Secure: true, SameSite: "Strict", SameSiteDeclared: "Strict")];
 
     static string[] Checks(PassiveFinding[] f) => [.. f.Select(x => x.Check)];
 
@@ -147,13 +148,39 @@ public class PassiveChecksTests
     [InlineData("Strict", false)]
     [InlineData("Lax", false)]
     [InlineData("None", true)]
-    [InlineData("", true)]      // unset
-    public void SameSite_FlaggedOnlyWhenNoneOrUnset(string sameSite, bool expected)
+    [InlineData("", true)]      // the server sent no SameSite attribute at all
+    public void SameSite_JudgedOnWhatTheServerDeclared(string declared, bool expected)
     {
         var f = PassiveChecks.Analyze(Https, Hardened(),
-            [new ObservedCookie("sid", HttpOnly: true, Secure: true, SameSite: sameSite)]);
+            [new ObservedCookie("sid", HttpOnly: true, Secure: true, SameSite: "Lax", SameSiteDeclared: declared)]);
 
         Assert.Equal(expected, Checks(f).Contains("cookie-weak-samesite"));
+    }
+
+    [Fact]
+    public void SameSite_BrowserNormalisedLax_StillFlaggedWhenTheServerDeclaredNothing()
+    {
+        // REGRESSION GUARD for a real bug: Chromium normalises a cookie with no SameSite attribute to Lax, so the
+        // browser's effective value is 'Lax' even when the server sent nothing. Judging on the effective value made
+        // this check silently unfireable — every genuinely-unset cookie looked protected.
+        var f = PassiveChecks.Analyze(Https, Hardened(),
+            [new ObservedCookie("PHPSESSID", HttpOnly: true, Secure: true,
+                SameSite: "Lax",              // what the browser reports
+                SameSiteDeclared: "")]);      // what the server actually sent: nothing
+
+        Assert.Contains("cookie-weak-samesite", Checks(f));
+        Assert.Contains("absent", f.Single(x => x.Check == "cookie-weak-samesite").Detail);
+    }
+
+    [Fact]
+    public void SameSite_NotFlaggedWhenNoSetCookieWasObserved()
+    {
+        // null declaration = we never saw a Set-Cookie for it, so the attribute is UNKNOWN. Reporting that as
+        // "unset" would be a guess dressed as a finding; silence is the honest answer.
+        var f = PassiveChecks.Analyze(Https, Hardened(),
+            [new ObservedCookie("sid", HttpOnly: true, Secure: true, SameSite: "Lax", SameSiteDeclared: null)]);
+
+        Assert.DoesNotContain("cookie-weak-samesite", Checks(f));
     }
 
     [Fact]
