@@ -436,3 +436,6 @@ cases/*
 !cases/README.md
 !cases/SRL-2018
 !cases/SRL-2018/logs
+
+!tests/dfir-agent/
+tests/*agent/*
