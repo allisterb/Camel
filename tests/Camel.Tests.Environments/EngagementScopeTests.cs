@@ -187,4 +187,27 @@ public class EngagementScopeTests
     {
         Assert.Throws<EngagementRequiredException>(() => new LocalEnvironment().FailIfExternalDisclosureForbidden());
     }
+
+    [Fact]
+    public void GateRefusal_ToString_IsTheReasonOnly_NotAStackTrace()
+    {
+        // An E2E agent run flagged that a DESIGNED refusal surfaced a full .NET stack trace with absolute source
+        // paths (…OffensiveToolkit.cs:line 86) to the operator — noise on an expected outcome, plus path disclosure.
+        // The gate exceptions' string form (what String(e) and the Execute error path surface) must be just the
+        // reason: legible, no "   at …" frames, no source path.
+        Exception[] refusals =
+        [
+            new EngagementRequiredException(),
+            new ActivityNotAuthorizedException(ActivityClass.Exploit),
+            new ExternalDisclosureForbiddenException(),
+        ];
+        foreach (var ex in refusals)
+        {
+            var s = ex.ToString();
+            Assert.Equal(ex.Message, s);                     // string form == the reason, nothing appended
+            Assert.DoesNotContain("   at ", s);              // no stack frames
+            Assert.DoesNotContain(".cs:line", s);            // no source path / line disclosure
+            Assert.IsAssignableFrom<GateRefusalException>(ex);
+        }
+    }
 }

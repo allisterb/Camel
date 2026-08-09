@@ -84,6 +84,47 @@ confirmers all emit manifests into one corpus, and one dispatcher routes across 
 ZAP-rule shim, or a direct C# call. **Licence isolation falls out for free:** BChecks stay in their own
 LGPL-marked assembly behind the manifest interface; Camel core depends on the interface, not the LGPL content.
 
+## Validation against `zap-extensions` (2026, the actual rule repo)
+
+Inspected the real active-scan rules (not the core framework), which confirms the design rather than just the idea:
+
+- **`Eligible` is exactly ZAP's `targets(TechSet)`.** e.g. `SqlInjectionMySqlTimingScanRule.targets(t)` is literally
+  `t.includes(Tech.MySQL)`. **26+ ascan rules** declare a tech target this way — the pattern is proven at scale, and
+  those 26 are the concrete import corpus: `Log4ShellScanRule`, `Spring4ShellScanRule`, `SpringActuatorScanRule`,
+  `React2ShellScanRule`, `Text4ShellScanRule`, `RemoteCodeExecutionCve20121823ScanRule`, the per-DB
+  `SqlInjection{MySql,MsSql,Oracle,PostgreSql,SqLite,Hypersonic}TimingScanRule`, `LdapInjectionScanRule`,
+  `MongoDbInjectionScanRule`, `CommandInjectionScanRule`. Every one is a `CheckManifest` with a populated
+  `appliesTo`.
+- **The per-DB SQLi split is the model for version/tech-scoped checks.** ZAP does not have one "SQLi" rule; it has a
+  generic one plus a timing rule per database, each `targets()`-ing its DB. That is the answer to the open question
+  below on granularity — split by the tech that changes the payload, tag each, let dispatch route.
+- **Even "generic" rules are tech-aware.** `PathTraversalScanRule` carries `Tech.Linux` / `Tech.Windows` matchers to
+  pick its file targets (`/etc/passwd` vs `Windows/system.ini`). So `appliesTo: []` (agnostic) is right for the
+  *applicability* gate, but a check still wants **OS tags** to choose payloads — the manifest's `appliesTo` and a
+  check's internal tech-branching are different uses of the same vocabulary.
+
+### Separately — confirmer improvements found in passing (not TechDispatch, but worth logging)
+
+ZAP's SSTI / traversal rules are more thorough than Camel's current confirmers in three concrete ways:
+
+1. **Context-escape prefixes.** ZAP's SSTI tries `WAYS_TO_FIX_CODE_SYNTAX = {"\"", "'", "1", ""}` before the
+   payload — to break *out* of a string/expression context the input sits in, so a sink where input lands inside an
+   already-parsed expression is reached, not just statement-level input. **DONE for `ConfirmSstiAsync`** (2026):
+   prefixes `["", "'", "\""]`, bare-first so the common case still costs one request per syntax and the breakouts
+   only run as a fallback. **Not added to `ConfirmPathTraversalAsync`:** traversal's context-escape analogue is
+   null-byte suffix truncation, which is dead on modern stacks (PHP ≥5.3.4), so it would be noise — the traversal
+   confirmer's coverage lives in its encoding × depth-climb matrix instead.
+2. **Error-polyglot (blind-SSTI lead). DONE (2026).** When the arithmetic oracle finds nothing, `ConfirmSstiAsync`
+   sends a syntax-breaking polyglot; if it triggers a *template* error (not a generic 5xx) that a benign same-length
+   control does not, it returns a new `ErrorSignal` verdict — explicitly a **lead, not a confirmation** — for the
+   escaped-output case where the engine processes input but the product never reaches the body.
+3. **Traversal encodings. DONE (2026).** Added the leading-`/` variant and `%c0%af` overlong-UTF-8 `../` to the
+   payload set (deduped so Windows targets don't resend identical bytes).
+
+Still out of scope: ZAP's **sink-point vs insertion-point** model — inject at A, detect render at B — which is how
+it does *stored* SSTI/XSS. Our confirmers are same-response only (except the stored-XSS browser path). A real model
+change, not a confirmer tweak; deferred until stored-injection confirmation beyond XSS is actually wanted.
+
 ## Where it plugs into Camel
 
 - **`AnalyzeWebStackAsync`** already fingerprints. Add: fingerprint → `TechSet` (via the normalization table) →

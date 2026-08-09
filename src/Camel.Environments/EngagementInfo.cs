@@ -431,12 +431,23 @@ public record ScopeDecision(string Target, bool InScope, string Reason);
 public record EngagementSummary(bool Valid, string[] Problems);
 
 /// <summary>
+/// Base for the engagement-gate refusals — the fail-closed stops that are a <b>designed</b> outcome, not a program
+/// fault. Its <see cref="ToString"/> returns just the reason, so when the refusal surfaces to the code-mode agent
+/// (via a caught exception's string form or the Execute error path) it reads as a clean, actionable message rather
+/// than a full .NET stack trace disclosing internal source paths — an expected refusal should not look like a crash.
+/// </summary>
+public abstract class GateRefusalException(string message) : Exception(message)
+{
+    public override string ToString() => Message;
+}
+
+/// <summary>
 /// Thrown when an offensive operation targets a host/range/URL that the registered engagement does not
 /// authorize (or authorizes only outside its validity window) — the architectural stop that keeps the
 /// red server inside its rules of engagement. The red counterpart of <see cref="EvidenceSpoliationRiskException"/>.
 /// </summary>
 public class OutOfScopeException(ScopeDecision decision)
-    : Exception($"The operation targeting '{decision.Target}' is outside the authorized engagement scope and was refused. {decision.Reason}")
+    : GateRefusalException($"The operation targeting '{decision.Target}' is outside the authorized engagement scope and was refused. {decision.Reason}")
 {
     public ScopeDecision Decision { get; } = decision;
 }
@@ -447,7 +458,7 @@ public class OutOfScopeException(ScopeDecision decision)
 /// equivalent — DFIR reads need no engagement.)
 /// </summary>
 public class EngagementRequiredException()
-    : Exception("No engagement is registered for this session. Call SetEngagement with the authorized scope and validity window before running any offensive tool.");
+    : GateRefusalException("No engagement is registered for this session. Call SetEngagement with the authorized scope and validity window before running any offensive tool.");
 
 /// <summary>
 /// Thrown when an offensive operation performs an activity class the registered engagement does not authorize
@@ -455,7 +466,7 @@ public class EngagementRequiredException()
 /// activity-class counterpart of <see cref="OutOfScopeException"/>: scope answers "where", this answers "what".
 /// </summary>
 public class ActivityNotAuthorizedException(ActivityClass activity)
-    : Exception($"The '{activity}' activity is not authorized by the registered engagement and was refused. " +
+    : GateRefusalException($"The '{activity}' activity is not authorized by the registered engagement and was refused. " +
                 $"Add '{activity}' to the engagement's AllowedActivities to authorize it.")
 {
     public ActivityClass Activity { get; } = activity;
@@ -468,6 +479,6 @@ public class ActivityNotAuthorizedException(ActivityClass activity)
 /// client's host/IP/domain to an external party, so it is refused until the rules of engagement opt in.
 /// </summary>
 public class ExternalDisclosureForbiddenException()
-    : Exception("This engagement does not permit disclosing target details to external services. A target-keyed " +
+    : GateRefusalException("This engagement does not permit disclosing target details to external services. A target-keyed " +
                 "knowledge-base query (e.g. Shodan) would send a client asset to a third party; set " +
                 "AllowExternalTargetDisclosure on the engagement to authorize it.");
