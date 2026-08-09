@@ -163,14 +163,44 @@ change, not a confirmer tweak; deferred until stored-injection confirmation beyo
 
 Phase 2 is the one that pays back the `pentest-agent` finding; phases 1–2 need no external rule corpus at all.
 
+### The verbatim payload store (declarative checks) — ✅ DONE (2026-08)
+
+Alongside the hand-written default-config checks, phase 2 gained a **declarative, data-driven check format** — the
+"verbatim payload store" — for the class the store exists to cover: precise, long-tail, **version-pinned** tests
+whose exact paths/signatures a model would misremember (an Apache 2.4.49 traversal, an exposed `.env`). Built in
+`PayloadCheck.cs` (`PayloadCheck` + a compact matcher engine: `Matcher` word/regex/status × body/header/status,
+`and`/`or` within a matcher and across matchers, `negative`) and `PayloadCheckStore.cs` (the curated seed +
+`TechDispatchCorpus.Builtin` aggregator). A `PayloadCheck.ToWebCheck()` lowers an entry into the **same** `WebCheck`
+the hand-written confirmers emit, so it routes through the existing dispatcher unchanged — *the store is data, the
+runner is generic.* This is the phase-3 runner arriving early, hand-fed instead of bulk-imported.
+
+**Version scoping landed with it** (the open question below, now answered): `CheckManifest.AppliesToVersion` +
+`VersionRange` (a half-open `[Introduced, Fixed)` with a tolerant dotted-numeric compare). `Eligible` now gates on
+tag **and** version — an unknown detected version does not suppress (the response matcher is the backstop), but a
+detected patched version does. Seed: `CVE-2021-41773` (Apache 2.4.49/2.4.50 traversal, version-scoped),
+`php-info-disclosure` (tech-scoped, `[php]`), `dotenv-exposed` (agnostic). Tests in `PenTestTechDispatchTests.cs`.
+
+**Source-format analysis (which corpora are ingestible).** The declarative format deliberately mirrors the two
+sources that *are* data:
+- **Nuclei templates** — declarative YAML (`http:` path/method/headers/body + `matchers` word/regex/status with
+  `condition`/`matchers-condition` + `info`/`classification` tags). A curated entry transcribes one directly; a bulk
+  importer (phase 3) targets the `PayloadCheck` shape. **The primary source.**
+- **Burp BChecks** — a declarative DSL (`given … send request … if {response.body} contains … then report issue`).
+  Different syntax, same send+match+tag shape; absorbs into the same intermediate representation. LGPL-3.0 → keep
+  license-isolated behind the manifest interface.
+- **ZAP scan rules** — **not** a data format: imperative Java (`AbstractAppPlugin` + `targets(TechSet)`). The
+  reusable part is the tech-targeting *metadata* (already captured by `CheckManifest`) and the *idea*, not a payload
+  file. A **pattern reference**, not an ingest source — you'd extract constants or reimplement, not parse.
+
 ## Open questions
 
 - **Fingerprint richness.** whatweb is good but misses things a favicon-hash / distinctive-path probe would catch
   (Jenkins' `/login?from=`, GlassFish' `/common/index.jsf`). The normalization table can include path-probe rules,
   but that turns fingerprinting into its own active step — decide whether tech detection stays passive or gains an
   active confirm.
-- **Version-scoped tags.** Some checks apply to a tech *at a version range* (Spring4Shell = specific Spring + JDK).
-  `appliesTo` may need `(tag, versionRange)` rather than a bare tag. Start with bare tags; add ranges when a real
-  check needs one.
+- **Version-scoped tags. ✅ RESOLVED (2026-08).** The verbatim payload store needed it, so `CheckManifest` gained an
+  optional `AppliesToVersion` (`VersionRange`, half-open `[Introduced, Fixed)`) and `Eligible` now gates on tag AND
+  version (unknown version does not suppress; a detected patched version does). `appliesTo` stays a bare tag list;
+  the version window is a separate optional field on the manifest, so a check that does not need it is unaffected.
 - **Corpus provenance in findings.** A finding from a dispatched check should cite which check + which source, so a
   BCheck-derived result is distinguishable from a built-in one in the report.
