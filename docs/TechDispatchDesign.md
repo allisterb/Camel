@@ -136,15 +136,30 @@ change, not a confirmer tweak; deferred until stored-injection confirmation beyo
 
 ## Phasing
 
-1. **`TechTag` + normalization table + `TechSet` from the fingerprint.** Pure, testable, no runner needed. On its
-   own this lets `AnalyzeWebStackAsync` report *"detected: jenkins, elasticsearch"* as structured tags instead of
-   raw whatweb strings — already useful.
-2. **`CheckManifest` + `Eligible` dispatch, over the built-in confirmers only.** Proves the routing end-to-end
-   with zero new check formats: e.g. tag the CORS/CSRF confirmers tech-agnostic, and add a couple of built-in
-   default-config checks (Jenkins script console, GlassFish admin) tagged `[jenkins]` / `[glassfish]` — which
-   directly closes the E2E gap that motivated this.
+1. **`TechTag` + normalization table + `TechSet` from the fingerprint. ✅ DONE (2026-08).** Pure, testable, no
+   runner needed. On its own this lets `AnalyzeWebStackAsync` report *"detected: jenkins, tomcat"* as structured
+   tags (`AttackPlan.TechStack`, a `DetectedTech[]`) instead of raw whatweb strings — already useful. Implemented in
+   `src/Camel.PenTest.Workflows/TechDispatch/` (`TechTag.cs`, `TechCatalog.cs` — the normalization table is a
+   data-driven ordered rule list, first-match-wins per token so `Apache-Coyote` ⇒ `tomcat`, not `apache-httpd`).
+2. **`CheckManifest` + `Eligible` dispatch, over the built-in checks only. ✅ DONE (2026-08).** Proves the routing
+   end-to-end with zero new check formats. `CheckManifest.cs` (the neutral manifest + `Eligible` = ZAP's
+   `targets(TechSet)`), `CheckDispatcher.cs` (filter-by-eligible → gate-by-activity → run, with per-check failure
+   isolation), and `DefaultConfigChecks.cs` — the phase-2 corpus: `git-directory-exposed` (agnostic),
+   `jenkins-script-console-exposed` `[jenkins]`, `tomcat-manager-exposed` `[tomcat]`,
+   `glassfish-admin-console-exposed` `[glassfish]`. Wired into `AnalyzeWebStackAsync` /
+   `BuildWebStackAttackPlanAsync`; confirmed findings land in `AttackPlan.DispatchedFindings`, kept separate from
+   the version→CVE `Entries`. Directly closes the E2E gap that motivated this. **Note on activity class:** the
+   checks are `Exploit`-class (not `Enumerate`), because the only body-returning HTTP primitive
+   (`WebApp.HttpRequestAsync`) is itself `Exploit`-gated — so declaring them `Exploit` keeps the manifest's activity
+   aligned with the gate the primitive enforces, no drift. They self-skip in a baseline run (recorded) and fire when
+   Exploit is authorized; the `TechStack` detection is baseline and always reported. Tests:
+   `tests/Camel.Tests.Workflows/PenTestTechDispatchTests.cs`. *(Deferred within phase 2: routing the existing
+   parameter-driven confirmers — SSTI/traversal/IDOR/CORS — through the same dispatcher; they need a discovered
+   parameter surface `AnalyzeWebStackAsync` does not have. The dispatcher and manifest already model them; wiring
+   waits until dispatch runs from a crawl that supplies insertion points.)*
 3. **A BCheck parser emitting manifests** (the deferred runner idea), then a ZAP-rule adapter. Both land as new
-   check sources behind the same dispatch, no core change.
+   check sources behind the same dispatch, no core change. The `CheckSource` enum (`Builtin`/`BCheck`/`Zap`) and the
+   rule-runner-agnostic `WebCheck(Manifest, Run)` pairing are already in place for this.
 
 Phase 2 is the one that pays back the `pentest-agent` finding; phases 1–2 need no external rule corpus at all.
 
