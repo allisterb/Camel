@@ -438,4 +438,4 @@ cases/*
 !cases/SRL-2018/logs
 
 !tests/dfir-agent/
-tests/*agent/*
+tests/pentest-agent*
