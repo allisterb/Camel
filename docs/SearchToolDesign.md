@@ -28,7 +28,28 @@ Search builds on.
 
 ---
 
-## Layer 1: split the resources by subject area — implementation plan
+## Layer 1: split the resources by subject area — ✅ BUILT (2026-08-12)
+
+**As-built**, with the deviations from the plan below recorded inline:
+
+| | Planned | Built |
+|---|---|---|
+| Slicing | areas = bound globals, located by heading text at any level | as planned — `SdkDocs.Slice` (`src/Camel.Server/SdkDocs.cs`) |
+| Area list | derived from `BindDomainGlobals` | `SdkDocs.DfirAreas` / `PenTestAreas`; both MCP tool classes now bind from a single declarative `domainGlobals` table exposing `DomainGlobalNames`, and a test asserts areas ≡ bound globals in both directions |
+| Per-area URIs | one `{area}` UriTemplate parameter | **concrete resources** (`CamelResources.AreaResources`) — a template is only discoverable via `resources/templates/list`, so a client that ignores templates could never find them; ~40 small `resources/list` entries is the cheaper risk |
+| Index size | < 15 KB | **PenTest 20.7 KB / DFIR 28.8 KB.** The 15 KB budget was self-inconsistent (the mandatory preamble alone is 10.4 KB red / 11.4 KB blue). Startup drops 226 KB → 20.7 KB (red) and 162 KB → 28.8 KB (blue); a task then pays 5–20 KB per area touched |
+| Inventory | ~60 chars/method | names only (methods + model types), receivers kept where an area groups several globals (`Nvd.CveAsync` vs `VulnCheck.CveAsync`); purpose line is the area's own first sentence, so it cannot drift |
+| Heading normalization | make every global resolvable | one edit was needed: `### External knowledge bases` → `### Knowledge bases (external intelligence)` (matching the schema doc). `WorkflowResult<T>`, `(Linux plugins)` and slash-merged headings are handled by the matcher instead of by editing docs |
+
+Beyond the plan: `camel://sdk/schema` now serves a **signpost** (<1 KB) rather than 95–120 KB, and a coverage test
+asserts every method bullet and every `### X Schema` in all four documents is reachable through the map — which is
+what makes "the inventory is complete, so absence is real" a checked property rather than a hope. Guardrails live in
+`tests/Camel.Tests.Server/SdkDocAreaTests.cs`.
+
+Still open from this layer: re-run a `tests/pentest-agent*` harness so the acceptance test is the agent's own account
+of the startup cost.
+
+### Original plan
 
 Worth doing **regardless of Layer 2**, because Layer 2 indexes exactly these slices. What follows is measured, not
 estimated.

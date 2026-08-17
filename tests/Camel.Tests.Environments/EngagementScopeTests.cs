@@ -1,7 +1,9 @@
 namespace Camel.Tests.Environments;
 
 using System;
+using System.IO;
 
+using Camel;
 using Camel.Environments;
 
 /// <summary>
@@ -96,6 +98,41 @@ public class EngagementScopeTests
         var env = Armed(new ScopeTarget(ScopeKind.Host, "10.0.0.5"));
         Assert.False(env.TrySetEngagement(Eng(new ScopeTarget(ScopeKind.Cidr, "0.0.0.0/0"))));   // refused
         Assert.Throws<OutOfScopeException>(() => env.FailIfOutOfScope("8.8.8.8"));                 // scope unchanged
+    }
+
+    /// <summary>
+    /// Every refusal must leave a `scope-violation` record, not just refuse. Found by an E2E agent run (B-0): the gate
+    /// blocked two out-of-scope calls and wrote zero events, so the one question a scope gate's trail exists to
+    /// answer — did this engagement ever reach outside scope? — could only be answered with silence.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]   // armed engagement, out-of-scope target
+    [InlineData(true)]    // fail-closed: nothing registered at all
+    public void RefusedTarget_IsRecordedAsScopeViolation(bool failClosed)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "camel_audit_" + Guid.NewGuid().ToString("N"));
+        Runtime.WithAuditLog(dir);
+        try
+        {
+            using (Runtime.PushAuditProperty("CaseId", "scope-audit"))
+            {
+                var env = failClosed ? new LocalEnvironment() : Armed(new ScopeTarget(ScopeKind.Host, "10.0.0.5"));
+                Assert.ThrowsAny<Exception>(() => env.FailIfOutOfScope("203.0.113.10"));
+                Assert.ThrowsAny<Exception>(() => env.FailIfRangeOutOfScope("203.0.113.0/24"));
+            }
+            Runtime.CloseAndFlushAuditLog();
+
+            var content = File.ReadAllText(Path.Combine(dir, "audit-scope-audit.clef"));
+            Assert.Equal(2, content.Split("scope-violation").Length - 1);   // both refusals recorded
+            Assert.Contains("203.0.113.10", content);                       // the target reached for
+            Assert.Contains("203.0.113.0/24", content);
+            Assert.Contains(failClosed ? "fail-closed" : "No authorized scope entry", content);   // and why
+        }
+        finally
+        {
+            Runtime.CloseAndFlushAuditLog();
+            try { Directory.Delete(dir, true); } catch { }
+        }
     }
 
     [Fact]

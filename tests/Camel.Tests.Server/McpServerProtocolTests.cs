@@ -235,27 +235,58 @@ public class McpServerProtocolTests : TestsRuntime, IAsyncLifetime
         Assert.Contains("async boom", Text(r));
     }
 
+    /// <summary>
+    /// A misused output helper must not be able to kill an analysis. Agent finding B-2: `table()` over an SDK model
+    /// array threw a host-level conversion error that escaped try/catch and discarded the output of everything after
+    /// it — "a defensively-written script cannot protect itself".
+    /// </summary>
+    [Fact]
+    public async Task TableMisuseDoesNotAbortTheScript()
+    {
+        await using var client = await NewClientAsync();
+
+        var r = await client.CallToolAsync("Execute", Script(
+            "log('before');" +
+            "table('not a table');" +          // no try/catch on purpose: it must not throw at all
+            "table([{Name:'a', Port:80}, {Name:'b', Port:443}]);" +
+            "log('after');"));
+
+        Assert.NotEqual(true, r.IsError);
+        var text = Text(r).Replace("\r\n", "\n");
+        Assert.Contains("before", text);
+        Assert.Contains("after", text);                        // the script ran to completion
+        Assert.Contains("expected an array of rows", text);    // and said what was wrong with the bad call
+        Assert.Contains("| Name | Port |", text);              // records → columns from their keys
+        Assert.Contains("| b    | 443  |", text);
+    }
+
     [Fact]
     public async Task SdkReferenceResourcesAreListedAndReadable()
     {
         await using var client = await NewClientAsync();
 
-        // Both SDK docs must be advertised in resources/list...
+        // The map, the whole documents, the per-area slices and the discipline must all be advertised in
+        // resources/list (the per-area ones are registered programmatically from the doc set).
         var list = await client.ListResourcesAsync(new ListResourcesRequestParams());
         var uris = list.Resources.Select(r => r.Uri).ToList();
+        Assert.Contains("camel://sdk/index", uris);
         Assert.Contains("camel://sdk/core", uris);
         Assert.Contains("camel://sdk/schema", uris);
+        Assert.Contains("camel://sdk/core/all", uris);
+        Assert.Contains("camel://sdk/schema/all", uris);
+        Assert.Contains("camel://sdk/core/TimelineAnalysisWorkflow", uris);
         Assert.Contains("camel://sdk/discipline", uris);
 
-        // ...and read back with their embedded markdown content.
+        // ...and read back with their embedded markdown content. camel://sdk/core serves the MAP now.
         var core = await client.ReadResourceAsync("camel://sdk/core");
         var coreText = string.Concat(core.Contents.OfType<TextResourceContents>().Select(c => c.Text));
         Assert.Contains("Camel JavaScript SDK", coreText);
         Assert.Contains("Execute", coreText);
+        Assert.Contains("camel://sdk/core/TimelineAnalysisWorkflow", coreText);   // the map addresses the areas
         // The markdown must round-trip as multi-line text (newlines preserved end to end), not one long line.
         Assert.True(coreText.Split('\n').Length > 100, $"expected multi-line markdown, got {coreText.Split('\n').Length} line(s)");
 
-        var schema = await client.ReadResourceAsync("camel://sdk/schema");
+        var schema = await client.ReadResourceAsync("camel://sdk/schema/all");
         var schemaText = string.Concat(schema.Contents.OfType<TextResourceContents>().Select(c => c.Text));
         Assert.Contains("WorkflowResult Schema", schemaText);
         Assert.Contains("TimelineEvent Schema", schemaText);

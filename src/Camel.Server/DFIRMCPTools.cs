@@ -165,37 +165,41 @@ public class DFIRMCPTools : CamelMCPTools
     /// analysis workflows (always), plus each SIFT toolkit lazily — only when the script names it, so a script
     /// never pays a toolkit's one-time tool provisioning unless it actually uses it.
     /// </summary>
+    // The DFIR globals the Execute engine binds, declared once so the SDK doc area list (SdkDocs.DfirAreas) can be
+    // asserted against them — an area with no documentation, or a global with no area, is a build failure.
+    // Eager globals are cheap to construct: the anomaly toolkit is pure compute over a canonical timeline (no
+    // AuditEnvironment; see Camel.Inference), and a workflow only holds the toolkits api and resolves toolkits
+    // lazily on use. A SIFT toolkit is bound only when the script references it by name, because constructing one
+    // can run one-time provisioning (Toolkit.InstallMissingTools = synchronous wget/apt for the EZ tools, the YARA
+    // rules pack, hayabusa, …) — binding unused toolkits would stall the first call in a fresh session installing
+    // tools the script never uses.
+    private static readonly (string Name, bool Eager, Func<SessionContext, object> Resolve)[] domainGlobals =
+    [
+        ("AnomalyDetectionToolkit",      true,  _ => new Camel.Inference.AnomalyDetectionToolkit()),
+        ("MemoryAnalysisWorkflow",       true,  s => s.WorkflowsApi.MemoryAnalysis),
+        ("DiskAnalysisWorkflow",         true,  s => s.WorkflowsApi.DiskAnalysis),
+        ("WindowsAnalysisWorkflow",      true,  s => s.WorkflowsApi.WindowsAnalysis),
+        ("TimelineAnalysisWorkflow",     true,  s => s.WorkflowsApi.TimelineAnalysis),
+        ("AntiForensicsAnalysisWorkflow", true, s => s.WorkflowsApi.AntiForensicsAnalysis),
+        ("WebServerAnalysisWorkflow",    true,  s => s.WorkflowsApi.WebServer),
+        ("LinuxAnalysisWorkflow",        true,  s => s.WorkflowsApi.LinuxAnalysis),
+        ("PacketAnalysisWorkflow",       true,  s => s.WorkflowsApi.PacketAnalysis),
+        ("MemoryAnalysisToolkit",        false, s => s.ToolkitsApi.MemoryAnalysis),
+        ("DiskAnalysisToolkit",          false, s => s.ToolkitsApi.DiskAnalysis),
+        ("WindowsAnalysisToolkit",       false, s => s.ToolkitsApi.WindowsAnalysis),
+        ("TimelineAnalysisToolkit",      false, s => s.ToolkitsApi.Timeline),
+        ("YaraToolkit",                  false, s => s.ToolkitsApi.Yara),
+        ("UnixToolsToolkit",             false, s => s.ToolkitsApi.UnixTools),
+        ("LinuxAnalysisToolkit",         false, s => s.ToolkitsApi.LinuxAnalysis),
+        ("PacketAnalysisToolkit",        false, s => s.ToolkitsApi.PacketAnalysis),
+    ];
+
+    /// <summary>The DFIR globals bound into the Execute engine — the SDK doc areas must cover exactly these.</summary>
+    public static IEnumerable<string> DomainGlobalNames => domainGlobals.Select(g => g.Name);
+
     protected override void BindDomainGlobals(Engine jsinterp, SessionContext session, string script)
     {
-        // Pure-compute anomaly triage over a canonical timeline (no AuditEnvironment); see Camel.Inference.
-        jsinterp.SetValue("AnomalyDetectionToolkit", new Camel.Inference.AnomalyDetectionToolkit());
-
-        // Workflows are cheap to construct (they hold a reference to the toolkits api and resolve toolkits
-        // lazily on use), so bind them all unconditionally.
-        jsinterp.SetValue("MemoryAnalysisWorkflow", session.WorkflowsApi.MemoryAnalysis);
-        jsinterp.SetValue("DiskAnalysisWorkflow", session.WorkflowsApi.DiskAnalysis);
-        jsinterp.SetValue("WindowsAnalysisWorkflow", session.WorkflowsApi.WindowsAnalysis);
-        jsinterp.SetValue("TimelineAnalysisWorkflow", session.WorkflowsApi.TimelineAnalysis);
-        jsinterp.SetValue("AntiForensicsAnalysisWorkflow", session.WorkflowsApi.AntiForensicsAnalysis);
-        jsinterp.SetValue("WebServerAnalysisWorkflow", session.WorkflowsApi.WebServer);
-        jsinterp.SetValue("LinuxAnalysisWorkflow", session.WorkflowsApi.LinuxAnalysis);
-        jsinterp.SetValue("PacketAnalysisWorkflow", session.WorkflowsApi.PacketAnalysis);
-
-        // Bind a SIFT toolkit global only when the script actually references it by name. Constructing a toolkit
-        // can run one-time provisioning (Toolkit.InstallMissingTools = synchronous wget/apt for the EZ tools, the
-        // YARA rules pack, hayabusa, …), so binding unused toolkits would make the first call in a fresh session
-        // stall installing tools the script never uses. Workflows resolve their toolkits lazily through the api.
-        void BindToolkitIfUsed(string name, Func<object> resolve)
-        {
-            if (script.Contains(name, StringComparison.Ordinal)) jsinterp.SetValue(name, resolve());
-        }
-        BindToolkitIfUsed("MemoryAnalysisToolkit", () => session.ToolkitsApi.MemoryAnalysis);
-        BindToolkitIfUsed("DiskAnalysisToolkit", () => session.ToolkitsApi.DiskAnalysis);
-        BindToolkitIfUsed("WindowsAnalysisToolkit", () => session.ToolkitsApi.WindowsAnalysis);
-        BindToolkitIfUsed("TimelineAnalysisToolkit", () => session.ToolkitsApi.Timeline);
-        BindToolkitIfUsed("YaraToolkit", () => session.ToolkitsApi.Yara);
-        BindToolkitIfUsed("UnixToolsToolkit", () => session.ToolkitsApi.UnixTools);
-        BindToolkitIfUsed("LinuxAnalysisToolkit", () => session.ToolkitsApi.LinuxAnalysis);
-        BindToolkitIfUsed("PacketAnalysisToolkit", () => session.ToolkitsApi.PacketAnalysis);
+        foreach (var (name, eager, resolve) in domainGlobals)
+            if (eager || script.Contains(name, StringComparison.Ordinal)) jsinterp.SetValue(name, resolve(session));
     }
 }

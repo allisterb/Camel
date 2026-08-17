@@ -1,7 +1,8 @@
 # Camel Forensic Discipline
 
-How to **reason** over what the Camel SDK returns. The SDK surface (objects, methods, schemas) lives in
-`camel-sdk-core` and `camel-sdk-schema`; this document governs the investigative method that uses it. It is the
+How to **reason** over what the Camel SDK returns. The SDK surface is mapped by `camel-sdk-index`
+(`camel://sdk/index` — the inventory of every object, method and model, by subject area) and detailed per area at
+`camel://sdk/core/{Area}` and `camel://sdk/schema/{Area}`; this document governs the investigative method that uses it. It is the
 SANS DFIR discipline adapted to Camel's autonomous, code-mode run model: you investigate **to completion without
 stopping for approval**, but you reason like a careful examiner and you leave a trail a human can audit.
 
@@ -82,7 +83,7 @@ For each investigative question, work this loop in code via `Execute`:
   `auditHallucination` for rejected leads, gaps, and caught mistakes — so the case is reconstructable from the
   audit log alone. (The verbatim script of every `Execute` is already recorded; your job is to label the
   conclusions.)
-- **Don't invent the API.** Call only objects and methods in `camel-sdk-core`. A script that names a non-existent
+- **Don't invent the API.** Call only objects and methods in the `camel-sdk-index` inventory. A script that names a non-existent
   toolkit/workflow fails fast, the server records a `hallucination` event, and the error names the invented API —
   re-read the core reference and correct it rather than guessing again.
 

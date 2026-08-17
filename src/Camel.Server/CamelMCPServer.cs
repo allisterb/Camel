@@ -36,16 +36,20 @@ public class CamelMCPServer : Runtime
     }
 
     // Registers the investigation's SDK reference resources (blue DFIRResources / red PenTestResources) under the
-    // shared camel://sdk/* URIs, so the agent reads the reference for the toolkits THIS server actually binds.
+    // shared camel://sdk/* URIs, so the agent reads the reference for the toolkits THIS server actually binds. The
+    // fixed URIs (map, discipline, whole documents) are the attribute-declared ones; the per-area slices are built
+    // from the doc set (see CamelResources.AreaResources) so adding an area needs no new resource method.
     static void RegisterResources(IMcpServerBuilder mcp, InvestigationType investigation)
     {
         if (investigation == InvestigationType.PenTest)
         {
             mcp.WithResources<PenTestResources>();
+            mcp.WithResources(CamelResources.AreaResources(CamelResources.PenTest));
         }
         else
         {
             mcp.WithResources<DFIRResources>();
+            mcp.WithResources(CamelResources.AreaResources(CamelResources.Dfir));
         }
     }
 

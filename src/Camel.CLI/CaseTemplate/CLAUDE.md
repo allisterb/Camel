@@ -54,17 +54,21 @@ the Camel MCP server's **`Execute`** tool: you write a small JavaScript program 
 SDK; the server runs it against the SIFT workstation and returns only the distilled result. This is "code-mode" —
 it lets you filter and reason over forensic data programmatically instead of paging huge tool dumps into context.
 
-**Before writing any script, read these three MCP resources (this is mandatory):**
+**Before writing any script, read these MCP resources (this is mandatory):**
 
-1. **`camel-sdk-core`** (`camel://sdk/core`) — the execution model and the full index of objects and methods
-   (toolkits, workflows, the anomaly engine), each with its parameter and return types.
-2. **`camel-sdk-schema`** (`camel://sdk/schema`) — the JSON schema for every value those methods return. You need
-   these to read results correctly.
-3. **`camel-sdk-discipline`** (`camel://sdk/discipline`) — the forensic investigative discipline: how to *reason*
+1. **`camel-sdk-index`** (`camel://sdk/index`) — the **map**: the execution model, the audit protocol, and the
+   complete inventory of every object (toolkits, workflows, the anomaly engine), every method name and every
+   returned model type, grouped by **subject area**.
+2. **`camel-sdk-discipline`** (`camel://sdk/discipline`) — the forensic investigative discipline: how to *reason*
    over what those methods return, ground findings, and flag high-consequence decisions for human judgement.
+3. Then, per task, the **areas you touch**: **`camel://sdk/core/{Area}`** for the method detail (parameters,
+   semantics, worked usage) and **`camel://sdk/schema/{Area}`** for the fields of what those methods return — e.g.
+   `camel://sdk/core/TimelineAnalysisWorkflow` + `camel://sdk/schema/TimelineAnalysisWorkflow`. Read the two or
+   three areas the objective needs, not all of them; `camel://sdk/core/all` and `camel://sdk/schema/all` still
+   serve the whole documents if you truly need everything.
 
-**Hard rules** (the `Execute` tool description repeats these): call **only** methods listed in
-`camel-sdk-core`, and read **only** object properties listed in `camel-sdk-schema`. Do not invent methods or
+**Hard rules** (the `Execute` tool description repeats these): call **only** methods listed in the
+`camel-sdk-index` inventory, and read **only** object properties listed in that area's schema. Do not invent methods or
 fields. Other essentials from the core doc: `await` async methods; methods/properties are PascalCase; workflow
 methods return a `WorkflowResult<T>` (check `.IsSuccess`, read the payload from `.Result`, summary in `.Message`);
 toolkit data methods return a `ToolResult<T>` (check `.IsSuccess`, read the payload from `.Result`, or the reason from

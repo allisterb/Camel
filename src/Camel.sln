@@ -48,6 +48,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Agent", "Agent", "{1513A316-D374-45FA-9CED-37F6B2E3534C}"
 	ProjectSection(SolutionItems) = preProject
 		..\tests\agent\CLAUDE.md = ..\tests\agent\CLAUDE.md
+		..\tests\pentest-agent-web\CLAUDE.md = ..\tests\pentest-agent-web\CLAUDE.md
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Base", "Base", "{86FD243B-55C3-4870-A37E-7956329C479C}"

@@ -4,6 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -21,6 +23,8 @@ using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using ModelContextProtocol.Protocol;
 using Jint;
+using Jint.Native;
+using Jint.Runtime.Interop;
 
 using Camel.Environments;
 
@@ -89,12 +93,14 @@ public abstract class CamelMCPTools : Runtime
 
 
     [McpServerTool(Name = "Execute"), Description(
-        "Execute JavaScript code against the Camel DFIR API (toolkits + workflows + anomaly engine). " +
-        "Before writing any script you MUST read the 'camel-sdk-core' resource (camel://sdk/core) for the " +
-        "execution model and the full list of objects and methods, and the 'camel-sdk-schema' resource " +
-        "(camel://sdk/schema) for the JSON schema of every value those methods return — without the schemas you " +
-        "cannot read results correctly. Call ONLY methods listed in camel-sdk-core, and access ONLY object " +
-        "properties listed in camel-sdk-schema; do not invent methods or properties that are not documented there.")]
+        "Execute JavaScript code against the Camel API (toolkits + workflows + anomaly engine). " +
+        "Before writing any script you MUST read the 'camel-sdk-index' resource (camel://sdk/index) — the map: the " +
+        "execution model plus the complete inventory of every object, method and returned model type, grouped by " +
+        "subject area. Then read the areas your task touches: 'camel://sdk/core/{Area}' for the method detail and " +
+        "'camel://sdk/schema/{Area}' for the fields of what those methods return — without the schema you cannot " +
+        "read results correctly. Call ONLY methods listed in the inventory, and access ONLY object properties " +
+        "listed in that area's schema; do not invent methods or properties that are not documented there. " +
+        "(camel://sdk/core/all and camel://sdk/schema/all still serve the whole documents.)")]
     public async Task<CallToolResult> Execute(
         string script,
         RequestContext<CallToolRequestParams> context,
@@ -151,12 +157,23 @@ public abstract class CamelMCPTools : Runtime
           .SetValue("auditFalsePositive", new Action<string>((s) => AuditFalsePositive(s, output)))
           .SetValue("auditMissingEvidence", new Action<string>((s) => AuditMissingEvidence(s, output)))
           .SetValue("auditHallucination", new Action<string>((s) => AuditHallucination(s, output)))
-          .SetValue("table", new Action<string[], object[][]>((headers, dataRows) =>
-              output.AppendLine(RenderAsciiTable(headers, dataRows))))
           // Per-session storage: a string-keyed bag that persists between Execute calls, so a script can cache an
           // expensive result (e.g. Session["mft"] = await Timeline.PsortAsync(...)) and reuse it later instead of
           // recomputing it. The same dictionary instance is bound on every call for this session.
           .SetValue("Session", session.Storage);
+
+        // table(rows) / table(headers, rows) — bound as a RAW-ARGUMENT function rather than a typed CLR delegate
+        // (Action<string[], object[][]>). Jint converts arguments for a typed delegate before the call, and those
+        // conversion failures are HOST errors a script cannot catch: `table([{a:1},{a:2}])` died on "No valid
+        // constructors found for type System.String" and `table(model.Items)` on "Object must implement
+        // IConvertible", the latter aborting the whole Execute past a try/catch (agent finding B-2). Since the
+        // natural call — "print this array of records" — was exactly the failing one, the shaping now happens here
+        // and every misuse becomes a diagnosable line of output instead of a dead script.
+        jsinterp.SetValue("table", new ClrFunction(jsinterp, "table", (_, args) =>
+        {
+            output.AppendLine(RenderTable(args));
+            return JsValue.Undefined;
+        }));
 
         // Bind the investigation-domain globals: the toolkits/workflows (and, for DFIR, the anomaly engine) the
         // script can call. This is the ONLY part of the engine that differs between the DFIR and pen-test servers
@@ -238,7 +255,8 @@ public abstract class CamelMCPTools : Runtime
             {
                 AuditEvent("hallucination", "{Message}", halluReason);
                 message += $"{Environment.NewLine}[possible hallucination] {halluReason}. Only objects and methods " +
-                           "documented in the camel-sdk-core resource exist — re-read it and do not invent APIs.";
+                           "in the camel-sdk-index inventory exist — re-read the map (camel://sdk/index) and the " +
+                           "area's own reference (camel://sdk/core/{Area}), and do not invent APIs.";
             }
 
             // Include anything written via log()/error() before the failure for context.
@@ -460,6 +478,103 @@ public abstract class CamelMCPTools : Runtime
 
     // Stdio (and any transport that doesn't assign one) yields a null/empty session id; bucket those under "default".
     protected static string SessionId(McpServer server) => string.IsNullOrEmpty(server.SessionId) ? "default" : server.SessionId;
+
+    /// <summary>
+    /// Shapes the arguments of a JS <c>table(...)</c> call into headers + rows, then renders the grid. Accepts the
+    /// three shapes an agent naturally writes, in order of how often it wants them:
+    /// <list type="bullet">
+    /// <item><c>table(records)</c> — an array of objects (JS literals OR SDK model instances): the columns are the
+    /// property names, in first-seen order. This is the "print this array of findings/ports/techs" case.</item>
+    /// <item><c>table(headers, rows)</c> — explicit column titles; each row may be an array of cells, or a record
+    /// projected by those titles (matched exactly, then case-insensitively).</item>
+    /// <item><c>table(values)</c> — an array of scalars: one row each, single <c>value</c> column.</item>
+    /// </list>
+    /// Everything is read through <see cref="JsValue.ToObject"/>, which unwraps a JS array to <c>object[]</c>, a JS
+    /// object to a string-keyed dictionary and a wrapped SDK model to the CLR instance itself — so a model array and
+    /// an array of literals take the same path. Malformed input RETURNS a diagnostic string; it never throws, because
+    /// an output helper must not be able to kill an analysis script.
+    /// </summary>
+    internal static string RenderTable(JsValue[] args)
+    {
+        if (args.Length == 0 || args[0].IsNull() || args[0].IsUndefined()) return "(empty table)";
+
+        // Two arguments = explicit headers, unless the first is itself the record array (a caller passing rows plus
+        // some other value): headers must be a flat list of scalars.
+        var first = args[0].ToObject();
+        var headerNames = args.Length >= 2 && Rows(first) is { } maybe && maybe.All(v => Record(v) is null && Cells(v) is null)
+            ? maybe.Select(CellText).ToArray()
+            : null;
+        var rowsValue = headerNames is not null ? args[1].ToObject() : first;
+
+        if (Rows(rowsValue) is not { } rows)
+            return $"(table: expected an array of rows, got {Describe(rowsValue)} — pass an array of objects, " +
+                   "an array of arrays, or table(headers, rows))";
+
+        var rowList = rows.ToList();
+        if (rowList.Count == 0) return "(empty table)";
+
+        // Derive the columns from the records themselves when the caller did not name them.
+        var columns = headerNames?.ToList() ?? [];
+        if (headerNames is null)
+        {
+            foreach (var row in rowList)
+                foreach (var name in Record(row)?.Keys ?? [])
+                    if (!columns.Contains(name, StringComparer.Ordinal)) columns.Add(name);
+            if (columns.Count == 0) columns.Add("value");      // an array of scalars: one column, one row each
+        }
+
+        var grid = rowList.Select(row => Record(row) is { } record
+                ? columns.Select(c => CellText(Lookup(record, c))).ToArray<object?>()
+                : Cells(row) is { } cells ? cells.Select(CellText).ToArray<object?>()
+                : [CellText(row)])
+            .ToArray();
+        return RenderAsciiTable(columns.ToArray(), grid);
+
+        // The rows of a table: any enumerable that is not itself a single record or a string.
+        static IEnumerable<object?>? Rows(object? v) => v switch
+        {
+            null or string => null,
+            IDictionary<string, object?> => null,
+            System.Collections.IEnumerable e => e.Cast<object?>(),
+            _ => null,
+        };
+
+        // A row's cells when the row is an array (not a record).
+        static IEnumerable<object?>? Cells(object? v) =>
+            v is not string and not IDictionary<string, object?> and System.Collections.IEnumerable e ? e.Cast<object?>() : null;
+
+        // A row as a column->value map: a JS object literal (dictionary) or an SDK model instance (properties).
+        static IReadOnlyDictionary<string, object?>? Record(object? v)
+        {
+            if (v is IDictionary<string, object?> dict) return dict.AsReadOnly();
+            if (v is null || v is string || v is System.Collections.IEnumerable || v.GetType().IsPrimitive
+                || v is decimal or DateTime or DateTimeOffset or TimeSpan or Guid or Enum) return null;
+            var map = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (var p in v.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (p.GetIndexParameters().Length > 0) continue;
+                try { map[p.Name] = p.GetValue(v); } catch { map[p.Name] = ""; }
+            }
+            return map.Count > 0 ? map : null;
+        }
+
+        static object? Lookup(IReadOnlyDictionary<string, object?> record, string column) =>
+            record.TryGetValue(column, out var v) ? v
+            : record.FirstOrDefault(kv => string.Equals(kv.Key, column, StringComparison.OrdinalIgnoreCase)).Value;
+
+        // A cell's display text. A nested collection is summarised inline rather than printed as a type name.
+        static string CellText(object? v) => v switch
+        {
+            null => "",
+            bool b => b ? "true" : "false",
+            string s => s,
+            IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
+            System.Collections.IEnumerable e => string.Join(", ", e.Cast<object?>().Take(5).Select(CellText)),
+            _ => v.ToString() ?? "",
+        };
+
+        static string Describe(object? v) => v is null ? "null" : v is string s ? $"the string \"{s}\"" : v.GetType().Name;
+    }
 
     /// <summary>
     /// Renders the JS <c>table(headers, rows)</c> call as a fixed-width ASCII grid (psql/GitHub style) for the

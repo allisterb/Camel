@@ -5,9 +5,10 @@ generates and executes inside the Camel MCP server's constrained JavaScript engi
 MCP tool). It covers the **execution model** (the rules every generated script must follow) and the **method
 signature index** for every top-level object: each method's name, purpose, parameter types, and return type.
 
-The **JSON schema for every parameter and return model type** named below lives in the companion resource
-**`camel-sdk-schema`** (`Camel.schema.md`). Read this core doc first to know what to call and what each call
-returns; consult the schema doc when you need the exact fields of a returned object.
+The **JSON schema for every parameter and return model type** named below lives in the companion schema document
+(`Camel.schema.md`). Both documents are served **sliced by subject area**: read `camel://sdk/index` for the map (the
+execution model plus the complete method/model inventory), then `camel://sdk/core/{Area}` for an area's methods and
+`camel://sdk/schema/{Area}` for the fields of what they return. This document as a whole is `camel://sdk/core/all`.
 
 Camel is a *code-mode* MCP server: rather than invoking SIFT forensic tools one MCP call at a time, the model
 writes a JavaScript program that orchestrates **toolkits** (typed wrappers over individual SIFT tools),
@@ -121,8 +122,17 @@ rotated, or disabled logs; an unavailable artifact). State "no evidence found", 
 artifact, method, or field. (The server also emits this automatically when a script references a non-existent
 toolkit/workflow — the resulting error names the invented API and is returned to you so you can self-correct.)
 
-`table(headers: string[], dataRows: object[][])` — write a tabular block to the output buffer (`headers` are the
-column headers; `dataRows` is one inner array of cell values per row).
+`table(rows)` / `table(headers: string[], rows)` — write a tabular block to the output buffer. Three accepted shapes:
+
+- `table(records)` — an **array of objects**, either JS literals or the models a toolkit/workflow returned
+  (`table(scan.Result.OpenPorts)`). The columns are the property names, in first-seen order. This is usually what you
+  want.
+- `table(headers, rows)` — explicit column titles; each row is either an array of cell values or a record projected
+  by those titles (matched case-insensitively).
+- `table(values)` — an array of scalars: one row each, under a single `value` column.
+
+A cell that is itself a collection is summarised inline (first few entries); `null` renders empty. A malformed call
+writes a one-line diagnosis into the output and **never throws** — it cannot abort your script.
 
 > Output is accumulated and returned as the tool result. If the script throws, output produced before the
 > failure is still returned, followed by the error message. The `audit*` functions persist beyond the response:

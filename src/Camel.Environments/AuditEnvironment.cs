@@ -450,14 +450,30 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     /// <summary>
     /// Refuses an offensive operation that targets an unauthorized host/range/URL by throwing
     /// <see cref="OutOfScopeException"/> (or <see cref="EngagementRequiredException"/> when nothing is
-    /// registered). Call this from any offensive toolkit/workflow path BEFORE it acts on a target — the
-    /// red-side counterpart of <see cref="FailIfEvidenceSpoliationRisk"/>.
+    /// registered), and RECORDS the refusal as a <c>scope-violation</c> audit event. Call this from any offensive
+    /// toolkit/workflow path BEFORE it acts on a target — the red-side counterpart of
+    /// <see cref="FailIfEvidenceSpoliationRisk"/>.
     /// </summary>
     public void FailIfOutOfScope(string target)
     {
-        if (!engagementRegistered) throw new EngagementRequiredException();
+        if (!engagementRegistered) throw AuditedRefusal(target, "No engagement registered (fail-closed).", new EngagementRequiredException());
         var decision = EvaluateScope(target);
-        if (!decision.InScope) throw new OutOfScopeException(decision);
+        if (!decision.InScope) throw AuditedRefusal(target, decision.Reason, new OutOfScopeException(decision));
+    }
+
+    /// <summary>
+    /// Records a refused target as a <c>scope-violation</c> audit event and returns the exception to throw, so
+    /// every refusal path leaves a trace. The record lives HERE rather than in the calling toolkit because a
+    /// refusal raised inside a workflow's own internal call would otherwise vanish: the enforcement was never in
+    /// doubt, but "we refused it and did not record refusing it" leaves the one question a scope gate's audit trail
+    /// exists to answer — *did this engagement ever reach for something outside scope?* — answerable only by
+    /// silence, which is indistinguishable from "it never happened". Found by an E2E agent run (finding B-0): 2
+    /// refusals, 0 events. The activity-class gate has always recorded its refusals (<c>activity-violation</c>).
+    /// </summary>
+    private static T AuditedRefusal<T>(string target, string reason, T refusal) where T : Exception
+    {
+        AuditEvent("scope-violation", "Refused an action targeting {Target}: {Reason}", target, reason);
+        return refusal;
     }
 
     /// <summary>
@@ -487,14 +503,15 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     /// <summary>
     /// Refuses a range/host-discovery sweep whose CIDR is not fully within an authorized range by throwing
     /// <see cref="OutOfScopeException"/> (or <see cref="EngagementRequiredException"/> when nothing is
-    /// registered). The range-level counterpart of <see cref="FailIfOutOfScope"/>; call it before sweeping, then
-    /// still gate each discovered host with the per-host check so excluded carve-outs inside the range are dropped.
+    /// registered), and RECORDS the refusal as a <c>scope-violation</c> audit event. The range-level counterpart of
+    /// <see cref="FailIfOutOfScope"/>; call it before sweeping, then still gate each discovered host with the
+    /// per-host check so excluded carve-outs inside the range are dropped.
     /// </summary>
     public void FailIfRangeOutOfScope(string cidr)
     {
-        if (!engagementRegistered) throw new EngagementRequiredException();
+        if (!engagementRegistered) throw AuditedRefusal(cidr, "No engagement registered (fail-closed).", new EngagementRequiredException());
         var decision = EvaluateRangeScope(cidr);
-        if (!decision.InScope) throw new OutOfScopeException(decision);
+        if (!decision.InScope) throw AuditedRefusal(cidr, decision.Reason, new OutOfScopeException(decision));
     }
 
     /// <summary>True when an engagement is registered AND it permits disclosing client targets to external

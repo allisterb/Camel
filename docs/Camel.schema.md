@@ -1,8 +1,10 @@
 # Camel JavaScript SDK — Schema Reference
 
-This is the **schema** companion to the Camel JavaScript SDK core reference (`camel-sdk-core` / `Camel.core.md`).
-It gives the JSON schema for every parameter and return model type named in the core doc's method signatures.
-Use it when you need the exact fields of an object a toolkit or workflow method returns.
+This is the **schema** companion to the Camel JavaScript SDK core reference (`Camel.core.md`). It gives the JSON
+schema for every parameter and return model type named in the core doc's method signatures. Use it when you need the
+exact fields of an object a toolkit or workflow method returns. It is served **per subject area** at
+`camel://sdk/schema/{Area}` (the map at `camel://sdk/index` names every type and the area that owns it); this whole
+document is `camel://sdk/schema/all`.
 
 Conventions: a `format: "date-time"` string is an ISO-8601 timestamp; an integer field marked "microseconds" is a
 POSIX timestamp in microseconds (UTC); `null`/optional fields correspond to C# nullable types. A `$ref` names
