@@ -1,9 +1,19 @@
 # The Anomaly Detection Toolkit — an in-depth explanation
 
-**Audience.** This document assumes you know undergraduate machine learning and time-series
-analysis — probability, information theory, Poisson processes, k-NN, embeddings, precision/recall
-— but *no* digital forensics, and no familiarity with the anomaly-detection literature specific to
-it. Everything domain-specific is explained where it first appears.
+**Audience.** This document only requires basic undergraduate ML concepts — probability, kNN,
+embeddings, precision/recall. Everything domain-specific is explained where it
+first appears. The anomaly detection, information theory, and time-series analysis concepts are all explained, needing nothing beyond logarithms and basic probability:
+
+- **Anomaly detection** — what it is, how it differs from signatures and rules, the taxonomy that
+  explains why there are five detectors, and why its usual metrics mislead at forensic scale:
+  [§1.2](#12-what-anomaly-detection-is).
+- **The timeline as a stream of irregularly-spaced events** — inter-arrival times, arrival rates,
+  and periodicity: [§1.5](#15-the-timeline-as-a-stream-of-events).
+- **"Bits of surprisal"**, the unit every detector scores in:
+  [§3.1](#31-surprisal-the-common-currency).
+
+Readers coming from the forensic side rather than the ML side can skip §1.1 (what a super timeline
+is) and should read §1.2 closely; readers coming from ML should do the reverse.
 
 **What this covers.** What the toolkit does and why it is built the way it is; the mathematics of
 each detector; how the design was forced by empirical failures; how it was evaluated; the
@@ -55,25 +65,125 @@ is typically 85% of a full super timeline.
 `Run`-key write, and a 4624 logon record have almost nothing in common except a timestamp. There
 is no single "signal" to model.
 
-## 1.2 Why this is an unusual anomaly-detection problem
+## 1.2 What anomaly detection is
 
-If you have done anomaly detection on sensor data or server metrics, almost every assumption you
-are used to is violated here:
+Anomaly detection is a specialist corner of machine learning, and one an ML course can easily skip.
+This section is the background; if you already work in it, skip to §1.3.
 
-1. **No labels, ever.** You cannot label a real intrusion dataset without already knowing the
-   answer. Any method requiring supervised training is unusable in the field even if it trains
-   beautifully in a paper.
+### The premise
 
-2. **No clean baseline.** The textbook setup is "fit on known-normal, score the test set." In
-   practice you are handed *one* disk image from a machine that is *already compromised*. There is
-   no uncontaminated reference. The toolkit therefore defaults to **self-baselining**: the host's
-   own event stream defines its normal, and the attacker's activity is scored against a
-   distribution it is itself a (tiny) part of. Section 3.2 covers what this costs.
+> Identify the observations that do not conform to expected behaviour — **without being told in
+> advance what non-conformity looks like.**
+
+That last clause is what separates it from the two techniques a forensic examiner already uses
+daily:
+
+| Approach | You supply | Catches | Misses |
+|---|---|---|---|
+| **Signature / IOC matching** | a specific thing to find — a hash, a filename, a YARA or Sigma rule | exactly what is on the list, with near-zero false positives | everything not on the list |
+| **Rules / heuristics** | a condition an expert wrote — "more than 10 × 4625 in a minute" | the patterns someone thought to encode | the ones nobody thought of; needs tuning per environment |
+| **Anomaly detection** | nothing but the data | departures from *this host's* normal, including behaviour never seen before | anything an attacker makes look routine — and it flags plenty of benign oddities |
+
+Camel does all three. The YARA toolkit and hayabusa are signature matching; the workflows encode
+analyst heuristics; this toolkit is the third row. It exists for the case the other two cannot
+serve: **"I have no signature, no keyword, and no lead — where do I even start looking?"**
+
+### Three learning settings
+
+The standard taxonomy (Chandola, Banerjee & Kumar's survey is the usual reference) splits by what
+labels you have:
+
+- **Supervised** — labelled examples of both normal *and* anomalous behaviour; train a classifier.
+  Requires a labelled corpus of attacks, which in practice means you are detecting last year's
+  intrusion.
+- **Semi-supervised (one-class)** — train only on data known to be clean, flag what deviates. The
+  textbook setup, and what most published methods assume.
+- **Unsupervised** — no labels at all. Assume only that anomalies are *rare* and *different*, and
+  let the data define its own normal.
+
+Camel is unsupervised, and §1.3 explains why the first two are not available on a real case.
+
+### Three kinds of anomaly
+
+The same survey splits by the *shape* of the anomaly, and this taxonomy is why the toolkit has
+five detectors rather than one — each shape needs different machinery:
+
+| Kind | Meaning | Forensic example | Detector |
+|---|---|---|---|
+| **Point** | one observation is odd on its own | event ID 1102, "the audit log was cleared", on a host that has never logged one | `RareType` (§3.2) |
+| **Contextual** | ordinary in general, odd *in this context* | a 25,000-character message — unremarkable for a crash dump, bizarre for a PowerShell script block | `Content` (§3.6) |
+| **Collective** | no single member is odd; the *group* is | 2,000 failed logons in a minute — each one utterly routine; or a chain of ordinary events in an order this host has never produced | `TimingBurst` (§3.4), `TimingBeacon` (§3.5), `RareTransition` (§3.3) |
+
+Most real intrusion evidence is collective or contextual, which is precisely why a per-event rule
+list struggles with it.
+
+### The usual methods — and why none of them is used here
+
+The standard unsupervised toolbox, roughly by family:
+
+| Family | Idea | Typical assumption |
+|---|---|---|
+| Distance / density | anomalies sit far from their neighbours (k-NN distance, Local Outlier Factor) | points live in a metric space where distance means something |
+| Clustering | fit clusters, flag what belongs to none | the same, plus a sensible cluster count |
+| Isolation | random splits isolate an outlier quickly (Isolation Forest) | numeric features |
+| Reconstruction | compress and re-expand; large error = anomaly (PCA, autoencoder) | a learnable low-dimensional structure |
+| Statistical / probabilistic | fit a distribution, flag low-probability observations | you can name a distribution that fits |
+
+Almost all of them expect **numeric feature vectors of independent samples**. A forensic timeline
+is a *categorical, irregularly-timed, unlabelled, non-independent* stream, so most of the toolbox
+does not apply off the shelf — you must first invent a numeric representation, and that step is
+where the information gets lost.
+
+Camel took the last row: fit explicit probability models by counting, and score observations by how
+improbable they are. It did also try the first row — k-NN distance over learned embeddings, the
+conventional modern answer — and that is Part VII, which is a record of it failing.
+
+### How anomaly detection is evaluated, and the trap that matters most
+
+Because anomalies are rare, the familiar metrics mislead badly. This is worth working through
+concretely, because it is the reason "99% accurate" security ML is so often useless.
+
+Take our validation host: 145,756 events, 32 of them of interest. Suppose a detector achieves
+100% recall (it finds all 32) with a 1% false-positive rate — which sounds excellent.
+
+```
+false positives = 1% × 145,724 benign events = 1,457
+true positives  = 32
+precision       = 32 / (32 + 1,457) = 2.1%
+```
+
+Every alert has a **98% chance of being noise**, from a detector with a 1% error rate. This is the
+base-rate fallacy, and at forensic scale it is unavoidable rather than a sign of a bad model.
+Consequences, all of which the rest of this document leans on:
+
+- **Accuracy is meaningless.** Always predicting "benign" scores 99.98%.
+- **ROC-AUC flatters.** It plots recall against false-*positive rate*; with 145k negatives, a
+  visually excellent curve still hides thousands of false alarms.
+- **Use ranking metrics.** Precision@k, recall@k, and Average Precision measure what a human
+  actually experiences: the quality of the top of a ranked list.
+
+The honest conclusion is not "build a better detector until precision is high." It is to change
+what the system is for — §1.4.
+
+## 1.3 Why this is an unusual anomaly-detection problem
+
+With that framing in place, notice how many of its standard assumptions this particular problem
+violates:
+
+1. **No labels, ever — so the supervised setting is out.** You cannot label a real intrusion
+   dataset without already knowing the answer. Any method requiring supervised training is
+   unusable in the field even if it trains beautifully in a paper.
+
+2. **No clean baseline — so the semi-supervised setting is out too.** "Fit on known-normal, score
+   the test set" presumes a known-normal to fit on. In practice you are handed *one* disk image
+   from a machine that is *already compromised*, with no uncontaminated reference. That leaves the
+   unsupervised setting, and the toolkit therefore defaults to **self-baselining**: the host's own
+   event stream defines its normal, and the attacker's activity is scored against a distribution it
+   is itself a (tiny) part of. §3.2 covers what this costs, and it is not free.
 
 3. **Extreme class imbalance.** On the validation host: **32 events of interest out of 145,756** —
-   a positive rate of 2.2 × 10⁻⁴. Accuracy is meaningless (predict "benign" always → 99.98%).
-   ROC-AUC is nearly as bad: with 145k negatives, a detector can have an excellent AUC and still
-   drown the analyst in false positives.
+   a positive rate of 2.2 × 10⁻⁴, well inside the regime where §1.2's base-rate arithmetic bites.
+   Any detector here will produce far more false alarms than findings.
 
 4. **"Anomalous" ≠ "malicious".** This is the deepest issue. A statistical outlier on a Windows
    host is usually a software update, a GPO rollout, or a backup job. Conversely, the single most
@@ -82,7 +192,7 @@ are used to is violated here:
    ceiling here, and pretending otherwise is how DFIR ML papers end up with numbers that do not
    survive contact with a real host.
 
-## 1.3 The task reframe: triage, not detection
+## 1.4 The task reframe: triage, not detection
 
 Given (4), the toolkit does not attempt to decide what is malicious. It answers a strictly weaker
 and *actually useful* question:
@@ -107,6 +217,138 @@ binding constraint (145,756 events do not fit; and sampling them is precisely ho
 rate estimation, periodicity — that code does exactly and instantly, and hand the agent a
 shortlist small enough to reason over, *with a stated reason per entry* so the agent is reading
 evidence rather than raw data.
+
+## 1.5 The timeline as a stream of events
+
+Three of the five detectors reason about *when* things happened rather than *what* happened. This
+section introduces the handful of time-series ideas they need. If you have only met regularly
+sampled series — one temperature reading per minute, one closing price per day — the first point
+below is the one that matters, because it rules most of that toolbox out.
+
+### It is a point process, not a sampled signal
+
+A forensic timeline has no sampling interval. Events occur at whatever irregular instants they
+occur, and long stretches contain nothing at all. The object is a **point process**: a set of
+timestamps on a line. Each point also carries a category (its event-type token, §2.5), which makes
+it a *marked* point process.
+
+The practical consequence: techniques that assume a fixed grid — autocorrelation at lag *k*,
+ARIMA, seasonal decomposition, the FFT — do not apply directly, because there is no "lag 1" when
+consecutive events can be 3 milliseconds or 3 weeks apart. Instead you work with the **gaps
+between events**, which carry the same information in a form that survives irregular spacing.
+
+### Inter-arrival times
+
+The gap between consecutive events:
+
+```
+Δtᵢ = tᵢ − tᵢ₋₁
+```
+
+The whole temporal signal lives in this sequence, and three regimes of it carry forensic meaning:
+
+| Regime | Looks like | Forensically |
+|---|---|---|
+| **Burst** | many gaps near zero | password spray, logon storm, mass file access, bulk policy change |
+| **Cadence** | gaps nearly constant | automation — a C2 beacon, a scheduled task, a polling agent |
+| **Quiet** | one very large gap | the host was off, or a log source stopped (§8.8) |
+
+`TimingBurstDetector` (§3.4) looks for the first, `TimingBeaconDetector` (§3.5) for the second.
+
+### Why the gaps are stored on a log scale
+
+`CanonicalEvent.DtPrev` is `ln(1 + Δseconds)`, not `Δseconds`. Gaps on a real host span roughly
+`10⁻³` to `10⁶` seconds — nine orders of magnitude. On a linear scale one week-long gap
+(604,800) swamps every sub-minute gap in any average or distance computation, and everything under
+a minute collapses indistinguishably towards zero. The log compresses that range so *ratios*
+become comparable distances:
+
+| Δ | `ln(1 + Δ)` |
+|---|---|
+| 0 s (same instant) | 0.00 |
+| 1 s | 0.69 |
+| 1 min | 4.11 |
+| 1 hour | 8.19 |
+| 1 day | 11.37 |
+
+"10 ms → 1 s" and "1 day → 100 days" now occupy comparable intervals, which matches how the
+underlying phenomena work: bursts and cadences are multiplicative, not additive. The `+1` simply
+keeps `Δ = 0` finite. (`TextRenderer`'s bucket boundaries in §7.1 — 2.5, 4.2, 8.3, 11.5 — are
+read straight off this scale: roughly 11 s, 66 s, 75 min, 1.1 days.)
+
+### Arrival rates and the Poisson model
+
+To say a burst is *surprising*, a detector needs a notion of the normal rate. The simplest
+adequate model, and the only one §3.4 uses:
+
+> If events of a given type arrive independently of one another at a constant average rate `λ`,
+> then the number falling in any window of `W` seconds has mean `μ = λ·W`.
+
+That is a **homogeneous Poisson process**. Both parameters come from counting — no fitting, no
+optimizer. If a token occurred `c` times across a baseline spanning `T` seconds:
+
+```
+λ̂ = c / T                     (events per second)
+μ  = λ̂ · W                     (expected count per window)
+```
+
+Worked, with the token from §3.4's example: 1,425 occurrences across a 30-day baseline
+(T = 2,592,000 s) gives `λ̂ = 5.5 × 10⁻⁴` per second, so in a `W = 60 s` window you expect
+`μ = 0.033` events — about one every half hour. Observing **2,318** in a single 60-second window is
+the burst, and §3.4 turns that gap between 0.033 and 2,318 into a score.
+
+Two properties of a Poisson process are worth carrying forward. Its inter-arrival times are
+exponentially distributed, so *some* clustering is normal and a couple of near-simultaneous events
+mean nothing. And its variance equals its mean, which is what makes a count of 2,318 against an
+expectation of 0.033 so extreme rather than merely high.
+
+**The assumption is wrong, and knowingly so.** Real hosts are not homogeneous: logons cluster at
+9 a.m., backups run at 2 a.m., patch cycles land on Tuesdays. A single constant `λ` fitted over a
+month averages all of that away, so a genuinely periodic *benign* workload can read as a burst.
+This is one reason the shortlist's top entries skew benign (§5.4, §8.11).
+
+### Periodicity without a spectrum
+
+The textbook way to find a period is spectral — a periodogram or autocorrelation — and it needs a
+regularly sampled signal — which, as the first point above says, we do not have. So `TimingBeaconDetector`
+works directly on the inter-arrival series instead: if a process fires every ≈ `m` seconds, then
+most of its gaps will sit close to `m`. Take the **median** gap as the candidate period and count
+how many gaps fall within ±25% of it.
+
+The median matters. A natural alternative is the **coefficient of variation** — `CV = σ/μ` of the
+gaps, which is ≈ 1 for a Poisson process and 0 for a perfectly regular one, and so looks like an
+ideal regularity score. It is useless here: a real beacon goes quiet when the host sleeps, and two
+or three eight-hour gaps in an otherwise metronomic series inflate `σ` enough to hide it
+completely. "What fraction of gaps sit near the median" degrades gracefully where `CV` collapses.
+
+### Order versus timing
+
+The same stream yields two independent kinds of signal, and the toolkit models both:
+
+- **Timing** — where the points fall (§3.4, §3.5). Content-free: a beacon's cadence is visible even
+  when its payload is encrypted.
+- **Order** — the sequence of marks, ignoring the clock. §3.3 fits a **bigram** model: the
+  probability of each token given the one before it, `P(τₜ | τₜ₋₁)`, estimated by counting adjacent
+  pairs in the baseline. (This is a first-order Markov model — "the next symbol depends only on the
+  current one." It is the same machinery as a character-level language model, applied to event
+  types.) It catches chains whose every individual step is routine but whose *order* the host has
+  never produced.
+
+### Windows
+
+Parts IV and VII operate on **windows** — contiguous runs of consecutive events, because a single
+event rarely means anything while an episode (logon → file write → execution) does.
+
+Camel windows by **event count**, not by duration: `WindowSpec.Tiled(20)` means 20 consecutive
+events per window, advancing 20 at a time; `Overlapping(size, stride)` slides with `stride < size`.
+Fixed-*duration* windows would be the more conventional choice and are a poor fit here, because
+event density varies by orders of magnitude across a timeline — most fixed-duration windows would
+be empty and a few would hold tens of thousands of events. (Fixed-duration windowing does exist,
+for one specific job: `Windower.AroundPivot` takes everything within ±N minutes of a moment of
+interest, reproducing the analyst's "what else happened around this time?" pivot.)
+
+Window size turns out to be the single most consequential knob in Part VII, for reasons §7.2
+develops.
 
 ---
 
@@ -162,11 +404,9 @@ makes the representation transferable across hosts. Part VII shows this choice a
 
 ## 2.3 The temporal feature
 
-`DtPrev = ln(1 + Δseconds)` is the log-compressed inter-event gap. The log is not cosmetic: raw Δt
-on a timeline spans 0 to 10⁷ seconds, so on a linear scale a millisecond and a second are
-indistinguishable while a week dominates every statistic. On the log scale, "10 ms vs 1 s" and
-"1 day vs 100 days" occupy comparable intervals — which matches how the signal actually works
-(bursts and cadences are multiplicative phenomena).
+`DtPrev = ln(1 + Δseconds)` is the log-compressed inter-event gap — the single temporal feature
+carried on every canonical event. §1.5 covers why the gaps are stored on a log scale and what the
+values mean (1 second ≈ 0.69, one hour ≈ 8.19, one day ≈ 11.37).
 
 Crucially, `DtPrev` is computed **after** filtering, over the surviving events. If you filter
 noise first and compute deltas from the unfiltered stream you get gaps that correspond to no
@@ -209,19 +449,143 @@ path lost.
 
 # Part III — The detectors
 
-## 3.1 Surprisal as a common currency
+## 3.1 Surprisal: the common currency
 
-Every detector reports its score in **bits of surprisal**, `I(x) = -log₂ p(x)`. Three reasons:
+Every detector in the toolkit outputs its score in the same unit — **bits of surprisal**. This
+section builds that idea from nothing, because every formula in Part III is expressed in it.
 
-1. **Interpretability.** 20 bits means "roughly a one-in-a-million event under the fitted model."
-2. **Additivity.** Under independence, surprisals add, so an event flagged by several detectors
-   accumulates score naturally rather than needing a tuned weighted sum.
-3. **A shared unit** across detectors modelling completely different phenomena.
+### The starting point: a probability
 
-A caveat is stated up front because it bit us in practice: a shared *unit* is not a shared
-*scale*. See §4.2.
+Each detector holds some probability model of the host's normal behaviour, fitted by counting
+things in the baseline. When a new event arrives, the model can say how probable that event was.
+Concretely, for the simplest detector: if the token `evtx:4624` occurred 40,000 times in a
+baseline of 130,948 events, the model's estimate is
 
-The `IEventDetector` contract is uniform:
+```
+p(evtx:4624) = 40000 / 130948 = 0.305
+```
+
+and for a token seen only 8 times,
+
+```
+p(evtx:1102) = 8 / 130948 = 0.000061
+```
+
+Low probability means "the model did not expect this," which is what we want to rank by. So we
+could simply sort events by ascending `p` and be done.
+
+### Why not just use the probability
+
+Three practical problems, none of them deep:
+
+1. **The numbers are unreadable.** A shortlist entry saying `p = 7.6e-12` next to one saying
+   `p = 6.1e-5` is technically ordered but tells an analyst nothing about how much more unusual the
+   first one is. These scores are shown to a human and to an LLM; legibility is a requirement, not
+   a nicety.
+2. **Probabilities multiply, and underflow.** Combining several independent pieces of evidence
+   means multiplying their probabilities. Multiply half a dozen small numbers together and you get
+   something that is awkward to reason about and, at forensic scale, close to floating-point zero.
+3. **Differences are not meaningful on a linear scale.** Is `p = 0.001` twice as interesting as
+   `p = 0.002`? The gap between `0.5` and `0.4` is the same *number* as the gap between `0.1001`
+   and `0.0001`, but nothing like the same *significance*.
+
+### The fix: take the negative logarithm
+
+Define the **surprisal** (also called information content, or self-information) of an outcome:
+
+```
+I(x) = -log₂ p(x)          measured in bits
+```
+
+That is the whole of the information theory used in this document. Its properties are exactly the
+three fixes:
+
+- **It is monotone.** `-log₂` is a decreasing function, so ranking by surprisal descending gives
+  the *identical* order to ranking by probability ascending. The ranking is unchanged; only the
+  readability of the number changes.
+- **`p = 1` gives 0 bits.** A certain event is not surprising and carries no information. As `p`
+  approaches 0, surprisal grows without bound — which is why every detector floors its probability
+  estimate rather than allowing a literal zero (see the `ε` in §3.2).
+- **Multiplication becomes addition.** This is the important one:
+
+  ```
+  -log₂(p₁ · p₂)  =  (-log₂ p₁) + (-log₂ p₂)
+  ```
+
+  Independent evidence *adds* instead of multiplying. That is what lets the ensemble in Part IV
+  combine five detectors by summing their scores, with no tuned weights and no calibration step.
+
+### What one bit means
+
+A bit is one halving of probability. `n` bits means `p = 2⁻ⁿ`, i.e. "about one in 2ⁿ":
+
+| Bits | Probability | Reads as |
+|---|---|---|
+| 0 | 1 | certain — no information |
+| 1 | 1/2 | a coin flip |
+| 3.3 | 1/10 | one in ten |
+| **6** | 1/64 | *the toolkit's default reporting threshold* |
+| **8** | 1/256 | *the transition detector's threshold* |
+| 10 | ~1/1,000 | |
+| 14 | ~1/16,000 | |
+| 20 | ~1/1,000,000 | one in a million |
+| 37 | ~1/10¹¹ | never seen in this baseline |
+
+An equivalent reading, if it helps: `n` bits is the number of yes/no questions you would need to
+pin down the outcome among 2ⁿ equally likely alternatives. (This is where the name comes from —
+Shannon's result is that an optimal code spends about `-log₂ p` bits encoding a symbol of
+probability `p`. Camel never encodes anything; it just borrows the scale.)
+
+### Worked example, on the real validation host
+
+Baseline of `N = 130,948` events, self-baselined (§3.2), using `RareTypeDetector`'s formula:
+
+| Event type | Count `c` | `p = c/N` | `-log₂ p` | Reported? |
+|---|---|---|---|---|
+| A routine type making up ~30% of the stream | 40,000 | 0.305 | **1.7 bits** | no — below 6 |
+| `evtx:1102` "audit log cleared" | 8 | 0.000061 | **14.0 bits** | **yes** |
+| A token absent from the baseline entirely | 0 (floored to ε) | 7.6 × 10⁻¹² | **36.9 bits** | **yes** |
+
+Checking the middle row by hand: `130948 / 8 = 16368`, and `2¹⁴ = 16384`, so the surprisal is
+`log₂(16368) ≈ 14.0` bits. The log-clear is roughly a one-in-sixteen-thousand event on this host —
+and that is the *whole* detection mechanism for the anti-forensics IOC.
+
+### What the thresholds mean
+
+Each detector has a `minBits` below which it stays silent. Because the unit is interpretable, so is
+the dial:
+
+- `RareTypeDetector(minBits: 6.0)` — report only what the model rates at `p ≤ 1/64`.
+- `RareTransitionDetector(minBits: 8.0)` — report only transitions at `p ≤ 1/256`. Higher, because
+  a bigram model over a shuffled multi-process stream is noisier than a unigram one, so it needs
+  more evidence before it speaks.
+
+Setting these in probability units (`0.0156`, `0.0039`) would be the same thing, less legibly.
+
+### Adding them up
+
+Because surprisals add, an episode that several detectors independently flag accumulates:
+
+```
+rare type (14.0 bits) + suspicious content (12.0 bits) = 26.0 bits total
+```
+
+Read literally that says "jointly about a one-in-67-million occurrence." Read practically, it says
+"two independent models both found this strange, so it outranks anything only one model flagged" —
+which is the behaviour we actually want out of an ensemble, obtained for free from the choice of
+unit.
+
+Two honest caveats, both revisited later:
+
+- **Independence is assumed and is false.** A burst of a rare type triggers both `RareType` and
+  `TimingBurst` on correlated evidence, and summing double-counts it. See §8.5.
+- **A shared unit is not a shared scale.** Two detectors can both report "bits" while having
+  wildly different dynamic ranges, which broke the first version of the ensemble outright. This is
+  §4.2, and it is the most instructive failure in the whole design.
+
+### The detector contract
+
+With the unit established, the `IEventDetector` contract is uniform:
 
 ```csharp
 IEnumerable<Finding> Detect(CanonicalEvent[] baseline, CanonicalEvent[] target);
@@ -277,8 +641,8 @@ per-entity is the highest-value open item on the toolkit (§8.3).
 
 ## 3.4 TimingBurstDetector — Poisson large deviations
 
-Now a genuine time-series model. For each token, estimate a homogeneous Poisson rate from the
-baseline:
+Now a genuine time-series model — the Poisson set-up and the worked rate estimate are in §1.5. For
+each token, estimate a homogeneous Poisson rate from the baseline:
 
 ```
 λ̂_τ = c(τ) / T_baseline          μ_τ = λ̂_τ · W ,   W = 60 s
@@ -292,11 +656,22 @@ score the upper tail by its **Chernoff / large-deviation exponent**:
 -log P(X ≥ n)  ≈  n·ln(n/μ) - (n - μ)   nats        bits = nats / ln 2
 ```
 
-This expression is the Kullback–Leibler divergence between the empirical and hypothesized Poisson
-rates, and is the standard large-deviation rate function for a Poisson variable. It is used
-instead of the exact tail sum because it needs no factorials or incomplete gamma function, is
-numerically stable at n in the thousands, and is monotone in n — which is all the ranking
-requires. Zero when n ≤ μ (only the upper tail is of interest).
+In the vocabulary of §3.1, this is still "how many bits of surprise," just computed for a *count*
+rather than for a symbol: it approximates `−log₂ P(seeing at least n events)` when the true rate is
+`μ`. It is the standard large-deviation rate function for a Poisson variable, and equals the
+Kullback–Leibler divergence between the observed and hypothesized rates — a quantity you can read
+here simply as "bits of evidence against the claim that this token's rate is still `μ`." The
+approximation is used instead of the exact tail sum `Σ_{k≥n} e^{−μ}μᵏ/k!` because it needs no
+factorials or incomplete gamma function, stays numerically stable at n in the thousands, and is
+monotone in n — which is all a ranking requires. Zero when n ≤ μ (only the upper tail is of
+interest).
+
+A quick sanity check on the scale, using the real burst from §4.2: 2,318 events of a token whose
+baseline rate predicts ~0.033 per 60-second window gives
+`2318·ln(2318/0.033) − (2318 − 0.033) ≈ 23,550` nats ≈ **34,000 bits**. That is an absurd-looking
+number, and it is *correct* — the model genuinely assigns that burst a probability near 2⁻³⁴⁰⁰⁰.
+Note how far it is from the 14 bits of the log-clear. §4.2 is about what that gap does to a ranked
+shortlist.
 
 This catches password spraying (a flood of 4625 failed logons), logon storms, and rapid service
 installation. Note that it is a *pure timing* signal: it fires on volume alone, with no knowledge
@@ -324,10 +699,10 @@ tightness. A principled replacement (e.g. a likelihood ratio against an exponent
 null, or a periodogram / Fisher g-test on the point process) is straightforward and would make the
 scale commensurable with the others.
 
-The robust-statistics choice is deliberate: median-plus-tolerance-fraction rather than
-coefficient-of-variation, because real beacons jitter deliberately and go quiet when the host
-sleeps. A CV-based score is destroyed by a handful of long gaps; the "fraction of intervals near
-the median" formulation is not.
+The robust-statistics choice — median-plus-tolerance-fraction rather than coefficient of variation
+— is deliberate, and §1.5 explains why: real beacons jitter on purpose and go quiet when the host
+sleeps, and a handful of long gaps destroys a CV-based score while leaving "fraction of intervals
+near the median" intact.
 
 Two quirks worth knowing. (i) The `minRegular = 6` gate is not binding: `minBits = 6` requires
 `0.6·regular·fraction ≥ 6`, i.e. `regular·fraction ≥ 10`, which already implies regular ≥ 10.
@@ -427,7 +802,7 @@ record TriageReport { TriageItem[] Shortlist; int TotalEvents; int Candidates;
 rendered for the agent as:
 
 ```
-[  34012.3 bits ×2318 ] 2018-08-06 19:14:02Z evtx:4907 — 2318 'evtx:4907' events in 60s (≈0.31 expected, 34012.3 bits)
+[  34012.3 bits ×2318 ] 2018-08-06 19:14:02Z evtx:4907 — 2318 'evtx:4907' events in 60s (≈0.03 expected, 34012.3 bits)
 [     14.0 bits ×8    ] 2018-08-06 03:22:11Z evtx:1102 — event type 'evtx:1102' is rare (8/130948 in baseline, 14.0 bits)
 ```
 
@@ -768,10 +1143,12 @@ classification proxy.
 
 ## 7.6 What this means
 
-There is an information-theoretic reading that ties Parts II and VII together.
+There is a reading in terms of §3.1's vocabulary that ties Parts II and VII together.
 
-Canonicalization (§2.2) **deliberately destroyed** the high-entropy fields — paths, message text —
-because they were leaky. What survives is a low-dimensional, discrete substrate: a handful of enums
+Canonicalization (§2.2) **deliberately destroyed** the fields carrying the most information —
+paths and message text, where nearly every value is distinct and therefore individually
+surprising — because that information was leaky (it identified *this* intrusion rather than
+describing intrusions). What survives is a low-dimensional, discrete substrate: a handful of enums
 and one categorical token. A learned sentence encoder's advantage is its prior over *natural
 language semantics* — it maps distributionally-similar prose to nearby vectors. That prior has
 almost nothing to grip on a rendered enum tuple, and it cannot recover information the
@@ -813,7 +1190,7 @@ material fraction of the stream, it becomes "normal" and rarity-based detection 
 Mitigable with a cross-host baseline (the two-argument `Triage` overload exists) or a known-good
 reference image — neither of which is usually available.
 
-**8.2 "Anomalous" is not "malicious."** §1.2(4). The shortlist top on the validation host is
+**8.2 "Anomalous" is not "malicious."** §1.3(4). The shortlist top on the validation host is
 probably a benign GPO rollout. Statistically-normal-but-malicious activity — logon with valid
 stolen credentials — is invisible to every one of these detectors by construction.
 
@@ -847,6 +1224,13 @@ A log source that stops reporting is a classic anti-forensics tell and is curren
 Ch. 7) is a reasonable alternative; a global one is not (§4.2).
 
 **8.10 Evaluation breadth.** §5.4. One host, two IOC classes, both well-matched to the detectors.
+
+**8.11 The rate model is homogeneous.** §1.5. `TimingBurst` fits one constant `λ` per token over
+the whole baseline, so it has no notion of business hours, nightly maintenance windows, or weekly
+patch cycles — a benign workload that is merely *concentrated* can exceed a flat expectation. A
+time-of-day or day-of-week rate (the ingredients are already on `CanonicalEvent.HourOfDay`) would
+be a modest change with a real payoff, and would also let the detector notice a burst that is
+unremarkable at 2 p.m. but not at 3 a.m.
 
 ---
 
