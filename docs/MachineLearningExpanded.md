@@ -1,19 +1,18 @@
 # The Anomaly Detection Toolkit — an in-depth explanation
 
-**Audience.** This document only requires basic undergraduate ML concepts — probability, kNN,
-embeddings, precision/recall. Everything domain-specific is explained where it
-first appears. The anomaly detection, information theory, and time-series analysis concepts are all explained, needing nothing beyond logarithms and basic probability:
+**Audience.** This document is for anyone who wants to understand what the toolkit actually does, how it decides, and where it can
+be trusted. No prior knowledge is required and everything domain-specific is explained where it first appears. The anomaly detection, information theory, and time-series analysis concepts are all explained, needing nothing beyond logarithms and basic probability:
+# The Anomaly Detection Toolkit — an in-depth explanation
 
-- **Anomaly detection** — what it is, how it differs from signatures and rules, the taxonomy that
-  explains why there are five detectors, and why its usual metrics mislead at forensic scale:
-  [§1.2](#12-what-anomaly-detection-is).
-- **The timeline as a stream of irregularly-spaced events** — inter-arrival times, arrival rates,
-  and periodicity: [§1.5](#15-the-timeline-as-a-stream-of-events).
-- **"Bits of surprisal"**, the unit every detector scores in:
-  [§3.1](#31-surprisal-the-common-currency).
+| Primer | Covers |
+|---|---|
+| [§1.2 Anomaly detection](#12-what-anomaly-detection-is) | what it is, how it differs from signatures and rules, the taxonomy that explains why there are five detectors, and why its usual metrics mislead at forensic scale |
+| [§1.5 The event stream](#15-the-timeline-as-a-stream-of-events) | inter-arrival times, arrival rates, periodicity, windows |
+| [§3.1 Bits of surprisal](#31-surprisal-the-common-currency) | the unit every detector scores in |
+| [§7.1 Representations](#71-background-representations-similarity-and-k-nn) | vectors, embeddings, cosine similarity, k-NN, and the scores the experiments report |
 
-Readers coming from the forensic side rather than the ML side can skip §1.1 (what a super timeline
-is) and should read §1.2 closely; readers coming from ML should do the reverse.
+Skip whichever you already know. A forensic reader can skim §1.1 (what a super timeline is); an ML
+reader can skim §1.2, §3.1, and §7.1.
 
 **What this covers.** What the toolkit does and why it is built the way it is; the mathematics of
 each detector; how the design was forced by empirical failures; how it was evaluated; the
@@ -273,7 +272,7 @@ become comparable distances:
 
 "10 ms → 1 s" and "1 day → 100 days" now occupy comparable intervals, which matches how the
 underlying phenomena work: bursts and cadences are multiplicative, not additive. The `+1` simply
-keeps `Δ = 0` finite. (`TextRenderer`'s bucket boundaries in §7.1 — 2.5, 4.2, 8.3, 11.5 — are
+keeps `Δ = 0` finite. (`TextRenderer`'s bucket boundaries in §7.2 — 2.5, 4.2, 8.3, 11.5 — are
 read straight off this scale: roughly 11 s, 66 s, 75 min, 1.1 days.)
 
 ### Arrival rates and the Poisson model
@@ -347,7 +346,7 @@ be empty and a few would hold tens of thousands of events. (Fixed-duration windo
 for one specific job: `Windower.AroundPivot` takes everything within ±N minutes of a moment of
 interest, reproducing the analyst's "what else happened around this time?" pivot.)
 
-Window size turns out to be the single most consequential knob in Part VII, for reasons §7.2
+Window size turns out to be the single most consequential knob in Part VII, for reasons §7.3
 develops.
 
 ---
@@ -596,7 +595,7 @@ Fit statistics on `baseline`, score `target`. Passing the same array for both is
 Every `Finding` carries a human-readable `Reason` — non-negotiable in forensics, where a
 conclusion that cannot be explained cannot be used.
 
-## 3.2 RareTypeDetector — unigram surprisal
+## 3.2 RareTypeDetector — surprisal of a single event type
 
 The simplest, and empirically the most valuable.
 
@@ -621,7 +620,7 @@ toolkit's single most important assumption — it detects *rare* evil, not *prol
 Long-dwell adversaries who blend into routine administrative traffic are exactly the case it is
 weakest on.
 
-## 3.3 RareTransitionDetector — bigram surprisal
+## 3.3 RareTransitionDetector — surprisal of a transition
 
 A first-order Markov model over the token sequence:
 
@@ -820,11 +819,25 @@ Implemented in `AnomalyDetectionEval`:
 - **`ScoreTriage(report, isPositive[])` → recall @ budget + compression + first-hit rank.** The
   primary metric. An episode covers every positive among its members.
 - **`RankingMetrics(...)` → precision@k, recall@k, Average Precision, best rank, chance AP.** Used
-  for the comparative experiments, since AP is threshold-free and, unlike ROC-AUC, is sensitive to
-  performance in the extreme-imbalance regime.
+  for the comparative experiments.
 
-Accuracy is never used for anomaly ranking. It is used only in the *balanced*
-action-classification proxy of §7.4, where it is appropriate.
+In plain terms, for a ranked list of suspects:
+
+- **Precision@k** — of the top `k` entries, what fraction are genuinely of interest. "How much of
+  what I read first was worth reading."
+- **Recall@k** — of everything genuinely of interest, what fraction appears in the top `k`. "How
+  much did I find."
+- **Average Precision (AP)** — walk down the ranked list; each time you hit a genuine positive,
+  note the precision at that point; average those numbers. It rewards putting positives *early* and
+  needs no threshold, which makes it the right summary for comparing two rankings. A perfect
+  ranking scores 1.0; random ranking scores roughly the positive rate, which is why every AP figure
+  in Part VII is quoted against its **chance AP** — 23.3% means little until you know chance was
+  0.2%.
+- **First-hit rank** — how far down the first genuine positive appears. The most human metric there
+  is: how long before the analyst sees something real.
+
+Accuracy is never used for anomaly ranking (§1.2 explains why). It is used only in the *balanced*
+action-classification proxy of §7.5, where it is appropriate.
 
 ## 5.2 The validation host
 
@@ -889,6 +902,22 @@ influence on this toolkit — including where we deliberately went the other way
 `reference/papers/timelineml/`.
 
 ## 6.1 The papers
+
+These describe other people's systems, so the section necessarily uses their vocabulary. The
+minimum needed to follow it:
+
+| Term | In one sentence |
+|---|---|
+| **GRU / BiLSTM** | neural networks that read a sequence one item at a time, keeping a running memory — the standard pre-transformer way to model text |
+| **NER** (named-entity recognition) | tagging each word with what it *is* (a username, an IP, a path) — here, used to pull structured fields out of free-text log lines |
+| **Sentiment classifier** | a model trained to judge whether text is positive or negative in tone; these papers treat "negative" as "an event of interest" |
+| **Zero-shot NLI** | a model asked to judge whether a statement follows from a text, using only its general pre-training — no task-specific training data |
+| **Autoencoder** | a network trained to compress its input and rebuild it; anything it rebuilds badly is unlike its training data, so reconstruction error becomes an anomaly score |
+| **Isolation Forest / Random Forest** | tree-based methods — the first isolates outliers with random splits, the second is a supervised classifier voting over many decision trees |
+| **RAG** (retrieval-augmented generation) | fetch the passages most relevant to a question, then have a language model answer using them |
+| **Tomek links** | a resampling trick that discards borderline majority-class examples to help a classifier learn a rare class |
+| **F1** | see §5.1 — the balanced combination of precision and recall these papers report |
+
 
 **Automatic Log Parser to Support Forensic Analysis** and **Automatic Event Log Abstraction to
 Support Forensic Investigation** (Studiawan, Sohel, Payne). Learned log-field extraction —
@@ -978,7 +1007,105 @@ it would be defensible, and remains an open option.
 This part documents work that **did not ship**. It occupies a third of this document because the
 negative results are what justify the shipped design, and because the failure modes generalize.
 
-## 7.1 The hypothesis
+## 7.1 Background: representations, similarity, and k-NN
+
+Part VII involves the one genuinely modern piece of machine learning in this document. This section
+covers what is needed; skip it if "embedding" and "k-NN" are familiar.
+
+### Everything has to become numbers
+
+Machine-learning algorithms operate on numbers, not on records. So the first step of any such
+method is turning each thing you want to reason about — here, a *window* of timeline events — into
+a fixed-length list of numbers, called a **vector**. That list is the thing's **representation**,
+and its quality bounds everything downstream. A vector of length 384 is just 384 numbers; treat it
+as coordinates of a point in a 384-dimensional space. You cannot picture that, but every operation
+below works exactly as it would on a sheet of graph paper.
+
+### Two ways to build one
+
+**Feature hashing** — the cheap, training-free baseline (`HashingEmbedder`). Split the rendered
+text into words, and for each word compute a hash that maps it to one of 256 slots; add ±1 there.
+The result is a "bag of tokens" — a fingerprint of *which* tokens appeared and how often, with the
+order discarded. Two windows containing a similar mix of tokens end up with similar vectors. It
+requires no model and no training, and it is deterministic across machines.
+
+**An embedding** — the learned version (`MiniLmEmbedder`, `NomicEmbedder`). A neural network,
+pre-trained on an enormous corpus of ordinary text, that maps a sentence to a vector such that
+sentences with similar *meaning* land near each other **even when they share no words at all**:
+"the machine rebooted" and "the host restarted" should be close, while feature hashing sees two
+completely unrelated token bags. `all-MiniLM-L6-v2` produces 384 numbers per sentence; nomic-v1.5
+produces 768. Both run locally through ONNX Runtime — nothing is sent anywhere.
+
+That promise — capturing similarity of *meaning* rather than of *spelling* — is the entire reason
+to try this, and §7.4 is the story of it not paying off on this data.
+
+### Measuring how similar two vectors are
+
+The standard measure is **cosine similarity**: the cosine of the angle between the two vectors.
+
+- **1.0** — same direction (as similar as possible)
+- **0.0** — perpendicular (unrelated)
+- **−1.0** — opposite
+
+Angle rather than straight-line distance, because a vector's *length* mostly reflects how much text
+there was, while its *direction* reflects what the text was about — and we care about the latter.
+
+**L2 normalization** just means rescaling every vector to length 1. Once every vector has length 1,
+the cosine similarity is exactly the dot product (multiply the two lists element-wise and add up),
+which is fast. That is the only reason every embedder in Camel returns normalized vectors; it
+changes nothing conceptually.
+
+### k-nearest-neighbours
+
+k-NN is the simplest useful algorithm in machine learning, and it has no training step at all: to
+judge a new point, find the `k` known points closest to it and let them decide. Camel uses it in
+both of its modes.
+
+**As a novelty score** (the anomaly-detection use, `NoveltyScorer`). Embed a set of windows from
+benign activity — those are the known points. For a new window, find its `k` most similar benign
+windows and average that similarity:
+
+```
+novelty = 1 − (mean cosine similarity to the k nearest baseline windows)
+```
+
+A window that resembles routine activity has close neighbours, so novelty ≈ 0. A window unlike
+anything in the baseline has no close neighbours, so novelty ≈ 1. Rank by novelty and the most
+unfamiliar episodes float to the top. This is the "distance / density" family from §1.2, and it is
+a completely reasonable unsupervised anomaly detector.
+
+**As a classifier** (the measurement use). Given labelled points, label a new one by majority vote
+of its `k` nearest neighbours. Camel uses this not to classify anything in production, but as a
+*ruler*: if same-activity windows genuinely land near each other, a k-NN vote will be right often;
+if the representation is poor, it will be near chance. That makes classification accuracy a
+convenient proxy for **representation quality**, which is what §7.5 measures.
+
+**Leave-one-out** is how that ruler is applied to a small dataset: take each window in turn, hide
+its label, classify it using all the others, and count how often the vote was right. Every point
+serves as a test case, and nothing is ever classified using its own label.
+
+### The scores those experiments report
+
+- **Accuracy** — fraction classified correctly. Meaningful *here* because this proxy task is
+  balanced, unlike the anomaly task (§1.2).
+- **Chance baseline** — what random guessing would score: `1/number of classes`. With 15 user
+  actions that is 6.7%, and every result must be read against it.
+- **F1** — for one class, the harmonic mean of precision (of those I called X, how many were?) and
+  recall (of the actual Xs, how many did I find?). It is high only when both are.
+- **Macro-F1** — the plain average of the per-class F1 scores, giving a class with 3 examples the
+  same weight as one with 300. It therefore *exposes* imbalance that accuracy hides — which turns
+  out to matter a great deal in §7.6.
+
+### Why you would expect this to work
+
+The appeal for forensics is real, and worth stating before watching it fail. Two intrusions never
+look textually identical — different tool names, paths, accounts, hosts. But if "malicious episode"
+has a consistent *shape*, then a representation that captures meaning rather than spelling should
+place such episodes near one another and far from routine activity — and would flag an attack
+technique nobody had written a rule or signature for. That is the promise, it is the modern default
+answer to this problem, and it is exactly what the next four sections test.
+
+## 7.2 The hypothesis
 
 The obvious modern approach: don't hand-engineer detectors — learn a representation.
 
@@ -999,7 +1126,7 @@ Everything needed for this exists in `Camel.Training`:
   all returning L2-normalized vectors so cosine = dot:
   - `HashingEmbedder` — signed FNV-1a feature hashing into 256 dims. No model, no training, stable across processes.
   - `MiniLmEmbedder` — all-MiniLM-L6-v2, 384-d, ONNX.
-  - `NomicEmbedder` — nomic-embed-text-v1.5, 4-bit quantized, 768-d, with task-instruction prefixes (`classification:` / `clustering:` / `search_document:`), trained for retrieval and clustering rather than sentence similarity.
+  - `NomicEmbedder` — nomic-embed-text-v1.5, 768-d, 4-bit quantized (weights stored at reduced precision to shrink the model), with task-instruction prefixes (`classification:` / `clustering:` / `search_document:`), trained for retrieval and clustering rather than sentence similarity.
 - **`NoveltyScorer`** — fit on benign window vectors; score a query by `1 − mean(top-k cosine
   similarity)`. Near 0 = looks like normal; near 1 = unlike anything seen.
 - **`TimelineNoveltyBaseline`** — the whole pipeline, embedder injected.
@@ -1008,7 +1135,7 @@ Everything needed for this exists in `Camel.Training`:
 
 This is a reasonable, well-instrumented unsupervised anomaly detection design. It lost anyway.
 
-## 7.2 Experiment 1 — synthetic injection (it works)
+## 7.3 Experiment 1 — synthetic injection (it works)
 
 Take a 600k-row prefix of a real timeline (→ 61,251 high-signal events), splice in five synthetic
 malicious episodes (encoded PowerShell `4104`, log clear `1102`/`104`, credential dumping
@@ -1029,7 +1156,7 @@ window-based anomaly detection and it is worth internalizing.
 
 Encouraging. Then we ran it on real data.
 
-## 7.3 Experiment 2 — the real host (it fails completely)
+## 7.4 Experiment 2 — the real host (it fails completely)
 
 Same pipeline, `base-rd-01`, 130,948 real events, real log-clear IOCs. Baseline fit on a disjoint
 later 70k slice, scoring an early 20k slice. (The log-clears are the *oldest* surviving records —
@@ -1068,7 +1195,7 @@ concentrated in one rare categorical feature, any representation that averages o
 attenuate it by roughly the window size — while an explicit `−log p` on that feature has unbounded
 sensitivity to exactly the rare values you care about.
 
-## 7.4 Experiment 3 — is a better encoder the answer?
+## 7.5 Experiment 3 — is a better encoder the answer?
 
 Maybe feature hashing was the problem. The natural test: a *balanced, labelled* proxy task, so
 ordinary classification metrics apply. The **Studiawan Windows 11 dataset** (from arXiv 2505.03100,
@@ -1097,11 +1224,14 @@ transformer beats 256-d feature hashing by 0.4 points, for roughly **10× the in
 
 Two useful side findings:
 
-- **Tokenization is worth more than model capacity here.** Simply putting a space in `eid: 4624`
-  instead of `eid4624` lifted MiniLM by 1.5 points — a bigger gain than upgrading MiniLM to nomic.
-  A WordPiece tokenizer cannot segment a glued alphanumeric token; feature hashing is unaffected
-  because it whitespace-splits regardless. If you feed engineered tokens to a pretrained NL model,
-  its tokenizer is part of your model.
+- **Tokenization is worth more than model capacity here.** A language model does not read whole
+  words; a *tokenizer* first chops the text into known fragments (WordPiece, the scheme these
+  models use, splits unfamiliar strings into sub-word pieces it has seen before). Simply putting a
+  space in `eid: 4624` instead of `eid4624` lifted MiniLM by 1.5 points — a bigger gain than
+  upgrading MiniLM to nomic — because the tokenizer cannot sensibly split a glued alphanumeric
+  blob, whereas `eid` and `4624` are both familiar. Feature hashing is unaffected, since it just
+  splits on whitespace. If you feed engineered tokens to a pretrained language model, its tokenizer
+  is part of your model.
 - **Render style is embedder-specific, and matters more than the embedder.** On filtered
   `Tiled(5)` data with MiniLM: natural prose **22.1 / 17.3**, terse semantic **15.7 / 11.1**,
   semantic + bracketed structural **16.1 / 16.4**. Expanding compound values ("Shimcache" →
@@ -1112,7 +1242,7 @@ Two useful side findings:
   has to be expressed as language. Meanwhile, for `HashingEmbedder` prose is actively *worse* than
   token salad, because grammatical filler dilutes the discriminative tokens in the bag.
 
-## 7.5 The ceiling is the representation, not the encoder
+## 7.6 The ceiling is the representation, not the encoder
 
 Why does everything stop at 23–24%? Because **~80% of every window is the same filesystem-metadata
 churn** — OneDrive sync, temp writes, log rotation — regardless of which action generated it. Every
@@ -1141,7 +1271,7 @@ And note the asymmetry: filtering's real payoff is for *novelty*, where class ba
 and removing ubiquitous churn makes genuine anomalies stand out — not for this balanced
 classification proxy.
 
-## 7.6 What this means
+## 7.7 What this means
 
 There is a reading in terms of §3.1's vocabulary that ties Parts II and VII together.
 
@@ -1171,7 +1301,7 @@ Three transferable lessons:
    line. It is the reason we know the sophisticated pipeline had failed, rather than concluding
    "the problem is hard."
 
-## 7.7 Status of the code
+## 7.8 Status of the code
 
 All of `Camel.Training` remains in the repository, builds, and is tested. `Camel.Inference` does
 **not** reference it (or `Camel.Search`, or ONNX Runtime) — the dependency is one-way, so the
@@ -1207,8 +1337,9 @@ shortlist's top.
 
 **8.5 Summed bits assume detector independence.** They are not independent — a burst of a rare type
 fires both `RareType` and `TimingBurst` on correlated evidence, and summing double-counts. The
-per-detector quota limits the damage; a proper treatment would model the dependence (a noisy-OR
-combination, or likelihood ratios with an explicit correlation structure).
+per-detector quota limits the damage; a proper treatment would model the dependence — a noisy-OR
+combination (which asks "how surprising is it that *at least one* detector fired", rather than
+adding up overlapping evidence), or likelihood ratios with an explicit correlation structure.
 
 **8.6 The beacon score is not a surprisal.** §3.5. `0.6 · regular · fraction` is a heuristic in
 bits-shaped units, which makes it the one detector whose scale is not even nominally principled.
@@ -1280,7 +1411,7 @@ log(anomaly.Summarize(report, 25));
 1. Studiawan, H., Sohel, F., Payne, C. **Sentiment Analysis in a Forensic Timeline With Deep Learning.** *IEEE Access*, 2020. DOI 10.1109/ACCESS.2020.2983435.
 2. Studiawan, H. **PhD thesis**, Murdoch University, 2020 — Ch. 5 (cluster scoring), **Ch. 7 (statistical features: bad-word count, message length, inter-arrival rate)**, Ch. 10 (fusion). *The source of `ContentSignals`.*
 3. Putra, I.K.A.A., Achmad, R.M., Studiawan, H. **Zero-Shot Anomaly Detection in a Forensic Timeline.** ICSCC, 2024.
-4. Studiawan, H., Breitinger, F., Scanlon, M. **Towards a standardized methodology and dataset for evaluating LLM-based digital forensic timeline analysis.** arXiv:2505.03100. *Source of the Windows 11 per-action dataset used in §7.4.*
+4. Studiawan, H., Breitinger, F., Scanlon, M. **Towards a standardized methodology and dataset for evaluating LLM-based digital forensic timeline analysis.** arXiv:2505.03100. *Source of the Windows 11 per-action dataset used in §7.5.*
 5. Studiawan, H., Sohel, F., Payne, C. **Automatic Event Log Abstraction to Support Forensic Investigation.** ACSW, 2020.
 6. Studiawan, H., Sohel, F., Payne, C. **Automatic Log Parser to Support Forensic Analysis** (`nerlogparser`).
 7. Loumachi, F.Y., Ghanem, M.C., Ferrag, M.A. **GenDFIR: Advancing Cyber Incident Timeline Analysis Through Retrieval-Augmented Generation and Large Language Models.** arXiv:2409.02572.
