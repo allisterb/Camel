@@ -1,5 +1,5 @@
 # Camel
-
+![](https://ajb.nyc3.cdn.digitaloceanspaces.com/camel/images/report-rocba2.png)
 ## About
 The Camel project is a code-mode MCP server that allows LLMs to safely generate and execute JavaScript code that calls command-line forensic tools, performs analysis, and employs traditional machine learning algorithms and probabilistic reasoning using [SIFT Workstation](https://www.sans.org/tools/sift-workstation), for autonomous DFIR investigations. 
 
@@ -40,8 +40,7 @@ Using AI to execute code, be it shell scripts or JavaScript, is always fraught w
 * No access to ‘eval’ or other potentially unsafe JavaScript features.  
 * Method that are potentially destructive always [check](https://github.com/allisterb/Camel/blob/d2710c43f4574a276846c1b8a8541863aca8e57c/src/Camel.Toolkits/DiskAnalysis/DiskAnalysisToolkit.cs#L112) if their target is a evidence file or directory, to avoid overwriting evidence files either by mistake or through malicious embedded instructions.
 
-Camel is designed to address the root causes of slowness and hallucinations in autonomous investigation projects like protocol-sift and offers numerous improvements in the areas of accuracy and reliability, susceptibility to hallucinations, performance, usability, and presentation of results. Using the Camel MCP server Claude was able to complete investigation of the SRL-2018-Compromised-Enterprise-Network scenario in ~37 mins with 15 high-confidence findings, 26 IOCs, 6 potential false-positives, and only one recorded hallucination. For SRL-ROCBA the numbers are 8 high-confidence findings, 17 IOCs, 5 false positives and zero hallucinations in ~70mins.  
-![](https://ajb.nyc3.cdn.digitaloceanspaces.com/camel/images/report-rocba2.png)
+Camel is designed to address the root causes of slowness and hallucinations in autonomous investigation projects like protocol-sift and offers numerous improvements in the areas of accuracy and reliability, susceptibility to hallucinations, performance, usability, and presentation of results. Using the Camel MCP server Claude was able to complete investigation of the SRL-2018-Compromised-Enterprise-Network scenario in ~37 mins with 15 high-confidence findings, 26 IOCs, 6 potential false-positives, and only one recorded hallucination. 
 
 A full set of log data and reports for the cases I investigated using Camel is [here](https://drive.google.com/drive/folders/1whw7GwrZUxADTsy1f-LCV2jN-Q-fpVNp?usp=drive_link).
 
