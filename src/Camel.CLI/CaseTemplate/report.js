@@ -730,7 +730,7 @@ function renderAttestation() {
   b.append(el("div", { class: "att-h" }, "Scope-compliance attestation"));
   const line = el("div", { class: "att-line" });
   line.append("Every offensive action was confined to the authorized engagement. ");
-  line.append(el("b", { class: violations ? "warnc" : "ok" }, String(violations)), " out-of-scope attempt(s) refused — ",
+  line.append(el("b", { class: violations ? "warnc" : "ok" }, String(violations)), " gate refusal(s) — out-of-scope targets, or client assets the RoE would not let us disclose — of which ",
               el("b", { class: "ok" }, "0"), " succeeded. ");
   if (waivers) line.append(el("b", { class: "warnc" }, String(waivers)), " authorization-waiver(s) recorded (residual risk). ");
   line.append(el("b", {}, String(disclosures)), " external-disclosure event(s). ");

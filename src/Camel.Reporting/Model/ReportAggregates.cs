@@ -84,8 +84,10 @@ public static class ReportAggregates
         return counts;
     }
 
-    /// <summary>The compliance attestation tallies (mirrors <c>renderAttestation</c>): scope-violation refusals,
-    /// authorization waivers, external + KB disclosures, and engagement registration events.</summary>
+    /// <summary>The compliance attestation tallies (mirrors <c>renderAttestation</c>): gate refusals recorded as
+    /// <c>scope-violation</c> (an out-of-scope target/range, OR a client asset the engagement would not permit
+    /// disclosing to a third party — the reason line distinguishes them), authorization waivers, external + KB
+    /// disclosures, and engagement registration events.</summary>
     public static ComplianceAttestation Attestation(IEnumerable<AuditEvent> events)
     {
         var list = events as IReadOnlyCollection<AuditEvent> ?? events.ToList();

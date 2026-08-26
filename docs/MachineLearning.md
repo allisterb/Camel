@@ -1,5 +1,9 @@
 # Machine Learning in Camel — the Anomaly Detection Toolkit
 
+> **This is the overview.** For the full treatment — the mathematics of each detector, the design
+> failures that forced the ensemble's shape, the evaluation methodology, the Studiawan research
+> the toolkit builds on, and the representation-learning experiments that were run and lost — see
+> **[MachineLearningExpanded.md](MachineLearningExpanded.md)**.
 
 ## What it does
 
@@ -33,9 +37,42 @@ bit score, so the agent receives **evidence, not raw data**.
 
 ### Sample results
 
-On the SANS SRL-2018 intrusion dataset: **145,756 events → a ~150-event shortlist
-(~0.1%)** that recovered **100% of both IOC classes** — the anti-forensics log-clears and the C2
-PowerShell.
+On the SANS SRL-2018 intrusion dataset (host `base-rd-01`, Security + System + PowerShell logs),
+self-baselined at a review budget of 200:
+
+| | |
+|---|---|
+| Timeline | 145,756 events |
+| Shortlist | **148 entries** (0.10% — a ~985× reduction) |
+| Anti-forensics log-clears (`1102`/`104`) recovered | **100%** (8/8) |
+| C2 PowerShell (`squirreldirectory` download cradle) recovered | **100%** (24/24) |
+| Runtime | ~2 seconds, pure CPU |
+
+Ground truth here is *real*, not synthetic — the malicious events were identified after the fact
+for scoring, never constructed. Caveats on what that does and does not prove (one host, two IOC
+classes, and why the top of the shortlist is probably benign) are in
+[the expanded document, §5.4](MachineLearningExpanded.md#54-honest-caveats).
+
+### Why not learned embeddings?
+
+The obvious alternative — render each window of events to text, embed it with a sentence
+transformer, and score novelty as distance to a baseline — was built and evaluated in
+`Camel.Training` before these detectors existed. It lost, decisively and for an instructive
+reason:
+
+- On **synthetic** injected anomalies it looked strong (AP 23.3% against a 0.2% chance floor).
+- On the **real** SRL-2018 host it scored **at chance** (AP 0.3%, the log-clear windows ranked
+  338th of 4,000), while a one-line event-ID frequency count ranked every one of them **first**.
+- Upgrading the encoder did not help: feature hashing, all-MiniLM, and nomic-v1.5 all plateau at
+  23–24% on a balanced action-classification proxy, because ~80% of every window is filesystem
+  churn common to all classes. The ceiling is the representation, not the model.
+
+The diagnosis is that averaging a window into one vector attenuates a rare categorical signal by
+roughly the window size, while `−log p` on that same feature has unbounded sensitivity to exactly
+the rare values that matter. The one idea that survived — content signals — is in the
+`ContentDetector`, as two leakage-safe scalars rather than an embedding. Full write-up in
+[§7 of the expanded document](MachineLearningExpanded.md#part-vii--the-experiments-that-lost-representation-learning-in-cameltraining);
+the experiment code remains in `Camel.Training`, which the shipped toolkit does not reference.
 
 ## Why this beats an agent analyzing event logs on its own
 
@@ -70,3 +107,19 @@ for forensic-scale data. Concretely:
 The division of labor is the key idea: **ML does the quantitative reduction it is good at;
 the agent does the contextual reasoning it is good at** — over a shortlist small enough to fit,
 and explained well enough to act on.
+
+## What it does not do
+
+Worth stating plainly, because unsupervised anomaly detection is easy to oversell:
+
+- **Anomalous is not malicious.** The toolkit ranks by statistical surprise. A GPO rollout is
+  surprising; a logon with valid stolen credentials is not. It narrows the analyst's search, it
+  does not render a verdict.
+- **Self-baselining detects *rare* evil, not *prolific* evil.** Because the host's own stream
+  defines normal, an adversary who generates a large share of the events becomes part of the
+  baseline.
+- **Transition modelling is global.** Real lateral movement lives in per-session sub-sequences;
+  making the bigram model per-entity is the toolkit's highest-value open item.
+
+The full list, with the reasoning behind each, is in
+[§8 of the expanded document](MachineLearningExpanded.md#part-viii--limitations-and-open-work).

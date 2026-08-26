@@ -225,6 +225,40 @@ public class EngagementScopeTests
         Assert.Throws<EngagementRequiredException>(() => new LocalEnvironment().FailIfExternalDisclosureForbidden());
     }
 
+    /// <summary>
+    /// A refused DISCLOSURE is recorded too, and names the asset that was withheld: refusing to hand a client target
+    /// to a third party is exactly the kind of restraint the engagement's attestation should be able to evidence.
+    /// Recorded as `scope-violation` (the same tally the report's compliance attestation counts), with a reason that
+    /// says it was a disclosure refusal so a reader never mistakes it for an out-of-scope target.
+    /// </summary>
+    [Fact]
+    public void RefusedDisclosure_IsRecordedAsScopeViolation_NamingTheWithheldAsset()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "camel_audit_" + Guid.NewGuid().ToString("N"));
+        Runtime.WithAuditLog(dir);
+        try
+        {
+            using (Runtime.PushAuditProperty("CaseId", "disclosure-audit"))
+            {
+                var armed = Armed(new ScopeTarget(ScopeKind.Host, "10.0.0.5"));      // in scope, disclosure NOT opted in
+                Assert.Throws<ExternalDisclosureForbiddenException>(() => armed.FailIfExternalDisclosureForbidden("10.0.0.5"));
+                Assert.Throws<EngagementRequiredException>(() => new LocalEnvironment().FailIfExternalDisclosureForbidden("acme.example"));
+            }
+            Runtime.CloseAndFlushAuditLog();
+
+            var content = File.ReadAllText(Path.Combine(dir, "audit-disclosure-audit.clef"));
+            Assert.Equal(2, content.Split("scope-violation").Length - 1);
+            Assert.Contains("10.0.0.5", content);              // the asset that would have gone to the third party
+            Assert.Contains("acme.example", content);
+            Assert.Contains("External disclosure refused", content);   // and that it was a disclosure, not an out-of-scope target
+        }
+        finally
+        {
+            Runtime.CloseAndFlushAuditLog();
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+
     [Fact]
     public void GateRefusal_ToString_IsTheReasonOnly_NotAStackTrace()
     {

@@ -38,7 +38,7 @@ public class ShodanKnowledgeBase
     public Task<KbResult<ShodanHost>> HostAsync(string ip)
     {
         env.FailIfOutOfScope(ip);                  // the looked-up host must be authorized...
-        env.FailIfExternalDisclosureForbidden();   // ...and the RoE must permit sending it to a third party
+        env.FailIfExternalDisclosureForbidden(ip);  // ...and the RoE must permit sending it to a third party
         return client.QueryAsync(Source, $"shodan/host/{Uri.EscapeDataString(ip)}",
             new Dictionary<string, string>(), MapHost, disclosedTarget: ip);
     }

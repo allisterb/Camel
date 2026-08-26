@@ -523,12 +523,20 @@ public abstract class AuditEnvironment : Runtime, IDisposable
     /// Refuses a target-keyed external query (one that would send a client asset to a third-party intelligence
     /// service) unless the registered engagement permits external disclosure — throwing
     /// <see cref="ExternalDisclosureForbiddenException"/> (or <see cref="EngagementRequiredException"/> when nothing
-    /// is registered). Call it from a target-keyed KB facade (e.g. Shodan) alongside <see cref="FailIfOutOfScope"/>.
+    /// is registered), and RECORDING the refusal as a <c>scope-violation</c> audit event. Call it from a target-keyed
+    /// KB facade (e.g. Shodan) alongside <see cref="FailIfOutOfScope"/>, passing the asset that would have been
+    /// disclosed so the trail names it.
     /// </summary>
-    public void FailIfExternalDisclosureForbidden()
+    /// <param name="target">The client asset the query would have sent to the third party. Optional only so existing
+    /// callers keep compiling; supply it — an audit line that cannot say WHAT was withheld is half a record.</param>
+    public void FailIfExternalDisclosureForbidden(string? target = null)
     {
-        if (!engagementRegistered) throw new EngagementRequiredException();
-        if (!ExternalDisclosureAllowed) throw new ExternalDisclosureForbiddenException();
+        var asset = string.IsNullOrWhiteSpace(target) ? "(unnamed target)" : target!;
+        if (!engagementRegistered)
+            throw AuditedRefusal(asset, "External disclosure refused: no engagement registered (fail-closed).", new EngagementRequiredException());
+        if (!ExternalDisclosureAllowed)
+            throw AuditedRefusal(asset, "External disclosure refused: the engagement does not permit disclosing client targets to third-party services.",
+                new ExternalDisclosureForbiddenException());
     }
 
     /// <summary>True when an engagement is registered and it permits <paramref name="activity"/> (a baseline class
