@@ -72,7 +72,7 @@ All toolkit and workflow operations are audited with correlated execution ids. T
 Attempting to access non-existent objects or methods in the JavaScript interpreter simply causes the script to halt. An audit event is generated for any such attempt that is deemed a hallucination. The probability, scope and consequences of agent hallucinations are thus greatly reduced. Hallucinating non-existent objects or methods simply leads to a runtime error being thrown by the JavaScript engine, which is reported to the agent which can then self-correct. Most hallucinations will halt scripts immediately, and force the agent to self-correct, unless the issue is due to the agent forgetting things as context window size increases.
 
 ### Toolkits
-The Camel SDK provides [toolkits](https://github.com/allisterb/Camel/tree/master/src/Camel.Toolkits) that wrap SIFT tools as typed methods with structured data inputs and outputs, async execution, and exception handling. Eight toolkits are currently implemented:
+The Camel SDK provides [toolkits](https://github.com/allisterb/Camel/blob/master/docs/Camel.core.md#toolkits) that wrap SIFT tools as typed methods with structured data inputs and outputs, async execution, and exception handling. Eight toolkits are currently implemented:
 
 | Toolkit | Tools wrapped |
 |---|---|
@@ -87,7 +87,7 @@ The Camel SDK provides [toolkits](https://github.com/allisterb/Camel/tree/master
 | **Total** | **82** |
 
 ### Workflows
-Camel [workflows](https://github.com/allisterb/Camel/tree/master/src/Camel.Workflows) codifies established DFIR procedures and SANS anayst knowledge into high-level, reusable operations
+Camel [workflows](https://github.com/allisterb/Camel/blob/master/docs/Camel.core.md#workflows) codifies established DFIR procedures and SANS anayst knowledge into high-level, reusable operations
 built on top of the strongly-typed SIFT tool API in Camel.Toolkits. Where a toolkit method wraps a single forensic tool, a *workflow* orchestrates many toolkit calls — running tools, mounting images, parsing artifacts, correlating across sources, and applying detection heuristics — to answer an investigative question in one call. Camel implements workflows across 8 domains:
 
 * Windows Analysis
@@ -111,7 +111,7 @@ The core Camel [investigation framework](https://github.com/allisterb/Camel/blob
 can verify the framework was followed rather than take it on faith.
 
 ### Machine Learning
-Camel's [Anomaly Detection Toolkit](https://github.com/allisterb/Camel/blob/master/src/Camel.Inference/AnomalyDetectionToolkit.cs) uses classical, deterministic ML to reduce a full super-timeline into a short, ranked, explained triage shortlist instead of having the LLM read events directly. It is label-free and self-baselining (the host's own stream defines "normal"). The five complementary detectors catch different shapes of anomalies — rare type, rare transition, timing burst, timing beacon, and suspicious content — with bursts collapsed into episodes and a per-detector quota for diversity. Tested on SRL-2018 event log data, it cut 145,756 events to a ~150-event shortlist (~0.1%) while recovering 100% of both IOC classes (log-clears and C2 PowerShell). This beats an agent analyzing logs itself because forensic-scale data is difficult to fit in a context window, and base rates and timing/cadence signals need exact computation rather than intuition. The anomaly detection math is cheap, instant, deterministic, and auditable — freeing model tokens for judgment over a small, evidence-rich shortlist.
+Camel's [Anomaly Detection Toolkit](https://github.com/allisterb/Camel/blob/master/docs/Camel.core.md#anomalydetectiontoolkit) uses classical, deterministic ML to reduce a full super-timeline into a short, ranked, explained triage shortlist instead of having the LLM read events directly. It is label-free and self-baselining (the host's own stream defines "normal"). The five complementary detectors catch different shapes of anomalies — rare type, rare transition, timing burst, timing beacon, and suspicious content — with bursts collapsed into episodes and a per-detector quota for diversity. Tested on SRL-2018 event log data, it cut 145,756 events to a ~150-event shortlist (~0.1%) while recovering 100% of both IOC classes (log-clears and C2 PowerShell). This beats an agent analyzing logs itself because forensic-scale data is difficult to fit in a context window, and base rates and timing/cadence signals need exact computation rather than intuition. The anomaly detection math is cheap, instant, deterministic, and auditable — freeing model tokens for judgment over a small, evidence-rich shortlist.
 
 One caveat is that the toolkit requires a super timeline to be built, which is an extremely expensive and time-consuming operation. The Claude prompt instructs it to only use anomaly detection when it does not have any leads or indicators to follow. In the 8 cases analyzed, Claude only used the Camel anomaly detection routine in the ALIHADI case. See [here](https://github.com/allisterb/Camel/tree/master/docs/MachineLearning.md) for a concise description of the ML used in Camel and [here](https://github.com/allisterb/Camel/tree/master/docs/MachineLearningExpanded.md) for a broader, more accessible view.
 
