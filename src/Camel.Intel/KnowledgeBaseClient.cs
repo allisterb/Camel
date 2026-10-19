@@ -23,7 +23,7 @@ using Camel.Environments;
 /// a file read. Every call returns a provenance-stamped <see cref="KbResult{T}"/> and emits a <c>kb-query</c>
 /// audit event attributed to the ambient case/execution; a resolved auth key is injected into the request but
 /// never appears in the audited query, the result, or the trail. Investigation-neutral. See
-/// <c>docs/KnowledgeBases.md</c>.
+/// <c>docs/internal/KnowledgeBases.md</c>.
 /// </summary>
 public class KnowledgeBaseClient : Runtime
 {

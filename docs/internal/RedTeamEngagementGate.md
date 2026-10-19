@@ -1,8 +1,8 @@
 # Red-Team Engagement Gate (design draft)
 
 *How a Camel "red" MCP server enforces authorization, scope, and a validity window in code —
-the offensive-side counterpart to the [evidence-spoliation guard](AuditEnvironments.md) and the
-[audit trail](AuditTrail.md).*
+the offensive-side counterpart to the [evidence-spoliation guard](../AuditEnvironments.md) and the
+[audit trail](../AuditTrail.md).*
 
 > **Status:** design draft. Nothing here is built yet. The intent is to make the red server's
 > compliance posture an *architectural invariant* (fail-closed, enforced at the environment), not a

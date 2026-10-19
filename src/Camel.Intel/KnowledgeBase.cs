@@ -14,7 +14,7 @@ public enum KbTransport { Http, Cli, File }
 /// <summary>
 /// A configured external intelligence source (Shodan, NVD, Vulners, …). <see cref="KeyRef"/> is the NAME of a
 /// secret to resolve at call time (an env-var / secrets-file key), never the key itself — secrets never live in
-/// config or source. See <c>docs/KnowledgeBases.md</c>.
+/// config or source. See <c>docs/internal/KnowledgeBases.md</c>.
 /// </summary>
 /// <param name="Name">Logical id used by the facade and in the audit trail (e.g. "nvd", "shodan").</param>
 /// <param name="BaseUrl">API base URL the facade builds request paths under.</param>

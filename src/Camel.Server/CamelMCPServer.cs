@@ -57,7 +57,7 @@ public class CamelMCPServer : Runtime
     /// Runs the launch-time platform capability check for the selected investigation and logs the per-toolkit
     /// summary. Refuses to start (throws) when no toolkit has any tool on the active platform — e.g. a PenTest
     /// server pointed at a SIFT profile — with a directive message; warns and continues on a partial (degraded)
-    /// combo so legitimate cases (DFIR on Kali) still run. See docs/PenTestEnvironments.md part 1.
+    /// combo so legitimate cases (DFIR on Kali) still run. See docs/internal/PenTestEnvironments.md part 1.
     /// </summary>
     static void EnforceCapabilities(CamelMCPTools tools, IConfigurationRoot config)
     {

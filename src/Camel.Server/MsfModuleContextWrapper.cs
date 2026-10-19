@@ -10,7 +10,7 @@ using Camel.PenTest.Toolkits;
 
 /// <summary>
 /// The Jint interop wrapper that gives the fluent Metasploit <see cref="MsfModuleContext"/> its
-/// <b>datastore-as-properties</b> sugar (v2 of <c>docs/MetasploitJsApi.md</c>): in a code-mode script,
+/// <b>datastore-as-properties</b> sugar (v2 of <c>docs/internal/MetasploitJsApi.md</c>): in a code-mode script,
 /// <c>m.RHOSTS = target</c> writes the <c>RHOSTS</c> datastore option (and <c>m.RHOSTS</c> reads it back), as a
 /// shorthand for <c>m.Set("RHOSTS", target)</c>.
 ///

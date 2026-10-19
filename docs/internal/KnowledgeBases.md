@@ -223,7 +223,7 @@ kb-query  source=nvd  query="…?cpeName=cpe:2.3:a:openbsd:openssh:8.2p1…"  st
   client asset was sent to which third party and when — so the report can state precisely what data left the
   perimeter (and an attempt blocked by the flag is recorded too, like a `scope-violation`).
 - **Report integration.** Because these ride the existing per-case audit trail, KB queries show up in the
-  [report viewer](AuditTrail.md) and a finding's `evidenceExecutionIds` can cite a `kb-query` exactly as it cites a
+  [report viewer](../AuditTrail.md) and a finding's `evidenceExecutionIds` can cite a `kb-query` exactly as it cites a
   tool execution.
 
 ### 6. Binding & placement

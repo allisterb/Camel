@@ -34,7 +34,7 @@ public record VulnCheckCve(
 /// analyst has supplied no key the source is simply unavailable (<see cref="KnowledgeBaseClient.IsAvailable"/>
 /// false) and callers degrade gracefully. Configured under <c>KnowledgeBases:vulncheck</c>
 /// (Auth=Header, AuthName=Authorization, AuthScheme=Bearer, KeyRequired=true, DisclosesTarget=false).
-/// See <c>docs/KnowledgeBases.md</c>.
+/// See <c>docs/internal/KnowledgeBases.md</c>.
 /// </summary>
 public class VulnCheckKnowledgeBase
 {

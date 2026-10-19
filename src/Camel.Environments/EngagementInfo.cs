@@ -26,7 +26,7 @@ public enum ScopeKind
 public record ScopeTarget(ScopeKind Kind, string Value, bool Excluded = false);
 
 /// <summary>The kind of signed engagement document, mirroring the distinct documents a real pen-test engagement
-/// produces (see docs/PenTestBookGapAnalysis.md). The kind matters because not every document <em>authorizes</em>
+/// produces (see docs/internal/PenTestBookGapAnalysis.md). The kind matters because not every document <em>authorizes</em>
 /// testing: an NDA governs confidentiality, not permission. <see cref="Authorizes"/> identifies the kinds that
 /// actually grant authorization (used by the scope tiering to decide whether a target has a backing authorization).</summary>
 [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -75,7 +75,7 @@ public record EngagementDocument(
 /// <summary>
 /// The engagement's authorization posture — the operator's deliberate declaration of how strict the proof of
 /// authorization must be, which the address-class tiers sit inside as an automatic floor (see
-/// docs/PenTestBookGapAnalysis.md C.2). <see cref="Lab"/> = a self-owned lab (private/internal addresses are
+/// docs/internal/PenTestBookGapAnalysis.md C.2). <see cref="Lab"/> = a self-owned lab (private/internal addresses are
 /// self-attested); <see cref="Internal"/> = an internal engagement (private addresses need a document or a
 /// recorded waiver); <see cref="Client"/> = a real client engagement (strict: private and public alike need an
 /// authorizing document). Public addresses always require a document regardless of posture.

@@ -28,7 +28,7 @@ public record ToolkitCapability(string Toolkit, int AvailableTools, int Configur
 /// The launch-time capability report for an investigation on the active platform: per-toolkit tool
 /// availability, computed from config. The server uses it to <b>refuse to start</b> when no toolkit has any
 /// tool (e.g. a PenTest server pointed at a SIFT profile), and to <b>warn</b> when only some toolkits are
-/// available (a legitimate degraded combo, e.g. DFIR on Kali). See <c>docs/PenTestEnvironments.md</c> part 1.
+/// available (a legitimate degraded combo, e.g. DFIR on Kali). See <c>docs/internal/PenTestEnvironments.md</c> part 1.
 /// </summary>
 /// <param name="Platform">The active platform the report was computed against.</param>
 /// <param name="Toolkits">One <see cref="ToolkitCapability"/> per checked toolkit section, in order.</param>

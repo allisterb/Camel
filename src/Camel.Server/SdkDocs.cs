@@ -11,7 +11,7 @@ using System.Text.RegularExpressions;
 /// An area is named after the JS global it documents (<c>ScanningToolkit</c>, <c>WindowsAnalysisWorkflow</c>, …)
 /// because that is what an agent has in hand when it needs the reference; a few small, cohesive globals share a
 /// single area (the knowledge bases), which is what <see cref="SharedGlobals"/> records. See
-/// <c>docs/SearchToolDesign.md</c> (Layer 1).
+/// <c>docs/internal/SearchToolDesign.md</c> (Layer 1).
 /// </summary>
 /// <param name="Name">The area name — the last segment of its resource URI, and by default the markdown heading
 /// text to slice on.</param>

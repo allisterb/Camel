@@ -10,7 +10,7 @@ namespace Camel.Toolkits;
 /// Fail-closed: no wrapped tool runs until an engagement authorization has been registered on the
 /// environment (via the <c>SetEngagement</c> MCP tool), and a method must clear each target through
 /// <see cref="GuardTarget"/> before acting on it. This is the red-side counterpart of the
-/// evidence-spoliation guard the DFIR toolkits rely on — see <c>docs/RedTeamEngagementGate.md</c>.
+/// evidence-spoliation guard the DFIR toolkits rely on — see <c>docs/internal/RedTeamEngagementGate.md</c>.
 ///
 /// Two enforcement layers, mirroring the doc:
 /// <list type="number">

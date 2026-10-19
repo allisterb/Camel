@@ -12,7 +12,7 @@ using ModelContextProtocol.Server;
 /// Base for the MCP resource classes that expose the Camel JavaScript SDK reference to the agent. The markdown
 /// docs are embedded in this assembly (see Camel.Server.csproj) and served SLICED BY SUBJECT AREA, so an agent
 /// reads the map plus the two or three areas its task touches instead of ~226 KB of reference before its first
-/// call (see <c>docs/SearchToolDesign.md</c>, Layer 1, and <see cref="SdkDocs"/> for the slicing rules).
+/// call (see <c>docs/internal/SearchToolDesign.md</c>, Layer 1, and <see cref="SdkDocs"/> for the slicing rules).
 /// The investigation-specific subclasses (<see cref="DFIRResources"/> / <see cref="PenTestResources"/>) declare
 /// the <c>[McpServerResource]</c> methods under the SAME <c>camel://sdk/*</c> URIs but point them at the blue or
 /// red doc set; the host registers exactly one per server (see <c>CamelMCPServer</c>), so the agent on a given

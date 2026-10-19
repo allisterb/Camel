@@ -628,10 +628,64 @@ depends on the truncation flag being reliable across every wrapper.
 
 ---
 
+## 9a. What Mulder's shipped report generator actually does (read 2026-10-19)
+
+Read Mulder's `src/mulder/report/` (renderer 1,510 lines, + `navigator.py`, `redactor.py`,
+`ioc_export.py`) against this design. It **confirms** several choices here and **surfaces four things
+this design missed** — one of them important. (Mulder source: `reference/projects/mulder-main`, scanned
+BENIGN; read as data.)
+
+**Confirmed (already in this doc):** the "never let the agent write a number" rule (§4.4) is exactly how
+they do it — the narrative is a Jinja2 template string and the renderer substitutes authoritative counts
+(`_render_narrative_template`); provenance chains are parsed from the audit log and rendered per finding
+(`_parse_audit_log` → `_build_provenance_chains`), i.e. our CLEF exec-id approach; machine-built exec
+summary, kill-chain phase grouping, technique→tactic rollup with canonical URLs — all present.
+
+**⭐NEW AND IMPORTANT — the report renderer is an injection surface.** This design never considered it.
+Finding descriptions and the narrative are **built from evidence content — filenames, command lines,
+registry values, strings carved out of a disk image** — i.e. attacker-controlled text, which then flows
+into the report's HTML/Markdown. If it isn't escaped, malicious evidence injects markup (or `<script>`)
+into the report an analyst opens. This is the evidence-as-data guardrail applied to the **output** side,
+and it is squarely on-thesis for a trust-focused tool. Mulder has the scars in its code comments:
+- Python-Markdown "has had no safe mode since 3.0," so they **escape `&` `<` `>` before markdown**
+  (`_markdown_to_safe_html`) — keeping `*_`backtick`[]` markdown working while making `<script>` inert.
+- A single `autoescape=False` Jinja env "served both [html and md], so every value that reaches the HTML
+  report … was interpolated as raw markup" — they fixed it to **autoescape HTML templates**, marking
+  only deliberate HTML `| safe`.
+- Dedicated tests: `test_report_injection.py`, `test_report_exec_summary_escaping.py`,
+  `test_leaked_markup.py`.
+**For Camel:** the red `PenTestReportGenerator` (MigraDoc + Markdig) must set Markdig to disable raw HTML
+(`.DisableHtml()` / no `UseAdvancedExtensions` without it); the blue generator — today the 69-line
+wrapper that renders agent-authored `report.md` **and** the HTML viewer (`report.js`, which builds DOM
+from CLEF event strings) — is the most exposed and needs the same treatment. **Add injection/escaping
+tests on the generator.** This belongs in the build plan, not as an afterthought.
+
+**⭐NEW — ATT&CK Navigator layer export** (`navigator.py`, ~90 lines). Emits a standard
+`<case>.navigator.json` loadable into MITRE's ATT&CK Navigator: one entry per observed technique,
+colored/scored by the **highest-severity finding** that references it, comment = finding titles,
+`showSubtechniques` for dotted ids, a severity gradient. Cheap, standard, high-value coverage
+visualization — and Camel already has severity + technique data once §3.4 lands. Add it to §3.4.
+
+**⭐NEW — secret redaction pass** (`redactor.py`). A report built from evidence can leak passwords/keys.
+Mulder runs `detect-secrets` line-by-line over report text and replaces hits with `[REDACTED]`, graceful
+no-op if the lib is absent. Camel's reports have the same exposure; add a redaction pass (a .NET secret
+regex set, or shell out to `detect-secrets` on the platform) before the report is written.
+
+**NEW — STIX 2.1 IOC bundle export** (`ioc_export.py`). Alongside a CSV, Mulder exports IOCs as a STIX
+2.1 bundle (standard threat-intel format a SIEM/TIP can ingest). Camel already writes `iocs.csv`; a STIX
+bundle is a standard-format upgrade worth a small increment.
+
+Add to the build plan: **Increment 4b — report-renderer injection hardening + escaping tests** (do with
+the generator, Increment 4); **Increment 3c — ATT&CK Navigator export** (with the catalog, Increment 3);
+**Increment 8 — secret redaction + STIX IOC export** (polish).
+
+---
+
 ## 10. Key file references
 
 | What | Where |
 |---|---|
+| Mulder report generator (reference, read as data) | `reference/projects/mulder-main/src/mulder/report/` (`renderer.py`, `navigator.py`, `redactor.py`, `ioc_export.py`) |
 | Finding / vulnerability bindings and `AuditFinding` | `src/Camel.Server/CamelMCPTools.cs` (~L140, ~L338) |
 | Raw `ClrFunction` precedent (`table`) | `src/Camel.Server/CamelMCPTools.cs` (~L168) |
 | Red aggregates to mirror | `src/Camel.Reporting/Model/ReportAggregates.cs` |

@@ -434,7 +434,7 @@ engagement scope gate. Everything in §3.2 through §3.8 is shared.
 - [Constraints.md](Constraints.md) — the architectural guardrails and why they are not prompt-based.
 - [AuditTrail.md](AuditTrail.md) — the chain-of-custody record and how to trace a finding.
 - [IRAccuracy.md](IRAccuracy.md) — the accuracy events and what they measure.
-- [Workflows.md](Workflows.md) / [PenTestWorkflows.md](PenTestWorkflows.md) — the codified procedures.
+- [Workflows.md](Workflows.md) / [PenTestWorkflows.md](internal/PenTestWorkflows.md) — the codified procedures.
 - [MachineLearningExpanded.md](MachineLearningExpanded.md) — the anomaly engine in depth.
 - `camel://sdk/index` — the agent-facing SDK map (authored as [Camel.core.md](Camel.core.md) and
   [Camel.schema.md](Camel.schema.md)).
