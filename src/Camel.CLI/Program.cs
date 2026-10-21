@@ -168,7 +168,13 @@ internal class Program : Runtime
         // CLAUDE.md — write the embedded template with the case id substituted into the SetCaseId() call
         // (and the audit file name / overview). Leave an existing file untouched so re-running a case
         // doesn't clobber filled-in details.
-        var claudePath = Path.Combine(caseDir, "CLAUDE.md");
+        var briefName = opts.Harness switch
+        {
+            AgentHarness.Goose => "AGENTS.md",
+            AgentHarness.Agy => "GEMINI.md",
+            _ => "CLAUDE.md",
+        };
+        var claudePath = Path.Combine(caseDir, briefName);
         if (File.Exists(claudePath))
         {
             Info($"{claudePath} already exists — leaving it untouched.");
@@ -181,50 +187,23 @@ internal class Program : Runtime
                 ? "Camel.CLI.CaseTemplate.CLAUDE.pentest.md"
                 : "Camel.CLI.CaseTemplate.CLAUDE.md";
             var claude = ReadEmbedded(template).Replace("__CASE_ID__", opts.CaseId);
+            if (opts.Harness == AgentHarness.Goose)
+                // The brief is authored for Claude Code; under Goose the Camel server is a per-session MCP
+                // extension (run-goose.*), not a .mcp.json registration. Neutralize that one harness-specific phrase.
+                claude = claude.Replace("registered in `.mcp.json` (this directory)", "registered as the `camel` MCP extension");
             File.WriteAllText(claudePath, claude);
             Info($"Wrote {claudePath}");
         }
 
-        // .mcp.json — register the `camel` stdio server launching THIS CLI assembly, with the same
-        // connection flags the user passed to create-case baked into the args so Claude Code starts
-        // Camel in that mode. Leave an existing file untouched (e.g. a hand-tuned SSH registration).
-        var mcpPath = Path.Combine(caseDir, ".mcp.json");
-        if (File.Exists(mcpPath))
+        // Harness-specific wiring. Claude Code and Antigravity get per-project config files (both use a root
+        // .mcp.json; Claude adds .claude/settings.json, Antigravity adds .agents/settings.json). Goose instead
+        // registers Camel as a per-session MCP extension via a run-goose launcher. The brief above and the report
+        // viewer below are harness-agnostic.
+        switch (opts.Harness)
         {
-            Info($"{mcpPath} already exists — leaving it untouched.");
-        }
-        else
-        {
-            var node = JsonNode.Parse(ReadEmbedded("Camel.CLI.CaseTemplate.mcp.json"))!;
-            node["mcpServers"]!["camel"]!["args"] =
-                new JsonArray(BuildServerArgs(opts).Select(a => (JsonNode)JsonValue.Create(a)).ToArray());
-            File.WriteAllText(mcpPath, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-            Info($"Wrote {mcpPath}");
-        }
-
-        // .claude/settings.json — project-scoped code-mode policy (deny Bash, allow only the Camel MCP
-        // tools + scoped file writes) plus the Stop and SessionEnd hooks that preserve the client chat log
-        // into the case and bake the report. Stop fires after every agent turn (so the report stays current
-        // throughout the session), SessionEnd is the final pass on clean exit. Both run THIS CLI's
-        // `preserve-chatlog` verb (`dotnet "<dll>" preserve-chatlog`) so they need only the .NET runtime the
-        // case already requires — no python/node. Emitting per case keeps the case self-contained (nothing in
-        // ~/.claude). Existing file left untouched.
-        var dotClaude = Path.Combine(caseDir, ".claude");
-        Directory.CreateDirectory(dotClaude);
-
-        var settingsPath = Path.Combine(dotClaude, "settings.json");
-        if (File.Exists(settingsPath))
-        {
-            Info($"{settingsPath} already exists — leaving it untouched.");
-        }
-        else
-        {
-            var node = JsonNode.Parse(ReadEmbedded("Camel.CLI.CaseTemplate.settings.json"))!;
-            var hookCmd = $"dotnet \"{CliDllPath()}\" preserve-chatlog";
-            node["hooks"]!["Stop"]![0]!["hooks"]![0]!["command"] = hookCmd;
-            node["hooks"]!["SessionEnd"]![0]!["hooks"]![0]!["command"] = hookCmd;
-            File.WriteAllText(settingsPath, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-            Info($"Wrote {settingsPath}");
+            case AgentHarness.Goose: WriteGooseLauncher(opts, caseDir, briefName); break;
+            case AgentHarness.Agy: WriteAntigravityConfig(opts, caseDir); break;
+            default: WriteClaudeConfig(opts, caseDir); break;
         }
 
         // reports/report.html + reports/report.js — a static, dependency-free HTML app for a human reviewer to
@@ -251,7 +230,20 @@ internal class Program : Runtime
         }
 
         Info($"Case '{opts.CaseId}' ready at {caseDir}.");
-        AnsiConsole.MarkupLine($"[cyan]\nFill in the case details in {Path.Combine(caseDir, "CLAUDE.md")}. When you are ready launch Claude in that directory.[/]");
+        var briefFull = Path.Combine(caseDir, briefName);
+        switch (opts.Harness)
+        {
+            case AgentHarness.Goose:
+                var launcher = OperatingSystem.IsWindows() ? "run-goose.cmd" : "run-goose.sh";
+                AnsiConsole.MarkupLine($"[cyan]\nFill in the case details in {briefFull}. Set a model in {launcher} (e.g. --provider ollama --model <coding-model>), then run it to launch Camel under Goose.[/]");
+                break;
+            case AgentHarness.Agy:
+                AnsiConsole.MarkupLine($"[cyan]\nFill in the case details in {briefFull}. Open the case directory in Antigravity (or run `agy` in it) to start — it loads .mcp.json, .agents/settings.json and GEMINI.md from here.[/]");
+                break;
+            default:
+                AnsiConsole.MarkupLine($"[cyan]\nFill in the case details in {briefFull}. When you are ready launch Claude in that directory.[/]");
+                break;
+        }
         AnsiConsole.MarkupLine($"[cyan]When the investigation completes, open {viewerHtmlPath} in a browser to review findings and the audit trail.[/]");
         return Task.CompletedTask;
     }
@@ -795,6 +787,127 @@ internal class Program : Runtime
     /// connection flags passed to <c>create-case</c> (any of --host/--user/--pass/--port implies --ssh unless
     /// --local was given) and the platform profile, so Claude Code starts Camel in the requested mode.
     /// </summary>
+    /// <summary>Claude Code harness: write the per-project <c>.mcp.json</c> (the `camel` stdio server with the
+    /// connection flags baked in) and <c>.claude/settings.json</c> (code-mode policy — deny Bash, allow only the
+    /// Camel MCP tools + scoped writes — plus the Stop/SessionEnd preserve-chatlog hooks). Existing files are left
+    /// untouched.</summary>
+    /// <summary>Write the root <c>.mcp.json</c> registering the `camel` stdio server (the CLI assembly launched with
+    /// the connection flags baked in). Used by both the Claude Code and Antigravity harnesses, which read a
+    /// per-project <c>.mcp.json</c> of the same shape. Existing file left untouched.</summary>
+    static void WriteMcpJson(CreateCaseOptions opts, string caseDir)
+    {
+        var mcpPath = Path.Combine(caseDir, ".mcp.json");
+        if (File.Exists(mcpPath))
+        {
+            Info($"{mcpPath} already exists — leaving it untouched.");
+            return;
+        }
+        var node = JsonNode.Parse(ReadEmbedded("Camel.CLI.CaseTemplate.mcp.json"))!;
+        node["mcpServers"]!["camel"]!["args"] =
+            new JsonArray(BuildServerArgs(opts).Select(a => (JsonNode)JsonValue.Create(a)).ToArray());
+        File.WriteAllText(mcpPath, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        Info($"Wrote {mcpPath}");
+    }
+
+    static void WriteClaudeConfig(CreateCaseOptions opts, string caseDir)
+    {
+        WriteMcpJson(opts, caseDir);
+
+        var dotClaude = Path.Combine(caseDir, ".claude");
+        Directory.CreateDirectory(dotClaude);
+        var settingsPath = Path.Combine(dotClaude, "settings.json");
+        if (File.Exists(settingsPath))
+        {
+            Info($"{settingsPath} already exists — leaving it untouched.");
+        }
+        else
+        {
+            var node = JsonNode.Parse(ReadEmbedded("Camel.CLI.CaseTemplate.settings.json"))!;
+            var hookCmd = $"dotnet \"{CliDllPath()}\" preserve-chatlog";
+            node["hooks"]!["Stop"]![0]!["hooks"]![0]!["command"] = hookCmd;
+            node["hooks"]!["SessionEnd"]![0]!["hooks"]![0]!["command"] = hookCmd;
+            File.WriteAllText(settingsPath, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            Info($"Wrote {settingsPath}");
+        }
+    }
+
+    /// <summary>Antigravity (Google) harness: write the root <c>.mcp.json</c> (the `camel` stdio server, same shape
+    /// Antigravity reads as Claude Code) and <c>.agents/settings.json</c> — Antigravity's per-project permission
+    /// policy: allow only the Camel MCP tools + scoped file writes, deny shell/web/subagents and secrets. The brief
+    /// is written as <c>GEMINI.md</c> by the caller. Antigravity loads all three from the case directory, so there is
+    /// no launcher to emit (open the folder in Antigravity, or run `agy` in it). Existing files left untouched.
+    /// Note: Antigravity has no SessionEnd-style hook, so the report is baked manually with `dotnet … bake-report`.</summary>
+    static void WriteAntigravityConfig(CreateCaseOptions opts, string caseDir)
+    {
+        WriteMcpJson(opts, caseDir);
+
+        var dotAgents = Path.Combine(caseDir, ".agents");
+        Directory.CreateDirectory(dotAgents);
+        var settingsPath = Path.Combine(dotAgents, "settings.json");
+        if (File.Exists(settingsPath))
+        {
+            Info($"{settingsPath} already exists — leaving it untouched.");
+        }
+        else
+        {
+            // Static policy (no per-case substitution). The paths are case-relative (./reports, ./secrets, ...).
+            File.WriteAllText(settingsPath, ReadEmbedded("Camel.CLI.CaseTemplate.agents-settings.json"));
+            Info($"Wrote {settingsPath}");
+        }
+    }
+
+    /// <summary>Goose harness: write a <c>run-goose.cmd</c>/<c>.sh</c> launcher that starts Goose with Camel
+    /// registered as a per-session stdio MCP extension (<c>--with-extension</c>) and only that extension
+    /// (<c>--no-profile</c>, so the user's global Goose tools don't leak in — the Goose analog of the Claude
+    /// deny-Bash policy). The brief is passed as the <c>-i</c> instruction file; <c>--model</c>/<c>--provider</c>
+    /// (if given) select the model, e.g. a local one via <c>--provider ollama</c>. After the run it bakes the
+    /// report (Goose has no SessionEnd hook, so this is the once-at-the-end equivalent). Existing file untouched.
+    /// MINIMAL: the extension command is space-joined; a Camel dll path or case dir containing spaces may need the
+    /// quoting in the launcher adjusted by hand.</summary>
+    static void WriteGooseLauncher(CreateCaseOptions opts, string caseDir, string briefName)
+    {
+        var win = OperatingSystem.IsWindows();
+        var scriptPath = Path.Combine(caseDir, win ? "run-goose.cmd" : "run-goose.sh");
+        if (File.Exists(scriptPath))
+        {
+            Info($"{scriptPath} already exists — leaving it untouched.");
+            return;
+        }
+
+        var dll = CliDllPath();
+        // The stdio extension command Goose will launch: `dotnet <dll> {dfir,pentest}-server <flags> --case-dir <abs>`.
+        var ext = "camel:dotnet " + string.Join(" ", BuildServerArgs(opts));
+        var model = "";
+        if (!string.IsNullOrWhiteSpace(opts.Provider)) model += $" --provider {opts.Provider}";
+        if (!string.IsNullOrWhiteSpace(opts.Model)) model += $" --model {opts.Model}";
+
+        string body;
+        if (win)
+            body =
+                "@echo off\r\n" +
+                $"REM Camel case '{opts.CaseId}' under the Goose harness. Requires 'goose' on PATH.\r\n" +
+                "REM Pick a model: edit the --provider/--model below (local models: --provider ollama --model <coding-model>),\r\n" +
+                "REM or run 'goose configure' once to set a default. Then run this script to start the investigation.\r\n" +
+                "setlocal\r\n" +
+                "cd /d \"%~dp0\"\r\n" +
+                $"goose run --no-profile --with-extension \"{ext}\"{model} -i {briefName} --max-turns 100 --max-tool-repetitions 5\r\n" +
+                $"dotnet \"{dll}\" bake-report .\r\n";
+        else
+            body =
+                "#!/usr/bin/env bash\n" +
+                $"# Camel case '{opts.CaseId}' under the Goose harness. Requires 'goose' on PATH.\n" +
+                "# Pick a model: edit the --provider/--model below (local models: --provider ollama --model <coding-model>),\n" +
+                "# or run 'goose configure' once to set a default. Then run this script to start the investigation.\n" +
+                "set -e\n" +
+                "cd \"$(dirname \"$0\")\"\n" +
+                $"goose run --no-profile --with-extension \"{ext}\"{model} -i {briefName} --max-turns 100 --max-tool-repetitions 5\n" +
+                $"dotnet \"{dll}\" bake-report .\n";
+
+        File.WriteAllText(scriptPath, body);
+        if (!win) { try { File.SetUnixFileMode(scriptPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.OtherRead); } catch { /* best-effort chmod */ } }
+        Info($"Wrote {scriptPath}");
+    }
+
     static List<string> BuildServerArgs(CreateCaseOptions opts)
     {
         var verb = opts.Type == InvestigationType.PenTest ? "pentest-server" : "dfir-server";

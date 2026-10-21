@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp:camel:SetCaseId",
+      "mcp:camel:SetEvidence",
+      "mcp:camel:VerifyEvidence",
+      "mcp:camel:Execute",
+
+      "read:*",
+      "glob:*",
+      "grep:*",
+      "write:./reports/*",
+      "write:./exports/*",
+      "edit:./reports/*",
+      "edit:./exports/*"
+    ],
+    "deny": [
+      "bash:*",
+      "shell:*",
+      "run_command:*",
+      "run_terminal_command:*",
+      "web_fetch:*",
+      "web_search:*",
+      "task:*",
+
+      "read:./secrets/**",
+      "read:./**/*.key",
+      "read:./**/*.pem"
+    ]
+  }
+}

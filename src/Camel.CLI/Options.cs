@@ -107,7 +107,17 @@ public class BakeReportOptions : Options
 }
 
 
-[Verb("create-case", HelpText = "Create a Camel case directory (CLAUDE.md + .mcp.json + analysis/exports/reports) and register the MCP server. Accepts the same connection options as the server verb; they are baked into the generated .mcp.json so Claude Code launches Camel in that mode.")]
+/// <summary>Which agent harness the generated case targets. Selects the scaffolding create-case emits:
+/// Claude Code project files (CLAUDE.md + .mcp.json + .claude/settings.json) vs a Goose launcher
+/// (AGENTS.md + run-goose.*). The Camel MCP server and the case directory layout are the same either way.</summary>
+public enum AgentHarness
+{
+    ClaudeCode = 0,
+    Goose = 1,
+    Agy = 2,
+}
+
+[Verb("create-case", HelpText = "Create a Camel case directory and the scaffolding for an agent harness (Claude Code by default, or Goose via --agent-harness). The connection options are baked into the harness's Camel launch so it starts the server in that mode.")]
 public class CreateCaseOptions : ConnectionOptions
 {
     [Value(0, MetaName = "case-dir", Required = true, HelpText = "Parent directory under which the case subdirectory is created.")]
@@ -118,4 +128,13 @@ public class CreateCaseOptions : ConnectionOptions
 
     [Option("type", Required = false, HelpText = "Investigation type: DFIR (blue-team; default) or PenTest (red-team). Selects the case's CLAUDE.md brief and the MCP server verb baked into .mcp.json (dfir-server vs pentest-server).")]
     public InvestigationType Type { get; set; } = InvestigationType.DFIR;
+
+    [Option("agent-harness", Required = false, HelpText = "Agent harness the generated case targets: ClaudeCode (default; CLAUDE.md + .mcp.json + .claude/settings.json), Goose (AGENTS.md + a run-goose launcher that registers Camel as a per-session MCP extension; supports local models via --model/--provider), or Agy (Google Antigravity: GEMINI.md + .mcp.json + .agents/settings.json).")]
+    public AgentHarness Harness { get; set; } = AgentHarness.ClaudeCode;
+
+    [Option("model", Required = false, HelpText = "(Goose) Model id baked into the run-goose launcher as --model (e.g. a local, coding-capable model).")]
+    public string? Model { get; set; }
+
+    [Option("provider", Required = false, HelpText = "(Goose) Model provider baked into the run-goose launcher as --provider, e.g. 'ollama' for local models.")]
+    public string? Provider { get; set; }
 }
