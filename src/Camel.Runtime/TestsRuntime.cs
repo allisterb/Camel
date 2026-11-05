@@ -1,8 +1,6 @@
 ﻿namespace Camel.Tests;
 
 using System;
-using System.Collections.Concurrent;
-using System.Net.Sockets;
 
 using Microsoft.Extensions.Configuration;
 
@@ -16,40 +14,30 @@ public class TestsRuntime : Runtime
         config = LoadConfigFile("testappsettings.json");
     }
 
-    #region SIFT reachability
-    // Cache the probe per host:port so an entire suite fails fast when SIFT is down — the first SIFT test pays the
-    // (short) probe, the rest throw immediately from the cache instead of each re-probing / hanging.
-    private static readonly ConcurrentDictionary<string, bool> siftReachable = new();
+    #region Host reachability
+    // The probe itself lives in HostReachability (no static ctor, so suites that do not derive from this class
+    // can use it without triggering config/logger setup). These two keep the existing call sites working.
+
+    /// <inheritdoc cref="HostReachability.IsActivePlatformReachable"/>
+    public static bool IsActivePlatformReachable(IConfigurationRoot cfg, out string reason, int timeoutMs = 3000) =>
+        HostReachability.IsActivePlatformReachable(cfg, out reason, timeoutMs);
 
     /// <summary>
-    /// Fast-fail reachability guard for the SIFT workstation. Probes the SIFT SSH endpoint (<c>SIFT:Host</c>/
-    /// <c>SIFT:Port</c> from <paramref name="sshConfig"/>, default <c>192.168.8.117:22</c>) with a short TCP connect
-    /// timeout and <b>throws</b> a clear <see cref="InvalidOperationException"/> when it is not reachable — so
-    /// SIFT-dependent tests fail in seconds instead of hanging on SSH.NET's long connect timeout when the VM is down.
-    /// Returns <paramref name="sshConfig"/> so a test can wrap its config load in one line:
+    /// Reachability guard for the SIFT workstation that <b>throws</b> a clear <see cref="InvalidOperationException"/>
+    /// when it is down, for call sites that want a hard failure rather than a skip. Returns
+    /// <paramref name="sshConfig"/> so a test can wrap its config load in one line:
     /// <c>var cfg = EnsureSIFT(LoadConfigFile("sshtestappsettings.json"));</c>. Call it before <c>CreateFromConfig</c>.
+    /// Prefer <see cref="IsActivePlatformReachable"/> plus a skip for suites gated on an optional lab VM.
     /// </summary>
     public static IConfigurationRoot EnsureSIFT(IConfigurationRoot sshConfig, int timeoutMs = 3000)
     {
         var host = sshConfig["SIFT:Host"] ?? "192.168.8.117";
         var port = int.TryParse(sshConfig["SIFT:Port"], out var p) ? p : 22;
-        if (!siftReachable.GetOrAdd($"{host}:{port}", _ => ProbeTcp(host, port, timeoutMs)))
+        if (!HostReachability.IsReachable(host, port, timeoutMs))
             throw new InvalidOperationException(
                 $"SIFT workstation is not reachable at {host}:{port} (TCP probe timed out after {timeoutMs}ms). " +
                 "Is the SIFT VM powered on and on the network? These tests require a live SIFT workstation.");
         return sshConfig;
-    }
-
-    // A quick TCP connect probe: true only if the port accepts a connection within the timeout. Any timeout/refusal/
-    // error counts as unreachable (fail closed).
-    private static bool ProbeTcp(string host, int port, int timeoutMs)
-    {
-        try
-        {
-            using var client = new TcpClient();
-            return client.ConnectAsync(host, port).Wait(timeoutMs) && client.Connected;
-        }
-        catch { return false; }
     }
     #endregion
 

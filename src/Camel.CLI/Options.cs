@@ -117,6 +117,24 @@ public enum AgentHarness
     Agy = 2,
 }
 
+/// <summary>How a generated case's brief reaches the Camel JavaScript SDK reference. The brief orders the agent to
+/// read the reference before it writes a line of code, so a harness that does not serve MCP resources leaves the
+/// agent flying blind — these are the two fallbacks. The content is identical in all three modes; only the
+/// transport and what it costs in context differ.</summary>
+public enum SdkDocMode
+{
+    /// <summary>The brief points at the <c>camel://sdk/*</c> MCP resources the server serves, read on demand.</summary>
+    Resources = 0,
+
+    /// <summary>The same area-sliced docs are written into <c>&lt;case&gt;/sdk/</c> and the brief points at those
+    /// files. Needs only file reads, which every harness has, and keeps the on-demand slicing.</summary>
+    Files = 1,
+
+    /// <summary>The whole reference is appended to the brief. Needs nothing of the harness at all, but the brief
+    /// becomes several times larger and is resident in every turn.</summary>
+    Inline = 2,
+}
+
 [Verb("create-case", HelpText = "Create a Camel case directory and the scaffolding for an agent harness (Claude Code by default, or Goose via --agent-harness). The connection options are baked into the harness's Camel launch so it starts the server in that mode.")]
 public class CreateCaseOptions : ConnectionOptions
 {
@@ -131,6 +149,9 @@ public class CreateCaseOptions : ConnectionOptions
 
     [Option("agent-harness", Required = false, HelpText = "Agent harness the generated case targets: ClaudeCode (default; CLAUDE.md + .mcp.json + .claude/settings.json), Goose (AGENTS.md + a run-goose launcher that registers Camel as a per-session MCP extension; supports local models via --model/--provider), or Agy (Google Antigravity: GEMINI.md + .mcp.json + .agents/settings.json).")]
     public AgentHarness Harness { get; set; } = AgentHarness.ClaudeCode;
+
+    [Option("sdk-docs", Required = false, HelpText = "How the generated brief reaches the Camel JS SDK reference: Resources (default; the brief points at the camel://sdk/* MCP resources, read on demand), Files (write the same area-sliced docs into <case-dir>/sdk/ and point the brief there — for a harness with no MCP resource support; same context cost, still read on demand), or Inline (append the whole reference to the brief — needs nothing of the harness, but makes the brief several times larger and resident in every turn, so it is the last resort and a poor fit for a small-context local model).")]
+    public SdkDocMode SdkDocs { get; set; } = SdkDocMode.Resources;
 
     [Option("model", Required = false, HelpText = "(Goose) Model id baked into the run-goose launcher as --model (e.g. a local, coding-capable model).")]
     public string? Model { get; set; }

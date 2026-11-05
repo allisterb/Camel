@@ -30,9 +30,15 @@ public class KaliPlatformToolTests
         ["Kali:Tools:UnixTools:SHA256Sum:Command"] = "/usr/bin/sha256sum",
     }).Build();
 
-    [Fact]
+    // Drives real tools over SSH to the Kali box above. With that VM off, SSH.NET spends ~44s finding out and
+    // the test fails for a reason that has nothing to do with the code, so probe first and skip with the reason.
+    static void RequireLiveHost() =>
+        Skip.IfNot(HostReachability.IsActivePlatformReachable(KaliConfig(), out var why), why);
+
+    [SkippableFact]
     public void ResolvesAndExecutesProfileToolsOnKaliAndDegradesTheRest()
     {
+        RequireLiveHost();
         var config = KaliConfig();
         var env = AuditEnvironment.CreateFromConfig(config);   // Platform=Kali -> connects to the Kali box
         var tk = new UnixToolsToolkit(env, config);            // tools resolved from Kali:Tools:UnixTools

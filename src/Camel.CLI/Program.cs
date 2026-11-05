@@ -34,8 +34,20 @@ internal class Program : Runtime
         // The preserve-chatlog verb runs as a Claude Code SessionEnd hook: keep stdout clean (no logo) so
         // the hook's output isn't polluted, and don't tee logging to the console.
         bool isHook = args.Contains("preserve-chatlog");
-        if (!isHook) PrintLogo();
-        Runtime.WithFileAndConsoleLogging("Camel", "CLI", args.Contains("--debug"));
+
+        // An MCP server on the stdio transport OWNS stdout -- it is the JSON-RPC channel itself. The logo and
+        // the Serilog console sink put 24 lines of ANSI figlet art, the SSH host-key fingerprint and the
+        // platform capability table on that channel ahead of the initialize response, and keep writing to it
+        // for the rest of the session. A strict client rejects the stream outright: Antigravity registered the
+        // server, read garbage, and reported no tools at all. Claude Code skips non-JSON lines, which is the
+        // only reason this went unnoticed. Log to the file only; stdout stays protocol-pure.
+        bool isStdioServer = !args.Contains("--http")
+            && args.Any(a => a is "server" or "dfir-server" or "pentest-server");
+
+        bool quietStdout = isHook || isStdioServer;
+        if (!quietStdout) PrintLogo();
+        if (quietStdout) Runtime.WithFileLogging("Camel", "CLI", args.Contains("--debug"));
+        else Runtime.WithFileAndConsoleLogging("Camel", "CLI", args.Contains("--debug"));
         var parser = new Parser(with =>
         {
             with.CaseInsensitiveEnumValues = true;
@@ -187,16 +199,37 @@ internal class Program : Runtime
                 ? "Camel.CLI.CaseTemplate.CLAUDE.pentest.md"
                 : "Camel.CLI.CaseTemplate.CLAUDE.md";
             var claude = ReadEmbedded(template).Replace("__CASE_ID__", opts.CaseId);
+            // The brief is authored for Claude Code, which registers the server in a root .mcp.json. Neutralize
+            // that one harness-specific phrase for the harnesses that register it somewhere else.
             if (opts.Harness == AgentHarness.Goose)
-                // The brief is authored for Claude Code; under Goose the Camel server is a per-session MCP
-                // extension (run-goose.*), not a .mcp.json registration. Neutralize that one harness-specific phrase.
                 claude = claude.Replace("registered in `.mcp.json` (this directory)", "registered as the `camel` MCP extension");
+            else if (opts.Harness == AgentHarness.Agy)
+                claude = claude.Replace("registered in `.mcp.json` (this directory)", "registered in `.agents/plugins/camel/mcp_config.json` (this directory)");
+            // Antigravity namespaces a server provided by a plugin as `<plugin>_<server>`, so the brief's
+            // bare `camel` would send the agent to a ServerName that does not exist for call_mcp_tool and
+            // read_resource. Both halves of the name are ours, so the result is deterministic.
+            claude = claude.Replace("Camel MCP server (`camel`)",
+                "Camel MCP server, which Antigravity registers under the namespaced name **`camel_camel`** "
+                + "(`<plugin>_<server>`) — pass that exact name as the `ServerName` for `call_mcp_tool` and "
+                + "`read_resource`");
+            // Repoint the brief's mandatory "read the SDK reference first" block at whichever transport this
+            // harness can actually serve (--sdk-docs). Resources is the default and needs no rewrite.
+            claude = opts.SdkDocs switch
+            {
+                SdkDocMode.Files => BriefSdkDocsAsFiles(claude),
+                SdkDocMode.Inline => BriefSdkDocsInline(claude, opts),
+                _ => claude,
+            };
             File.WriteAllText(claudePath, claude);
-            Info($"Wrote {claudePath}");
+            Info($"Wrote {claudePath}{(opts.SdkDocs == SdkDocMode.Inline ? $" ({claude.Length / 1024} KB — SDK reference inlined)" : "")}");
         }
 
+        // The sliced reference files go in whether or not the brief was rewritten just now, so re-running
+        // create-case over a case whose brief is already filled in still refreshes them against this build.
+        if (opts.SdkDocs == SdkDocMode.Files) WriteSdkDocFiles(opts, caseDir);
+
         // Harness-specific wiring. Claude Code and Antigravity get per-project config files (both use a root
-        // .mcp.json; Claude adds .claude/settings.json, Antigravity adds .agents/settings.json). Goose instead
+        // .mcp.json; Claude adds .claude/settings.json, Antigravity a .agents/plugins/camel plugin). Goose instead
         // registers Camel as a per-session MCP extension via a run-goose launcher. The brief above and the report
         // viewer below are harness-agnostic.
         switch (opts.Harness)
@@ -238,7 +271,8 @@ internal class Program : Runtime
                 AnsiConsole.MarkupLine($"[cyan]\nFill in the case details in {briefFull}. Set a model in {launcher} (e.g. --provider ollama --model <coding-model>), then run it to launch Camel under Goose.[/]");
                 break;
             case AgentHarness.Agy:
-                AnsiConsole.MarkupLine($"[cyan]\nFill in the case details in {briefFull}. Open the case directory in Antigravity (or run `agy` in it) to start — it loads .mcp.json, .agents/settings.json and GEMINI.md from here.[/]");
+                AnsiConsole.MarkupLine($"[cyan]\nFill in the case details in {briefFull}. Open the case directory in Antigravity (Desktop, or `agy`) to start - it discovers the .agents/plugins/camel plugin from here, which registers the server, and GEMINI.md by convention. Answer 'always allow ... in this project' the first time a camel tool is called; Antigravity records pre-approval itself and no file here can grant it up front.[/]");
+                AnsiConsole.MarkupLine("[yellow]If Antigravity shows no Camel tools, check whether ~/.gemini/antigravity/mcp/camel/ exists: if it does not, Desktop never launched the server, so the folder was not opened as a project or not trusted - stale entries in ~/.gemini/config/projects/ for this folder are worth removing.[/]");
                 break;
             default:
                 AnsiConsole.MarkupLine($"[cyan]\nFill in the case details in {briefFull}. When you are ready launch Claude in that directory.[/]");
@@ -831,30 +865,370 @@ internal class Program : Runtime
         }
     }
 
-    /// <summary>Antigravity (Google) harness: write the root <c>.mcp.json</c> (the `camel` stdio server, same shape
-    /// Antigravity reads as Claude Code) and <c>.agents/settings.json</c> — Antigravity's per-project permission
-    /// policy: allow only the Camel MCP tools + scoped file writes, deny shell/web/subagents and secrets. The brief
-    /// is written as <c>GEMINI.md</c> by the caller. Antigravity loads all three from the case directory, so there is
-    /// no launcher to emit (open the folder in Antigravity, or run `agy` in it). Existing files left untouched.
-    /// Note: Antigravity has no SessionEnd-style hook, so the report is baked manually with `dotnet … bake-report`.</summary>
+    /// <summary>
+    /// Antigravity (Google) harness. Antigravity discovers workspace customizations by walking from the opened
+    /// folder up to the repository root looking for a <c>.agents/</c> directory — but it reads an MCP
+    /// registration from only two places: the operator's global <c>~/.gemini/config/mcp_config.json</c>, or a
+    /// PLUGIN's own <c>mcp_config.json</c>. A bare <c>.agents/mcp_config.json</c> is not one of them. That is why
+    /// a case wired that way came up with no Camel tools and no <c>call_mcp_tool</c> at all, while the server was
+    /// never even launched. Plugins, however, ARE found by that workspace walk, so wrapping the registration in
+    /// one is the supported way to keep it per-case instead of polluting the global config:
+    /// <list type="bullet">
+    /// <item><c>.agents/plugins/camel/plugin.json</c> — the manifest marking the directory as a plugin.
+    ///   Discovered plugins are enabled by default; an entry in <c>config.json</c>'s <c>plugins</c> map, which the
+    ///   settings UI writes, overrides that.</item>
+    /// <item><c>.agents/plugins/camel/mcp_config.json</c> — the registration itself: <c>command</c> + <c>args</c>
+    ///   only, no <c>type</c> or <c>env</c>, args spelled with forward slashes, as the one reference project
+    ///   proven to have been launched by Antigravity Desktop writes them (<c>reference/projects/inf-2</c>).</item>
+    /// </list>
+    /// The brief (<c>GEMINI.md</c>) is picked up as a rule by convention; no config file binds it.
+    /// <para>NOT written: <c>.agents/settings.json</c>. Earlier revisions emitted one carrying
+    /// <c>mcp.autoApprove</c>, <c>tools.disabled</c> and a tool-keyed permissions map, copied from an older
+    /// reference project. No such file exists in this Antigravity's customization system — the documented types
+    /// are rules, skills, plugins, hooks and MCP servers — and it was measurably inert: a run whose
+    /// <c>tools.disabled</c> listed <c>run_command</c> shelled out to PowerShell on its very first step.
+    /// Pre-approval is instead recorded by the client when the operator answers "always allow … in this project",
+    /// landing in that project's record under <c>~/.gemini/config/projects/</c> as <c>mcp(camel/&lt;Tool&gt;)</c>.
+    /// There is no file this command can write to grant it ahead of time.</para>
+    /// <para>Diagnostic, when a generated case shows no Camel tools: Desktop caches a launched server's tool
+    /// schemas under <c>~/.gemini/antigravity/mcp/&lt;server&gt;/</c> within the same minute it starts it. No
+    /// such directory means Desktop never attempted the launch, so the fault is in it finding or trusting this
+    /// configuration — not in the server, which would otherwise have written into the case's <c>logs/</c>.</para>
+    /// </summary>
+
+    /// <summary>Antigravity caps EACH rule file at 24,000 bytes and truncates the remainder on a line boundary,
+    /// silently. The generated brief runs past that, and what falls off the end is the report-formatting and
+    /// teardown guidance — including the rule never to write live malicious code into a deliverable, which on a
+    /// webshell case is the difference between a report and a quarantined file.</summary>
+    const int AgyRuleFileLimit = 24000;
+
+    /// <summary>
+    /// Keep <c>GEMINI.md</c> under <see cref="AgyRuleFileLimit"/> by moving its tail into the plugin's own rules
+    /// file, which Antigravity loads whenever the plugin is enabled. The split falls on a top-level section
+    /// boundary, so neither half ends mid-sentence, and the head keeps a pointer at the continuation so the agent
+    /// is never left believing it has read the whole brief.
+    /// </summary>
+    static void SplitBriefForAntigravity(string caseDir, string pluginDir)
+    {
+        var briefPath = Path.Combine(caseDir, "GEMINI.md");
+        if (!File.Exists(briefPath)) return;
+
+        var text = File.ReadAllText(briefPath);
+        if (Encoding.UTF8.GetByteCount(text) <= AgyRuleFileLimit) return;
+
+        const string pointer = "\n> **This brief continues in `.agents/plugins/camel/rules/AGENTS.md`**, which Antigravity\n" +
+                               "> loads alongside this file. That half is part of the brief and is not optional.\n";
+        var margin = AgyRuleFileLimit - Encoding.UTF8.GetByteCount(pointer) - 512;
+
+        var head = new StringBuilder();
+        var tail = new StringBuilder();
+        foreach (var section in Regex.Split(text, @"(?=^## )", RegexOptions.Multiline))
+        {
+            if (tail.Length == 0 && Encoding.UTF8.GetByteCount(head + section) <= margin) head.Append(section);
+            else tail.Append(section);
+        }
+        // A single section bigger than the cap cannot be split on a boundary; leave the file alone and say so
+        // rather than cut it mid-sentence ourselves.
+        if (tail.Length == 0 || head.Length == 0)
+        {
+            Warn($"{briefPath} is over Antigravity's {AgyRuleFileLimit}-byte rule-file cap but has no top-level " +
+                 "section boundary to split on, so it will be truncated. Shorten it by hand.");
+            return;
+        }
+
+        File.WriteAllText(briefPath, head.ToString().TrimEnd() + "\n" + pointer);
+
+        var rulesDir = Path.Combine(pluginDir, "rules");
+        Directory.CreateDirectory(rulesDir);
+        var rulesPath = Path.Combine(rulesDir, "AGENTS.md");
+        File.WriteAllText(rulesPath,
+            "# Case brief, continued\n\nThis is the remainder of this case's `GEMINI.md`. Antigravity caps each rule\n" +
+            "file at 24,000 bytes, so the brief is split across the two files. Both halves apply in full.\n\n" +
+            tail.ToString().TrimStart());
+
+        Info($"Brief exceeded Antigravity's {AgyRuleFileLimit}-byte rule-file cap — moved its last " +
+             $"{Encoding.UTF8.GetByteCount(tail.ToString())} bytes into {rulesPath}");
+
+        var overflow = Encoding.UTF8.GetByteCount(File.ReadAllText(rulesPath));
+        if (overflow > AgyRuleFileLimit)
+            Warn($"{rulesPath} is {overflow} bytes, still over the cap, so it will itself be truncated. " +
+                 "Shorten the brief by hand.");
+    }
+
     static void WriteAntigravityConfig(CreateCaseOptions opts, string caseDir)
     {
-        WriteMcpJson(opts, caseDir);
+        var pluginDir = Path.Combine(caseDir, ".agents", "plugins", "camel");
+        Directory.CreateDirectory(pluginDir);
 
-        var dotAgents = Path.Combine(caseDir, ".agents");
-        Directory.CreateDirectory(dotAgents);
-        var settingsPath = Path.Combine(dotAgents, "settings.json");
-        if (File.Exists(settingsPath))
+        SplitBriefForAntigravity(caseDir, pluginDir);
+
+        if (opts.SdkDocs == SdkDocMode.Inline)
+            Warn("--sdk-docs Inline is a poor fit for Antigravity: it caps each rule file at "
+                 + AgyRuleFileLimit + " bytes, so nearly all of an inlined reference is discarded before the "
+                 + "agent ever sees it. Use the default (Resources), or Files.");
+
+        var manifestPath = Path.Combine(pluginDir, "plugin.json");
+        if (File.Exists(manifestPath))
         {
-            Info($"{settingsPath} already exists — leaving it untouched.");
+            Info($"{manifestPath} already exists — leaving it untouched.");
         }
         else
         {
-            // Static policy (no per-case substitution). The paths are case-relative (./reports, ./secrets, ...).
-            File.WriteAllText(settingsPath, ReadEmbedded("Camel.CLI.CaseTemplate.agents-settings.json"));
-            Info($"Wrote {settingsPath}");
+            File.WriteAllText(manifestPath,
+                new JsonObject { ["name"] = "camel" }.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            Info($"Wrote {manifestPath}");
+        }
+
+        var mcpPath = Path.Combine(pluginDir, "mcp_config.json");
+        if (File.Exists(mcpPath))
+        {
+            Info($"{mcpPath} already exists — leaving it untouched.");
+        }
+        else
+        {
+            var mcp = new JsonObject
+            {
+                ["mcpServers"] = new JsonObject
+                {
+                    ["camel"] = new JsonObject
+                    {
+                        ["command"] = "dotnet",
+                        ["args"] = new JsonArray(BuildServerArgs(opts)
+                            .Select(a => (JsonNode)JsonValue.Create(a.Replace(Path.DirectorySeparatorChar, '/'))).ToArray()),
+                    },
+                },
+            };
+            File.WriteAllText(mcpPath, mcp.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            Info($"Wrote {mcpPath}");
+        }
+
+        // Antigravity's permission model is keyed by TOOL, not by path, so the clean-room path denies a Claude Code
+        // case gets cannot be expressed here. Say so rather than let the operator assume the isolation is in force.
+        var exposed = CleanRoomDenyPaths(caseDir).ToList();
+        if (exposed.Count > 0)
+        {
+            Warn($"Antigravity scopes permissions by tool, not by path: the {exposed.Count} path(s) outside this " +
+                 "case that a Claude Code case would deny (sibling cases, the Camel source tree) CANNOT be denied " +
+                 "from the case directory. Desktop prompts before reading outside the opened folder, which is " +
+                 "coarser and is the operator's own global setting; for a guaranteed clean-room run, create the " +
+                 "case outside the Camel repository.");
         }
     }
+
+    /// <summary>
+    /// Absolute path globs the generated agent must not read, glob, grep or write — everything outside its own case
+    /// directory that would invalidate a clean-room run: the Camel source tree, docs and reference material (the
+    /// agent is meant to work from the SDK docs served over MCP, not from the implementation) and every sibling case
+    /// directory (which holds another agent's findings for the same evidence). Forward slashes, as Antigravity's
+    /// own per-project policies use. Only paths that exist are emitted, and never one containing the case itself;
+    /// sibling cases created after this one are not covered, so re-run or extend the list by hand for a later case.
+    /// </summary>
+    static IEnumerable<string> CleanRoomDenyPaths(string caseDir)
+    {
+        var full = Path.GetFullPath(caseDir).TrimEnd(Path.DirectorySeparatorChar);
+        string Norm(string p) => Path.GetFullPath(p).Replace('\\', '/').TrimEnd('/');
+        // Compare on a separator boundary: a plain StartsWith would read sibling case 'ALIHADI' as a parent of
+        // case 'ALIHADI-AGY' and silently drop the one deny that matters most.
+        bool Outside(string p)
+        {
+            var q = Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar);
+            return !full.Equals(q, StringComparison.OrdinalIgnoreCase)
+                && !full.StartsWith(q + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Sibling case directories: another agent's answers to the same questions.
+        var parent = Path.GetDirectoryName(full);
+        if (parent is not null && Directory.Exists(parent))
+        {
+            foreach (var sib in Directory.GetDirectories(parent).Where(Outside)) yield return $"{Norm(sib)}/**";
+        }
+
+        // The Camel install tree, found by walking up from this assembly to the repository root. Keyed on .git
+        // rather than the solution file, which lives one level down in src/ — walking to the .sln would root this
+        // at src/ and deny none of the source it is meant to hide.
+        var root = new DirectoryInfo(Path.GetDirectoryName(CliDllPath()) ?? AssemblyLocation);
+        while (root is not null && !Directory.Exists(Path.Combine(root.FullName, ".git"))
+                                && !File.Exists(Path.Combine(root.FullName, ".git"))) root = root.Parent;
+        if (root is null) yield break;
+
+        foreach (var dir in new[] { "src", "tests", "docs", "reference", "ext", "tools", "benchmarks", "bin" })
+        {
+            var p = Path.Combine(root.FullName, dir);
+            if (Directory.Exists(p) && Outside(p)) yield return $"{Norm(p)}/**";
+        }
+        foreach (var file in new[] { "CLAUDE.md", "AGENTS.md", "GEMINI.md", "Camel.sln", "Directory.Build.props" })
+        {
+            var p = Path.Combine(root.FullName, file);
+            if (File.Exists(p)) yield return Norm(p);
+        }
+    }
+
+    /// <summary>
+    /// The SDK reference for an investigation type, taken from the very accessors the MCP server serves it from
+    /// (<see cref="DFIRResources"/> / <see cref="PenTestResources"/>) so a generated copy can never drift from
+    /// what an agent on the resource transport would read: the doc set (core + schema, sliceable by subject area),
+    /// the generated map, the schema signpost, and the discipline document.
+    /// </summary>
+    static (SdkDocSet Set, string Index, string Signpost, string Discipline) SdkReference(InvestigationType type) =>
+        type == InvestigationType.PenTest
+            ? (CamelResources.PenTest, PenTestResources.SdkIndex(), PenTestResources.SdkSchema(), PenTestResources.SdkDiscipline())
+            : (CamelResources.Dfir, DFIRResources.SdkIndex(), DFIRResources.SdkSchema(), DFIRResources.SdkDiscipline());
+
+    /// <summary>
+    /// <c>--sdk-docs Files</c>: write the SDK reference into <c>&lt;case&gt;/sdk/</c> with the same shape the server
+    /// serves over MCP — <c>index.md</c>, <c>discipline.md</c>, <c>schema.md</c> (the signpost), the per-area
+    /// <c>core/{Area}.md</c> and <c>schema/{Area}.md</c> slices, and the whole-document <c>core/all.md</c> /
+    /// <c>schema/all.md</c>. An area with no section on one side is not written, exactly as it is not registered as
+    /// a resource. Always overwritten: these are generated, not authored, and a stale slice is a wrong API.
+    /// </summary>
+    static void WriteSdkDocFiles(CreateCaseOptions opts, string caseDir)
+    {
+        var (set, index, signpost, discipline) = SdkReference(opts.Type);
+        var sdkDir = Path.Combine(caseDir, "sdk");
+        foreach (var sub in new[] { "core", "schema" }) Directory.CreateDirectory(Path.Combine(sdkDir, sub));
+
+        var files = new List<(string Path, string Text)>
+        {
+            (Path.Combine(sdkDir, "index.md"), index),
+            (Path.Combine(sdkDir, "discipline.md"), discipline),
+            (Path.Combine(sdkDir, "schema.md"), signpost),
+            (Path.Combine(sdkDir, "core", "all.md"), set.Core()),
+            (Path.Combine(sdkDir, "schema", "all.md"), set.Schema()),
+        };
+        foreach (var area in set.Addressable)
+        {
+            foreach (var (kind, doc) in new[] { ("core", set.Core()), ("schema", set.Schema()) })
+            {
+                if (SdkDocs.Slice(doc, area.HeadingText) is string slice)
+                    files.Add((Path.Combine(sdkDir, kind, $"{area.Name}.md"), slice));
+            }
+        }
+
+        // The map and the preambles cross-reference the other documents BY RESOURCE URI (38 of them in the DFIR
+        // map alone). Left alone, the agent reads sdk/index.md and is sent straight back to a transport this mode
+        // exists because the harness cannot use, so the docs are repointed at each other exactly like the brief.
+        foreach (var (path, text) in files) File.WriteAllText(path, SdkDocsAsFiles(text));
+        Info($"Wrote {files.Count} SDK reference files to {sdkDir} " +
+             $"({files.Sum(f => (long)f.Text.Length) / 1024} KB) — the brief reads these, not camel://sdk/*.");
+    }
+
+    /// <summary>Matches a <c>camel://sdk/...</c> resource URI in a brief, capturing the path after the scheme. The
+    /// character class admits the <c>{Area}</c> placeholder the briefs use when naming the per-area resources.</summary>
+    private static readonly Regex SdkResourceUri = new(@"camel://sdk/([A-Za-z0-9_/{}]+)", RegexOptions.Compiled);
+
+    /// <summary>Matches a <c>camel-sdk-x</c> resource NAME in a brief or a reference document. The documents refer
+    /// to each other by name as well as by URI ("see the ToolResult schema in camel-sdk-schema"), and a name left
+    /// alone points at a transport the Files/Inline modes exist because the harness cannot use.</summary>
+    private static readonly Regex SdkResourceName = new(@"camel-sdk-(index|core|schema|discipline)", RegexOptions.Compiled);
+
+    /// <summary>The whole-document path behind a <c>camel-sdk-x</c> name (the bare core/schema names address the
+    /// whole document, which is what <c>core/all</c> and <c>schema/all</c> hold).</summary>
+    static string SdkNamedDoc(string name) => name switch
+    {
+        "index" => "index",
+        "core" => "core/all",
+        "schema" => "schema/all",
+        _ => "discipline",
+    };
+
+    /// <summary><c>--sdk-docs Files</c>: repoint the brief's SDK-reference block from the <c>camel://sdk/*</c>
+    /// resource URIs at the files <see cref="WriteSdkDocFiles"/> writes, preserving the read-only-what-you-need
+    /// structure (the <c>{Area}</c> placeholder survives the rewrite as a path). The paired
+    /// <c>**`camel-sdk-x`** (`camel://sdk/x`)</c> forms collapse to one path first, so the rewrite does not leave
+    /// the same filename printed twice.</summary>
+    static string BriefSdkDocsAsFiles(string brief) =>
+        SdkDocsAsFiles(brief
+            .Replace("read these MCP resources", "read these reference files, which are in the `sdk/` directory of this case")
+            .Replace("**`camel-sdk-index`** (`camel://sdk/index`)", "**`sdk/index.md`**")
+            .Replace("**`camel-sdk-discipline`** (`camel://sdk/discipline`)", "**`sdk/discipline.md`**")
+            .Replace("`camel-sdk-index`", "`sdk/index.md`")
+            .Replace("`camel-sdk-discipline`", "`sdk/discipline.md`")
+            .Replace("read the three SDK resources", "read the SDK reference files named above")
+            .Replace("resources are the authoritative reference", "files are the authoritative reference")
+            .Replace("`camel-sdk-*`", "the `sdk/` reference files"));
+
+    /// <summary>Rewrites every <c>camel://sdk/...</c> URI in a brief or a reference document as the path of the
+    /// file holding it, relative to the case directory (which is where the agent is working, so the same path is
+    /// correct from the brief and from inside <c>sdk/</c>).</summary>
+    static string SdkDocsAsFiles(string text) =>
+        SdkResourceName.Replace(
+            SdkResourceUri.Replace(text, m => $"sdk/{m.Groups[1].Value}.md"),
+            m => $"sdk/{SdkNamedDoc(m.Groups[1].Value)}.md");
+
+    /// <summary>
+    /// <c>--sdk-docs Inline</c>: append the whole SDK reference to the brief as appendices A–D and repoint every
+    /// resource URI at the appendix that now holds it, so nothing is left for the agent to fetch. This is the
+    /// fallback for a harness that serves neither resources nor file reads; it costs the agent the entire
+    /// reference in every turn, which the per-area slicing exists to avoid, so <see cref="SdkDocMode.Files"/> is
+    /// the better answer whenever the harness can read a file.
+    /// </summary>
+    static string BriefSdkDocsInline(string brief, CreateCaseOptions opts)
+    {
+        var (set, index, _, discipline) = SdkReference(opts.Type);
+        var body = SdkResourceUri.Replace(brief
+            .Replace("read these MCP resources",
+                "read the SDK reference appended to the END of this file as appendices A-D - this harness may not " +
+                "serve MCP resources, so the whole reference is inlined there and nothing needs fetching")
+            .Replace("**`camel-sdk-index`** (`camel://sdk/index`)", "**Appendix A**")
+            .Replace("**`camel-sdk-discipline`** (`camel://sdk/discipline`)", "**Appendix D**")
+            .Replace("`camel-sdk-index`", "Appendix A")
+            .Replace("`camel-sdk-discipline`", "Appendix D")
+            .Replace("read the three SDK resources", "read appendices A and D below")
+            .Replace("resources are the authoritative reference", "appendices are the authoritative reference")
+            .Replace("`camel-sdk-*`", "the appendices"),
+            m => InlineAppendix(m.Groups[1].Value));
+        body = SdkResourceName.Replace(body, m => InlineAppendixOf(m.Groups[1].Value));
+
+        var appendices = new (string Title, string Text)[]
+        {
+            ($"Appendix A - Camel JS SDK reference: the map ({set.Label})", index),
+            ($"Appendix B - Camel JS SDK reference: methods ({set.Label} core)", set.Core()),
+            ($"Appendix C - Camel JS SDK reference: model schemas ({set.Label})", set.Schema()),
+            ($"Appendix D - {(opts.Type == InvestigationType.PenTest ? "engagement" : "forensic")} discipline", discipline),
+        };
+        var sb = new StringBuilder(body);
+        foreach (var (title, text) in appendices)
+        {
+            // The appended documents cross-reference each other by resource URI too, so they get the same
+            // rewrite — otherwise the map inside Appendix A still tells the agent to fetch camel://sdk/*.
+            sb.Append("\n\n---\n\n# ").Append(title).Append("\n\n")
+              .Append("*(The document below is included verbatim; its own headings start at level 2.)*\n\n")
+              .Append(SdkResourceName
+                  .Replace(SdkResourceUri.Replace(text, m => InlineAppendix(m.Groups[1].Value)),
+                           m => InlineAppendixOf(m.Groups[1].Value))
+                  .Replace("\n#", "\n##").TrimEnd())
+              .Append('\n');
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Which inlined appendix holds a given <c>camel://sdk/</c> path. A per-area URI becomes a pointer to that
+    /// area's SECTION of the appendix rather than the appendix alone: the briefs say "read `camel://sdk/core/{Area}`
+    /// for the method detail and `camel://sdk/schema/{Area}` for the fields", and collapsing both to "Appendix B"
+    /// and "Appendix C" turns that sentence into nonsense ("e.g. Appendix B + Appendix C"). Unrecognised paths
+    /// fall back to the map, which inventories everything.
+    /// </summary>
+    /// <summary>The plain appendix label for a <c>camel-sdk-x</c> NAME, for prose that mentions the document
+    /// rather than a specific area ("see the ToolResult schema in Appendix C").</summary>
+    static string InlineAppendixOf(string name) => name switch
+    {
+        "index" => "Appendix A",
+        "core" => "Appendix B",
+        "schema" => "Appendix C",
+        _ => "Appendix D",
+    };
+
+    static string InlineAppendix(string path) => path switch
+    {
+        "discipline" => "Appendix D",
+        "index" or "core" => "Appendix A",
+        "core/all" => "Appendix B in full",
+        "schema" or "schema/all" => "Appendix C in full",
+        _ when path.StartsWith("core/", StringComparison.Ordinal) => $"the {path["core/".Length..]} section of Appendix B",
+        _ when path.StartsWith("schema/", StringComparison.Ordinal) => $"the {path["schema/".Length..]} section of Appendix C",
+        _ => "Appendix A",
+    };
 
     /// <summary>Goose harness: write a <c>run-goose.cmd</c>/<c>.sh</c> launcher that starts Goose with Camel
     /// registered as a per-session stdio MCP extension (<c>--with-extension</c>) and only that extension

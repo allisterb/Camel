@@ -19,9 +19,16 @@ public class SshEnvironmentTests : TestsRuntime
     // than reaching past it to a hardcoded section.
     SshAuditEnvironment NewEnv() => (SshAuditEnvironment)AuditEnvironment.CreateFromConfig(config!);
 
-    [Fact]
+    // Every test below opens a real SSH connection to the ACTIVE platform host. When that VM is off, SSH.NET
+    // takes ~21s per test to find out and the suite reports a wall of failures that say nothing about the code
+    // (7m24s and 7 "failures" to report that Kali was powered down). Probe the endpoint first and skip instead.
+    void RequireActivePlatform() =>
+        Skip.IfNot(IsActivePlatformReachable(config!, out var why), why);
+
+    [SkippableFact]
     public void CreateFromConfigConnectsToActivePlatformHost()
     {
+        RequireActivePlatform();
         var platform = config!["Platform"] ?? "SIFT";
         var env = NewEnv();
         Assert.True(env.IsConnected);
@@ -29,15 +36,17 @@ public class SshEnvironmentTests : TestsRuntime
         Assert.Equal(GetRequiredValue(config, $"{platform}:Host"), env.HostName);
     }
 
-    [Fact]
+    [SkippableFact]
     public void CanConnect()
     {
+        RequireActivePlatform();
         Assert.True(NewEnv().IsConnected);
     }
 
-    [Fact]
+    [SkippableFact]
     public void CanExecuteCommand()
     {
+        RequireActivePlatform();
         var env = NewEnv();
         var result = env.ExecuteCommand("echo", "hello", out string output);
         Assert.True(result);
@@ -46,17 +55,19 @@ public class SshEnvironmentTests : TestsRuntime
         Assert.False(result);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task CanExecuteAsync()
     {
+        RequireActivePlatform();
         var r = await NewEnv().ExecuteAsync("echo", "hello");
         Assert.True(r.ExitCode == 0);
         Assert.Equal("hello", r.StdOut);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task LimiterBoundsConcurrentExecutions()
     {
+        RequireActivePlatform();
         var env = NewEnv();
         env.MaxConcurrentExecutions = 2;
 
@@ -70,9 +81,10 @@ public class SshEnvironmentTests : TestsRuntime
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(10), $"unexpectedly slow: {sw.Elapsed}.");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task UnlimitedRunsConcurrently()
     {
+        RequireActivePlatform();
         var env = NewEnv();
         env.MaxConcurrentExecutions = 0; // unlimited (default)
 
@@ -119,9 +131,10 @@ public class SshEnvironmentTests : TestsRuntime
         Assert.Equal(ProcessExecuteStatus.Completed, (await env.ExecuteAsync("sudo", "-n true")).Status);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task DisconnectIdleReleasesConnectionAndNextCommandReconnects()
     {
+        RequireActivePlatform();
         var env = NewEnv();
         Assert.True(env.IsConnected);
 
