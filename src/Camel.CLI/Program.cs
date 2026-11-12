@@ -567,27 +567,55 @@ internal class Program : Runtime
             if (string.IsNullOrWhiteSpace(stdin)) return Task.CompletedTask;
 
             var payload = JsonNode.Parse(stdin);
-            var src = payload?["transcript_path"]?.GetValue<string>();
+
+            // Two harnesses deliver this payload. Claude Code uses snake_case and exports $CLAUDE_PROJECT_DIR;
+            // Antigravity uses camelCase (protojson), exports nothing, and runs the command with its working
+            // directory set to the folder holding hooks.json -- which is NOT the case root. Antigravity does,
+            // however, pass the opened workspace in `workspacePaths`, so each harness supplies what the other
+            // lacks. Detect by payload shape rather than adding a flag the hook author could get wrong.
+            var src = payload?["transcript_path"]?.GetValue<string>()
+                      ?? payload?["transcriptPath"]?.GetValue<string>();
+            bool agy = payload?["transcriptPath"] is not null || payload?["conversationId"] is not null;
+
+            // Antigravity reads this hook's stdout as a JSON result object, so progress lines must NOT go there.
+            var note = agy ? Console.Error : Console.Out;
+
             if (string.IsNullOrEmpty(src) || !File.Exists(src))
             {
-                Console.Error.WriteLine($"[preserve-chatlog] transcript_path missing or not found: {src}");
+                Console.Error.WriteLine($"[preserve-chatlog] transcript path missing or not found: {src}");
+                if (agy) Console.Out.Write("{}");
                 return Task.CompletedTask;
             }
 
             var baseDir = Environment.GetEnvironmentVariable("CLAUDE_PROJECT_DIR");
+            if (string.IsNullOrWhiteSpace(baseDir))
+                baseDir = payload?["workspacePaths"]?.AsArray().FirstOrDefault()?.GetValue<string>();
             if (string.IsNullOrWhiteSpace(baseDir)) baseDir = Directory.GetCurrentDirectory();
             var logsDir = Path.Combine(baseDir, "logs");
             Directory.CreateDirectory(logsDir);
 
-            var sessionId = payload?["session_id"]?.GetValue<string>() ?? "session";
+            var sessionId = payload?["session_id"]?.GetValue<string>()
+                            ?? payload?["conversationId"]?.GetValue<string>() ?? "session";
             // Stable per-session filename, overwritten each run: the Stop hook fires after every agent turn, so a
             // timestamped name would accumulate one full-transcript copy per turn. Distinct sessions still get
             // distinct files, and BuildChatlogData dedups by session id (tolerating the legacy timestamped name).
             var dst = Path.Combine(logsDir, $"chatlog-{sessionId}.jsonl");
-            File.Copy(src, dst, overwrite: true);
-            Console.Out.WriteLine($"[preserve-chatlog] Preserved client chat log -> {dst}");
+            if (agy)
+            {
+                // Different transcript shape: normalize it, and keep the original beside it for provenance under
+                // a name the chatlog glob (chatlog-*.jsonl) deliberately does not match, so the raw copy is never
+                // counted as a second conversation.
+                var n = NormalizeAntigravityTranscript(src, dst, payload?["modelName"]?.GetValue<string>());
+                if (n < 0) File.Copy(src, dst, overwrite: true);
+                else note.WriteLine($"[preserve-chatlog] Normalized {n} Antigravity step(s) to the Claude transcript shape");
+                File.Copy(src, Path.Combine(logsDir, $"transcript-{sessionId}.agy.jsonl"), overwrite: true);
+            }
+            else File.Copy(src, dst, overwrite: true);
+            note.WriteLine($"[preserve-chatlog] Preserved client chat log -> {dst}");
 
-            WriteTokenUsage(src, logsDir, sessionId);
+            // Always summarise the PRESERVED copy: for Claude Code it is byte-identical to the source, and for
+            // Antigravity it is the normalized form the accumulator can actually read.
+            WriteTokenUsage(dst, logsDir, sessionId, note);
 
             // Bake the self-contained report now that the chat log is in place, so reports/report.html opens with
             // this session's findings/audit-trail/IOCs/accuracy/conversation by double-click. Best-effort: the
@@ -596,16 +624,24 @@ internal class Program : Runtime
             try
             {
                 var n = BakeReport(baseDir);
-                Console.Out.WriteLine($"[preserve-chatlog] Baked report ({n} data file(s)) -> {Path.Combine(baseDir, "reports", "report.html")}");
+                note.WriteLine($"[preserve-chatlog] Baked report ({n} data file(s)) -> {Path.Combine(baseDir, "reports", "report.html")}");
             }
             catch (Exception ex) { Console.Error.WriteLine($"[preserve-chatlog] Report bake skipped: {ex.Message}"); }
 
             // The PDF deliverable (reports/report.pdf) is the FINAL client artifact, not a per-turn live view, so it
             // is baked on SessionEnd only — never on the per-turn Stop hook (both hooks share this verb). The HTML
             // viewer above stays current every turn; the PDF is compiled once when the case closes.
+            // Antigravity has no session-end event -- its `Stop` fires at the end of EVERY turn
+            // (terminationReason NO_TOOL_CALL is a normal completion), so there is no moment here that means
+            // "the case is closed". Baking the PDF each turn would be pure waste, so under that harness the HTML
+            // viewer is kept current every turn and the PDF is left to a final `bake-report <case-dir>`, which
+            // produces both. Claude Code does distinguish the two, so it still gets the PDF on SessionEnd.
             var hookEvent = payload?["hook_event_name"]?.GetValue<string>() ?? "";
-            if (string.Equals(hookEvent, "SessionEnd", StringComparison.OrdinalIgnoreCase))
+            if (!agy && string.Equals(hookEvent, "SessionEnd", StringComparison.OrdinalIgnoreCase))
                 BakePdfReport(baseDir);
+
+            // An empty object = "no opinion": do not block the agent from stopping, inject nothing.
+            if (agy) Console.Out.Write("{}");
         }
         catch (Exception ex)
         {
@@ -620,7 +656,114 @@ internal class Program : Runtime
     /// (input / output / cache-create / cache-read / sum) plus a per-model breakdown and the turn count.
     /// Best-effort and isolated so a parsing hiccup never breaks chat-log preservation.
     /// </summary>
-    static void WriteTokenUsage(string transcriptPath, string logsDir, string sessionId)
+
+    /// <summary>
+    /// Converts an Antigravity transcript into the Claude Code transcript shape that <see cref="BuildChatlogData"/>
+    /// and <see cref="AccumulateTokens"/> already parse, so the report viewer and the token summary need no
+    /// per-harness special casing. Antigravity writes one flat record per execution step:
+    /// <c>USER_EXPLICIT/USER_INPUT</c> for the operator's prompt, <c>MODEL/PLANNER_RESPONSE</c> for a model turn
+    /// (its <c>thinking</c>, its <c>tool_calls</c>, and the step's token counts at the TOP level rather than under
+    /// a <c>usage</c> object), and <c>MODEL/GENERIC</c> for the text a step produced — which, for a step that
+    /// called a tool, is that tool's output. Returns the number of records written, or -1 when the input does not
+    /// look like an Antigravity transcript (so the caller can fall back to copying it verbatim).
+    /// </summary>
+    static int NormalizeAntigravityTranscript(string src, string dst, string? modelName)
+    {
+        var outLines = new List<string>();
+        string? lastToolUseId = null;
+        int converted = 0, recognized = 0;
+
+        foreach (var line in File.ReadLines(src))
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            JsonNode? o; try { o = JsonNode.Parse(line); } catch { continue; }
+            var type = o?["type"]?.GetValue<string>();
+            if (type is null) continue;
+            var ts = o["created_at"]?.GetValue<string>();
+            var step = o["step_index"]?.GetValue<int>() ?? 0;
+
+            if (type == "USER_INPUT")
+            {
+                recognized++;
+                if (o["content"]?.GetValue<string>() is not string text || string.IsNullOrWhiteSpace(text)) continue;
+                outLines.Add(new JsonObject
+                {
+                    ["type"] = "user",
+                    ["timestamp"] = ts,
+                    ["message"] = new JsonObject
+                    {
+                        ["content"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = text }),
+                    },
+                }.ToJsonString(JsDataOpts));
+                converted++;
+            }
+            else if (type == "PLANNER_RESPONSE")
+            {
+                recognized++;
+                var blocks = new JsonArray();
+                if (o["thinking"]?.GetValue<string>() is string th && !string.IsNullOrWhiteSpace(th))
+                    blocks.Add(new JsonObject { ["type"] = "thinking", ["thinking"] = th });
+                if (o["content"]?.GetValue<string>() is string ct && !string.IsNullOrWhiteSpace(ct))
+                    blocks.Add(new JsonObject { ["type"] = "text", ["text"] = ct });
+
+                var i = 0;
+                foreach (var tc in o["tool_calls"]?.AsArray() ?? new JsonArray())
+                {
+                    var id = $"s{step}_{i++}";
+                    lastToolUseId = id;
+                    blocks.Add(new JsonObject
+                    {
+                        ["type"] = "tool_use",
+                        ["id"] = id,
+                        ["name"] = tc?["name"]?.GetValue<string>(),
+                        ["input"] = tc?["args"]?.DeepClone(),
+                    });
+                }
+                if (blocks.Count == 0) continue;
+
+                var msg = new JsonObject { ["content"] = blocks, ["model"] = modelName ?? "antigravity" };
+                // The step's token counts sit at the top level here; the summariser reads a Claude-shaped `usage`,
+                // whose cache_read field carries the bulk of a long agentic run.
+                if (o["input_tokens"] is not null || o["output_tokens"] is not null)
+                    msg["usage"] = new JsonObject
+                    {
+                        ["input_tokens"] = o["input_tokens"]?.GetValue<long>() ?? 0,
+                        ["output_tokens"] = o["output_tokens"]?.GetValue<long>() ?? 0,
+                        ["cache_read_input_tokens"] = o["cache_read_tokens"]?.GetValue<long>() ?? 0,
+                        ["cache_creation_input_tokens"] = o["cache_creation_tokens"]?.GetValue<long>() ?? 0,
+                    };
+
+                outLines.Add(new JsonObject { ["type"] = "assistant", ["timestamp"] = ts, ["message"] = msg }
+                    .ToJsonString(JsDataOpts));
+                converted++;
+            }
+            else if (type == "GENERIC")
+            {
+                recognized++;
+                if (o["content"]?.GetValue<string>() is not string text || string.IsNullOrWhiteSpace(text)) continue;
+                // A tool's output, which Claude Code carries as a tool_result inside a user message. With no
+                // preceding call it is ordinary model prose, so it stays an assistant text block.
+                var isResult = lastToolUseId is not null;
+                JsonObject block = isResult
+                    ? new JsonObject { ["type"] = "tool_result", ["tool_use_id"] = lastToolUseId, ["content"] = text }
+                    : new JsonObject { ["type"] = "text", ["text"] = text };
+                outLines.Add(new JsonObject
+                {
+                    ["type"] = isResult ? "user" : "assistant",
+                    ["timestamp"] = ts,
+                    ["message"] = new JsonObject { ["content"] = new JsonArray(block) },
+                }.ToJsonString(JsDataOpts));
+                lastToolUseId = null;
+                converted++;
+            }
+        }
+
+        if (recognized == 0) return -1;
+        File.WriteAllLines(dst, outLines);
+        return converted;
+    }
+
+    static void WriteTokenUsage(string transcriptPath, string logsDir, string sessionId, TextWriter note)
     {
         try
         {
@@ -635,7 +778,7 @@ internal class Program : Runtime
             Directory.CreateDirectory(logsDir);
             var path = Path.Combine(logsDir, "token-usage.json");
             File.WriteAllText(path, summary.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-            Console.Out.WriteLine($"[preserve-chatlog] Token usage -> {path} (total {acc.Total:N0} tokens over {acc.Turns} turns)");
+            note.WriteLine($"[preserve-chatlog] Token usage -> {path} (total {acc.Total:N0} tokens over {acc.Turns} turns)");
         }
         catch (Exception ex)
         {
@@ -1000,6 +1143,46 @@ internal class Program : Runtime
             };
             File.WriteAllText(mcpPath, mcp.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             Info($"Wrote {mcpPath}");
+        }
+
+        var hooksPath = Path.Combine(pluginDir, "hooks.json");
+        if (File.Exists(hooksPath))
+        {
+            Info($"{hooksPath} already exists — leaving it untouched.");
+        }
+        else
+        {
+            // Without this the case produces no viewable report at all: `reports/report.html` stays the
+            // scaffolded template with its data placeholders unfilled, because nothing ever runs the bake. The
+            // Claude Code case gets the same thing from `.claude/settings.json`'s Stop/SessionEnd hooks.
+            //
+            // `Stop` fires whenever the execution loop terminates, which for a normal turn is every turn, so the
+            // handler must be cheap and idempotent -- `preserve-chatlog` is both (it overwrites one chat log per
+            // conversation and re-bakes the HTML). A native plugin's hooks are read from the plugin ROOT, not
+            // from a `hooks/` subdirectory. The command is absolute because the hook's working directory is the
+            // folder holding this file, not the case; the handler recovers the case root from the payload's
+            // `workspacePaths`.
+            var hooks = new JsonObject
+            {
+                ["camel-preserve-and-bake"] = new JsonObject
+                {
+                    ["Stop"] = new JsonArray(
+                        new JsonObject
+                        {
+                            ["type"] = "command",
+                            ["command"] = $"dotnet \"{CliDllPath().Replace(Path.DirectorySeparatorChar, '/')}\" preserve-chatlog",
+                            ["timeout"] = 120,
+                        }),
+                },
+            };
+            // Relaxed encoding so the quoted dll path stays readable as `"..."` rather than `"..."`:
+            // this file is meant to be read and edited by the operator.
+            File.WriteAllText(hooksPath, hooks.ToJsonString(new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            }));
+            Info($"Wrote {hooksPath}");
         }
 
         // Antigravity's permission model is keyed by TOOL, not by path, so the clean-room path denies a Claude Code
