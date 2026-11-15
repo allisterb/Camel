@@ -24,6 +24,13 @@ public class CamelMCPServer : Runtime
 {
     const string CorsPolicyName = "CamelMcpCors";
 
+    /// <summary>Where the agent driving this server has been told to read the SDK reference (<c>--sdk-docs</c>).
+    /// Set once at launch, before any transport starts. It changes only the server's own wording — its
+    /// instructions and the correction it issues on a hallucinated API — never what it serves: the
+    /// <c>camel://sdk/*</c> resources are registered in every mode. Process-wide because a server launch serves
+    /// exactly one harness.</summary>
+    public static SdkDocMode SdkDocTransport { get; private set; } = SdkDocMode.Resources;
+
     // Registers the investigation's MCP tool surface and enforces its platform capability before serving.
     // WithTools<T> discovers [McpServerTool] methods from typeof(T), so the *concrete* type must be passed
     // (an abstract CamelMCPTools-typed argument would miss the subclass tools, e.g. SetEvidence/SetEngagement).
@@ -85,8 +92,10 @@ public class CamelMCPServer : Runtime
         }
     }
 
-    public static async Task RunStdioAsync(IConfigurationRoot config, InvestigationType investigation = InvestigationType.DFIR)
+    public static async Task RunStdioAsync(IConfigurationRoot config, InvestigationType investigation = InvestigationType.DFIR,
+        SdkDocMode sdkDocs = SdkDocMode.Resources)
     {
+        SdkDocTransport = sdkDocs;
         var builder = Host.CreateEmptyApplicationBuilder(null);
         // One environment per MCP session, created lazily and swept when idle.
         var registry = new SessionRegistry(config);
@@ -96,7 +105,7 @@ public class CamelMCPServer : Runtime
             .Logging.AddProvider(loggerProvider)
             .SetMinimumLevel(LogLevel.Trace);
 
-        var mcp = builder.Services.AddMcpServer();
+        var mcp = builder.Services.AddMcpServer(o => o.ServerInstructions = SdkDocs.ServerInstructions(sdkDocs));
         if (investigation == InvestigationType.PenTest)
             RegisterAndEnforce(mcp, new PenTestMCPTools(registry), config);
         else
@@ -114,16 +123,19 @@ public class CamelMCPServer : Runtime
         await app.RunAsync();
     }
 
-    public static async Task RunHttpAsync(IConfigurationRoot config, InvestigationType investigation = InvestigationType.DFIR)
-        => await BuildHttpApp(config, investigation).RunAsync();
+    public static async Task RunHttpAsync(IConfigurationRoot config, InvestigationType investigation = InvestigationType.DFIR,
+        SdkDocMode sdkDocs = SdkDocMode.Resources)
+        => await BuildHttpApp(config, investigation, sdkDocs).RunAsync();
 
     /// <summary>
     /// Builds the fully-configured HTTP MCP <see cref="WebApplication"/> (DI, CORS, transport, endpoints,
     /// lifecycle) without starting it. <see cref="RunHttpAsync"/> just runs the result; integration tests
     /// host it themselves (e.g. on an ephemeral port) and connect a real MCP client.
     /// </summary>
-    public static WebApplication BuildHttpApp(IConfigurationRoot config, InvestigationType investigation = InvestigationType.DFIR)
+    public static WebApplication BuildHttpApp(IConfigurationRoot config, InvestigationType investigation = InvestigationType.DFIR,
+        SdkDocMode sdkDocs = SdkDocMode.Resources)
     {
+        SdkDocTransport = sdkDocs;
         var builder = WebApplication.CreateBuilder();
         // One environment per MCP session, created lazily and swept when idle.
         var registry = new SessionRegistry(config);
@@ -151,7 +163,7 @@ public class CamelMCPServer : Runtime
             });
         });
 
-        var mcp = builder.Services.AddMcpServer();
+        var mcp = builder.Services.AddMcpServer(o => o.ServerInstructions = SdkDocs.ServerInstructions(sdkDocs));
         if (investigation == InvestigationType.PenTest)
             RegisterAndEnforce(mcp, new PenTestMCPTools(registry), config);
         else

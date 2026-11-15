@@ -92,15 +92,18 @@ public abstract class CamelMCPTools : Runtime
 
 
 
+    // A [Description] is a compile-time constant, so it cannot name the per-session SDK transport. It therefore
+    // states the read-first RULE without naming a location, and the server's instructions (built from
+    // --sdk-docs, see SdkDocs.ServerInstructions) say where the reference is. That way a Files-mode or
+    // Inline-mode agent is never ordered here to read a camel://sdk/* resource its harness cannot reach.
     [McpServerTool(Name = "Execute"), Description(
         "Execute JavaScript code against the Camel API (toolkits + workflows + anomaly engine). " +
-        "Before writing any script you MUST read the 'camel-sdk-index' resource (camel://sdk/index) — the map: the " +
-        "execution model plus the complete inventory of every object, method and returned model type, grouped by " +
-        "subject area. Then read the areas your task touches: 'camel://sdk/core/{Area}' for the method detail and " +
-        "'camel://sdk/schema/{Area}' for the fields of what those methods return — without the schema you cannot " +
-        "read results correctly. Call ONLY methods listed in the inventory, and access ONLY object properties " +
-        "listed in that area's schema; do not invent methods or properties that are not documented there. " +
-        "(camel://sdk/core/all and camel://sdk/schema/all still serve the whole documents.)")]
+        "Before writing any script you MUST read the Camel SDK reference, whose location for this session is " +
+        "given in this server's instructions: first the map — the execution model plus the complete inventory of " +
+        "every object, method and returned model type, grouped by subject area — then, for each area your task " +
+        "touches, that area's method detail AND its schema; without the schema you cannot read results " +
+        "correctly. Call ONLY methods listed in the inventory, and access ONLY object properties listed in that " +
+        "area's schema; do not invent methods or properties that are not documented there.")]
     public async Task<CallToolResult> Execute(
         string script,
         RequestContext<CallToolRequestParams> context,
@@ -254,9 +257,11 @@ public abstract class CamelMCPTools : Runtime
             if (ClassifyHallucination(jsErrorText) is string halluReason)
             {
                 AuditEvent("hallucination", "{Message}", halluReason);
-                message += $"{Environment.NewLine}[possible hallucination] {halluReason}. Only objects and methods " +
-                           "in the camel-sdk-index inventory exist — re-read the map (camel://sdk/index) and the " +
-                           "area's own reference (camel://sdk/core/{Area}), and do not invent APIs.";
+                // Point the correction at the transport this session's agent can actually read, for the same
+                // reason the tool description no longer names one.
+                message += $"{Environment.NewLine}[possible hallucination] {halluReason}. Only objects and methods "
+                         + "in the SDK inventory exist — re-read the map and the area's own reference, and do not "
+                         + $"invent APIs. The reference is {SdkDocs.ReferenceLocation(CamelMCPServer.SdkDocTransport)}";
             }
 
             // Include anything written via log()/error() before the failure for context.

@@ -78,6 +78,9 @@ public class ServerOptions : ConnectionOptions
 
     [Option("case-dir", Required = false, HelpText = "The case directory to write the per-case audit log into (as <case-dir>/audit/). `create-case` bakes this into the generated .mcp.json so the audit trail lands in the case. Defaults to <assembly-dir>/audit when omitted.")]
     public string CaseDir { get; set; } = String.Empty;
+
+    [Option("sdk-docs", Required = false, HelpText = "Where the agent driving this server has been told to read the SDK reference: Resources (default; the camel://sdk/* MCP resources this server serves), Files (the case's sdk/ directory) or Inline (already appended to its brief). It does not change what the server serves — it makes the server's own tool text and instructions name the SAME location the generated brief does, instead of ordering the agent to read a resource its harness may not be able to reach. `create-case` bakes the matching value into the harness's launch.")]
+    public SdkDocMode SdkDocs { get; set; } = SdkDocMode.Resources;
 }
 
 
@@ -108,31 +111,14 @@ public class BakeReportOptions : Options
 
 
 /// <summary>Which agent harness the generated case targets. Selects the scaffolding create-case emits:
-/// Claude Code project files (CLAUDE.md + .mcp.json + .claude/settings.json) vs a Goose launcher
+/// Claude Code project files (CLAUDE.md + .mcp.json + .claude/settings.json), an Antigravity plugin
+/// (GEMINI.md + .agents/plugins/camel) vs a Goose launcher
 /// (AGENTS.md + run-goose.*). The Camel MCP server and the case directory layout are the same either way.</summary>
 public enum AgentHarness
 {
     ClaudeCode = 0,
     Goose = 1,
     Agy = 2,
-}
-
-/// <summary>How a generated case's brief reaches the Camel JavaScript SDK reference. The brief orders the agent to
-/// read the reference before it writes a line of code, so a harness that does not serve MCP resources leaves the
-/// agent flying blind — these are the two fallbacks. The content is identical in all three modes; only the
-/// transport and what it costs in context differ.</summary>
-public enum SdkDocMode
-{
-    /// <summary>The brief points at the <c>camel://sdk/*</c> MCP resources the server serves, read on demand.</summary>
-    Resources = 0,
-
-    /// <summary>The same area-sliced docs are written into <c>&lt;case&gt;/sdk/</c> and the brief points at those
-    /// files. Needs only file reads, which every harness has, and keeps the on-demand slicing.</summary>
-    Files = 1,
-
-    /// <summary>The whole reference is appended to the brief. Needs nothing of the harness at all, but the brief
-    /// becomes several times larger and is resident in every turn.</summary>
-    Inline = 2,
 }
 
 [Verb("create-case", HelpText = "Create a Camel case directory and the scaffolding for an agent harness (Claude Code by default, or Goose via --agent-harness). The connection options are baked into the harness's Camel launch so it starts the server in that mode.")]
@@ -147,7 +133,7 @@ public class CreateCaseOptions : ConnectionOptions
     [Option("type", Required = false, HelpText = "Investigation type: DFIR (blue-team; default) or PenTest (red-team). Selects the case's CLAUDE.md brief and the MCP server verb baked into .mcp.json (dfir-server vs pentest-server).")]
     public InvestigationType Type { get; set; } = InvestigationType.DFIR;
 
-    [Option("agent-harness", Required = false, HelpText = "Agent harness the generated case targets: ClaudeCode (default; CLAUDE.md + .mcp.json + .claude/settings.json), Goose (AGENTS.md + a run-goose launcher that registers Camel as a per-session MCP extension; supports local models via --model/--provider), or Agy (Google Antigravity: GEMINI.md + .mcp.json + .agents/settings.json).")]
+    [Option("agent-harness", Required = false, HelpText = "Agent harness the generated case targets: ClaudeCode (default; CLAUDE.md + .mcp.json + .claude/settings.json), Goose (AGENTS.md + a run-goose launcher that registers Camel as a per-session MCP extension and forces GOOSE_MODE=auto; supports local models via --model/--provider), or Agy (Google Antigravity: GEMINI.md + an .agents/plugins/camel plugin -- the only project-scoped location the current build reads an MCP registration from).")]
     public AgentHarness Harness { get; set; } = AgentHarness.ClaudeCode;
 
     [Option("sdk-docs", Required = false, HelpText = "How the generated brief reaches the Camel JS SDK reference: Resources (default; the brief points at the camel://sdk/* MCP resources, read on demand), Files (write the same area-sliced docs into <case-dir>/sdk/ and point the brief there — for a harness with no MCP resource support; same context cost, still read on demand), or Inline (append the whole reference to the brief — needs nothing of the harness, but makes the brief several times larger and resident in every turn, so it is the last resort and a poor fit for a small-context local model).")]

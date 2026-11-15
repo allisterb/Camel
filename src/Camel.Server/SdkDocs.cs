@@ -70,6 +70,24 @@ public sealed record SdkDocSet(
 /// and duplicates are concatenated.
 /// </para>
 /// </summary>
+/// <summary>How a generated case's brief reaches the Camel JavaScript SDK reference. The brief orders the agent to
+/// read the reference before it writes a line of code, so a harness that does not serve MCP resources leaves the
+/// agent flying blind — these are the two fallbacks. The content is identical in all three modes; only the
+/// transport and what it costs in context differ.</summary>
+public enum SdkDocMode
+{
+    /// <summary>The brief points at the <c>camel://sdk/*</c> MCP resources the server serves, read on demand.</summary>
+    Resources = 0,
+
+    /// <summary>The same area-sliced docs are written into <c>&lt;case&gt;/sdk/</c> and the brief points at those
+    /// files. Needs only file reads, which every harness has, and keeps the on-demand slicing.</summary>
+    Files = 1,
+
+    /// <summary>The whole reference is appended to the brief. Needs nothing of the harness at all, but the brief
+    /// becomes several times larger and is resident in every turn.</summary>
+    Inline = 2,
+}
+
 public static class SdkDocs
 {
     #region Properties
@@ -122,6 +140,42 @@ public static class SdkDocs
     #endregion
 
     #region Methods
+
+    /// <summary>
+    /// Names, in prose the agent can act on, WHERE the SDK reference is for this session — the one fact that
+    /// differs between the <see cref="SdkDocMode"/> transports. The server's instructions and its tool text are
+    /// built from this, so they agree with whatever location the generated brief points at. Without it the
+    /// server's own text hard-codes the resource URIs, and under a Files-mode harness the agent is handed two
+    /// different answers to "where is the reference" — one of which it may have no tool to reach.
+    /// </summary>
+    public static string ReferenceLocation(SdkDocMode mode) => mode switch
+    {
+        SdkDocMode.Files =>
+            "the `sdk/` directory of this case: `sdk/index.md` is the map, `sdk/core/{Area}.md` the method "
+            + "detail, `sdk/schema/{Area}.md` the fields of what those methods return (`sdk/core/all.md` and "
+            + "`sdk/schema/all.md` are the whole documents). Read them as files; this server's "
+            + "`camel://sdk/*` resources carry the same text if your harness can read resources.",
+        SdkDocMode.Inline =>
+            "already appended in full to your brief — the map, the method detail and the schemas are in the "
+            + "reference section at the end of it. Do not go looking elsewhere for it; it is in your context "
+            + "already. (This server also serves the same text as `camel://sdk/*` resources.)",
+        _ =>
+            "served by this server as MCP resources: `camel://sdk/index` is the map, `camel://sdk/core/{Area}` "
+            + "the method detail, `camel://sdk/schema/{Area}` the fields of what those methods return "
+            + "(`camel://sdk/core/all` and `camel://sdk/schema/all` are the whole documents).",
+    };
+
+    /// <summary>The <c>initialize</c> instructions a client shows its model: the read-first rule, pointed at the
+    /// location this session's agent can actually reach.</summary>
+    public static string ServerInstructions(SdkDocMode mode) =>
+        "Camel is a code-mode server: you call forensic tools by writing JavaScript against the Camel SDK and "
+        + "passing it to `Execute`, not by running tools on a command line.\n\n"
+        + "Before writing any script you MUST read the SDK reference — first the map (the execution model plus "
+        + "the complete inventory of every object, method and returned model type, grouped by subject area), "
+        + "then, for each area your task touches, that area's method detail AND its schema. Without the schema "
+        + "you cannot read results correctly. Call ONLY methods the inventory lists, and read ONLY properties "
+        + "the area's schema lists; do not invent either.\n\n"
+        + "For this session the reference is " + ReferenceLocation(mode);
 
     /// <summary>
     /// Cuts the section(s) documenting <paramref name="area"/> out of <paramref name="doc"/>: every heading whose

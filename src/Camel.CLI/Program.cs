@@ -154,12 +154,12 @@ internal class Program : Runtime
         if (opts.Http)
         {
             Info("Starting Camel {Mode} MCP Server in HTTP mode on platform '{Platform}'.", mode, platform);
-            await CamelMCPServer.RunHttpAsync(config, investigation);
+            await CamelMCPServer.RunHttpAsync(config, investigation, opts.SdkDocs);
         }
         else
         {
             Info("Starting Camel {Mode} MCP Server in stdio mode on platform '{Platform}'.", mode, platform);
-            await CamelMCPServer.RunStdioAsync(config, investigation);
+            await CamelMCPServer.RunStdioAsync(config, investigation, opts.SdkDocs);
         }
     }
 
@@ -186,6 +186,14 @@ internal class Program : Runtime
             AgentHarness.Agy => "GEMINI.md",
             _ => "CLAUDE.md",
         };
+        if (EffectiveSdkDocs(opts) != opts.SdkDocs)
+            Warn($"--sdk-docs {opts.SdkDocs} is not reachable under this Goose launcher. Goose DOES support "
+                 + "MCP resources, but the read tools come from its 'extensionmanager' platform extension, "
+                 + "which --no-profile deliberately does not load (that flag is what keeps the operator's "
+                 + "global tool profile out of a forensic run). Using Files instead: the same area-sliced "
+                 + "docs, written to the case's sdk/ directory, which --sdk-docs Files is also baked into the "
+                 + "server's launch line for, so its own instructions name that same location.");
+
         var claudePath = Path.Combine(caseDir, briefName);
         if (File.Exists(claudePath))
         {
@@ -207,14 +215,16 @@ internal class Program : Runtime
                 claude = claude.Replace("registered in `.mcp.json` (this directory)", "registered in `.agents/plugins/camel/mcp_config.json` (this directory)");
             // Antigravity namespaces a server provided by a plugin as `<plugin>_<server>`, so the brief's
             // bare `camel` would send the agent to a ServerName that does not exist for call_mcp_tool and
-            // read_resource. Both halves of the name are ours, so the result is deterministic.
-            claude = claude.Replace("Camel MCP server (`camel`)",
+            // read_resource. Both halves of the name are ours, so the result is deterministic. Scoped to Agy:
+            // the other harnesses address the server by its own name and must keep reading the bare `camel`.
+            if (opts.Harness == AgentHarness.Agy)
+                claude = claude.Replace("Camel MCP server (`camel`)",
                 "Camel MCP server, which Antigravity registers under the namespaced name **`camel_camel`** "
                 + "(`<plugin>_<server>`) — pass that exact name as the `ServerName` for `call_mcp_tool` and "
                 + "`read_resource`");
             // Repoint the brief's mandatory "read the SDK reference first" block at whichever transport this
             // harness can actually serve (--sdk-docs). Resources is the default and needs no rewrite.
-            claude = opts.SdkDocs switch
+            claude = EffectiveSdkDocs(opts) switch
             {
                 SdkDocMode.Files => BriefSdkDocsAsFiles(claude),
                 SdkDocMode.Inline => BriefSdkDocsInline(claude, opts),
@@ -226,7 +236,7 @@ internal class Program : Runtime
 
         // The sliced reference files go in whether or not the brief was rewritten just now, so re-running
         // create-case over a case whose brief is already filled in still refreshes them against this build.
-        if (opts.SdkDocs == SdkDocMode.Files) WriteSdkDocFiles(opts, caseDir);
+        if (EffectiveSdkDocs(opts) == SdkDocMode.Files) WriteSdkDocFiles(opts, caseDir);
 
         // Harness-specific wiring. Claude Code and Antigravity get per-project config files (both use a root
         // .mcp.json; Claude adds .claude/settings.json, Antigravity a .agents/plugins/camel plugin). Goose instead
@@ -1413,6 +1423,30 @@ internal class Program : Runtime
         _ => "Appendix A",
     };
 
+    /// <summary>The <c>--sdk-docs</c> mode this harness can actually serve.
+    /// <para>Goose DOES support MCP resources: it implements the client half of the protocol
+    /// (<c>resources/list</c>, <c>resources/read</c>, <c>resources/subscribe</c>,
+    /// <c>resources/templates/list</c>), it announces per-extension support in the system prompt it builds
+    /// ("camel supports resources"), and it offers the model <c>extensionmanager__list_resources</c> /
+    /// <c>extensionmanager__read_resource</c>. Confirmed against Goose 1.54 by reading the tool array in the
+    /// request payload Goose actually sent the provider, not by asking the model what it had.</para>
+    /// <para>But those two tools belong to the <c>extensionmanager</c> PLATFORM extension, and this harness
+    /// launches Goose with <c>--no-profile</c> so the operator global tool profile cannot leak into a forensic
+    /// run. That strips extensionmanager along with everything else, taking the resource tools with it — so
+    /// under this launcher a brief pointing at <c>camel://sdk/*</c> would send the agent to a transport it
+    /// cannot reach and it would start generating code against an SDK it never read. Files carries the same
+    /// area-sliced docs on disk at the same context cost, so Resources degrades to Files rather than failing.
+    /// Visible, not silent: the caller logs the swap.</para>
+    /// <para>To use Resources under Goose the launcher must load extensionmanager — which also hands the agent
+    /// <c>manage_extensions</c> and <c>search_available_extensions</c>, i.e. the ability to enable further
+    /// extensions mid-investigation. That is a deliberate widening of the tool surface, so it is not the
+    /// default. Whether <c>--with-builtin extensionmanager</c> accepts a PLATFORM-typed extension is
+    /// unconfirmed; dropping <c>--no-profile</c> is the route known to load it.</para></summary>
+    static SdkDocMode EffectiveSdkDocs(CreateCaseOptions opts) =>
+        opts.Harness == AgentHarness.Goose && opts.SdkDocs == SdkDocMode.Resources
+            ? SdkDocMode.Files
+            : opts.SdkDocs;
+
     /// <summary>Goose harness: write a <c>run-goose.cmd</c>/<c>.sh</c> launcher that starts Goose with Camel
     /// registered as a per-session stdio MCP extension (<c>--with-extension</c>) and only that extension
     /// (<c>--no-profile</c>, so the user's global Goose tools don't leak in — the Goose analog of the Claude
@@ -1434,6 +1468,14 @@ internal class Program : Runtime
         var dll = CliDllPath();
         // The stdio extension command Goose will launch: `dotnet <dll> {dfir,pentest}-server <flags> --case-dir <abs>`.
         var ext = "camel:dotnet " + string.Join(" ", BuildServerArgs(opts));
+        // `--no-profile` loads ONLY the CLI-specified extensions, which leaves the agent with the server's five
+        // tools and no way to read a file or write one -- so it could neither read the SDK reference nor produce
+        // a single deliverable in reports/. The developer builtin supplies those. Note it bundles `shell` in with
+        // `edit`/`write`/`tree`, and Goose offers no per-tool allowlist on the command line, so unlike the Claude
+        // Code harness (which denies Bash while keeping Read/Write) the local shell CANNOT be withheld here: that
+        // discipline rests on the brief alone. The evidence itself is still only reachable through the server's
+        // audited SSH environment.
+        const string builtins = " --with-builtin developer";
         var model = "";
         if (!string.IsNullOrWhiteSpace(opts.Provider)) model += $" --provider {opts.Provider}";
         if (!string.IsNullOrWhiteSpace(opts.Model)) model += $" --model {opts.Model}";
@@ -1447,7 +1489,11 @@ internal class Program : Runtime
                 "REM or run 'goose configure' once to set a default. Then run this script to start the investigation.\r\n" +
                 "setlocal\r\n" +
                 "cd /d \"%~dp0\"\r\n" +
-                $"goose run --no-profile --with-extension \"{ext}\"{model} -i {briefName} --max-turns 100 --max-tool-repetitions 5\r\n" +
+                "REM Headless runs MUST be GOOSE_MODE=auto. Under the interactive default (approve/smart_approve)\r\n" +
+                "REM Goose aborts the whole run on the FIRST tool call with 'Tool approval required in\r\n" +
+                "REM non-interactive mode', because there is no terminal to approve at.\r\n" +
+                "set GOOSE_MODE=auto\r\n" +
+                $"goose run --no-profile{builtins} --with-extension \"{ext}\"{model} -i {briefName} --max-turns 300 --max-tool-repetitions 5\r\n" +
                 $"dotnet \"{dll}\" bake-report .\r\n";
         else
             body =
@@ -1457,7 +1503,11 @@ internal class Program : Runtime
                 "# or run 'goose configure' once to set a default. Then run this script to start the investigation.\n" +
                 "set -e\n" +
                 "cd \"$(dirname \"$0\")\"\n" +
-                $"goose run --no-profile --with-extension \"{ext}\"{model} -i {briefName} --max-turns 100 --max-tool-repetitions 5\n" +
+                "# Headless runs MUST be GOOSE_MODE=auto. Under the interactive default (approve/smart_approve)\n" +
+                "# Goose aborts the whole run on the FIRST tool call with 'Tool approval required in\n" +
+                "# non-interactive mode', because there is no terminal to approve at.\n" +
+                "export GOOSE_MODE=auto\n" +
+                $"goose run --no-profile{builtins} --with-extension \"{ext}\"{model} -i {briefName} --max-turns 300 --max-tool-repetitions 5\n" +
                 $"dotnet \"{dll}\" bake-report .\n";
 
         File.WriteAllText(scriptPath, body);
@@ -1478,6 +1528,13 @@ internal class Program : Runtime
         if (!string.IsNullOrWhiteSpace(opts.Password)) { args.Add("--pass"); args.Add(opts.Password); }
         if (opts.Port.HasValue) { args.Add("--port"); args.Add(opts.Port.Value.ToString()); }
         if (!string.IsNullOrWhiteSpace(opts.Platform)) { args.Add("--platform"); args.Add(opts.Platform); }
+        // Keep the server's own "read the reference at X" wording pointed at the same X the brief uses. Resources
+        // is the default at both ends, so only a fallback mode needs baking in.
+        if (EffectiveSdkDocs(opts) != SdkDocMode.Resources)
+        {
+            args.Add("--sdk-docs");
+            args.Add(EffectiveSdkDocs(opts).ToString());
+        }
         // Bake the absolute case dir so the server writes its audit log into the case (not next to the dll).
         args.Add("--case-dir");
         args.Add(Path.GetFullPath(Path.Combine(opts.CaseDir, opts.CaseId)));
