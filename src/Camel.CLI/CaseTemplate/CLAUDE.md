@@ -335,6 +335,16 @@ is still forensically useful:
 - Prefer **describe + hash + defanged excerpt** over reproducing the artifact. The goal is that any reader (or
   scanner) can identify and retrieve the real sample from evidence by its hash, without the report carrying a
   working copy of it.
+- **Check your own work before you finish.** The rule above is not advisory and it is not caught by review: a
+  deliverable containing live malicious code is matched by host anti-virus and **quarantined while you are still
+  writing it**, which destroys the file and whatever analysis was in it. This has happened. Before you call the
+  investigation complete, re-read `report.md`, `iocs.csv` and `accuracy.md` and confirm NONE of these appears
+  anywhere in them: `<?php`, `<?=`, `eval(`, `assert(`, `base64_decode(`, `shell_exec(`, `passthru(`,
+  `gzinflate(`, `gzuncompress(`, `str_rot13(`, `create_function(`, `FromBase64String(`, `-EncodedCommand`,
+  `IEX(`, `Invoke-Expression(`. Each one is an executable *call site*; break it as described above. Naming the
+  malware or webshell **family** (for example c99, WSO, Meterpreter) is correct and expected — it is the code
+  body that must never be reproduced. `bake-report` runs this same check and will name every file, token and
+  line it finds, so an unfixed violation is recorded in the case log either way.
 
 **Cite the audit handle.** Every `Execute` result ends with a line `[audit] case=<caseId> execution=<id>`. Every
 claim in the report must cite the `execution` id (and the toolkit/workflow method) of the call that established it —

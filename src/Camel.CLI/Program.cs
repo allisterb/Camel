@@ -343,12 +343,106 @@ internal class Program : Runtime
     /// (the <c>.clef</c>) and <c>chatlog-data.js</c> (trimmed conversation). Best-effort and idempotent; missing
     /// inputs are simply skipped. Returns the number of sibling data files written.
     /// </summary>
+
+    /// <summary>
+    /// The code constructs a deliverable must never carry verbatim. Deliberately NOT a list of malware or
+    /// webshell FAMILY NAMES: naming the family (c99, WSO, Meterpreter) plus its SHA-256 and byte length is
+    /// exactly what the brief asks an analyst to do, and flagging it would train the agent out of correct
+    /// reporting. What is flagged is executable shape — an open tag, or a dangerous function in CALL position.
+    /// <para>The trailing <c>(</c> on the function entries is load-bearing: it separates "the webshell called
+    /// eval on a base64 blob" (prose, fine) from a pasted call site (not fine), so ordinary narrative about an
+    /// attack does not trip the check.</para>
+    /// </summary>
+    static readonly string[] DefangTokens =
+    [
+        "<?php", "<?=", "<%eval", "eval(", "assert(", "base64_decode(", "shell_exec(", "passthru(",
+        "gzinflate(", "gzuncompress(", "str_rot13(", "create_function(", "preg_replace(\"/e",
+        "FromBase64String(", "-EncodedCommand", "-enc ", "IEX(", "Invoke-Expression(",
+    ];
+
+    /// <summary>
+    /// Scans the ANALYST-AUTHORED deliverables for live malicious code and reports what it finds, by file, token
+    /// and line number — never echoing the matched text, because printing a payload back is the thing being
+    /// guarded against.
+    /// <para>Why it exists: on case ALIHADI-GOOSE the agent pasted webshell source into <c>report.md</c> and the
+    /// only thing that objected was Windows Defender, which matched a PHP backdoor signature and quarantined the
+    /// file twice, mid-write, 55 seconds before the agent rewrote it. A quarantine during a run can destroy a
+    /// report silently. The brief has forbidden this since the template was written; nothing verified it.</para>
+    /// <para>It warns and never blocks. A report that exists and carries a flagged line is strictly more useful
+    /// than no report, and this runs at bake time — after the agent wrote the file, so refusing would only
+    /// withhold the viewer, not prevent the write. Its value is naming the violation in Camel's own voice,
+    /// before the HTML and the PDF carry it forward, and leaving it in the operator's log.</para>
+    /// <para>Scans only what the agent writes (<c>reports/*.md</c>, <c>reports/*.csv</c>). The CLEF and the
+    /// generated <c>*-data.js</c> sidecars are deliberately EXCLUDED: they record tool output verbatim, and
+    /// sanitising an audit trail to please a scanner would trade evidentiary fidelity for tidiness. Defender has
+    /// never flagged them across two full case runs.</para>
+    /// </summary>
+    /// <returns>The number of deliverables carrying at least one flagged construct.</returns>
+    /// <summary>Case-insensitive count of non-overlapping occurrences of <paramref name="token"/> in a line.</summary>
+    static int CountOccurrences(string line, string token)
+    {
+        var n = 0;
+        for (var i = line.IndexOf(token, StringComparison.OrdinalIgnoreCase); i >= 0;
+             i = line.IndexOf(token, i + token.Length, StringComparison.OrdinalIgnoreCase)) n++;
+        return n;
+    }
+
+    static int CheckDefang(string caseDir)
+    {
+        var reportsDir = Path.Combine(caseDir, "reports");
+        if (!Directory.Exists(reportsDir)) return 0;
+
+        var files = Directory.EnumerateFiles(reportsDir, "*.md")
+            .Concat(Directory.EnumerateFiles(reportsDir, "*.csv"))
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
+
+        var dirty = 0;
+        foreach (var file in files)
+        {
+            string[] lines;
+            try { lines = File.ReadAllLines(file); }
+            catch (IOException) { continue; }   // mid-write; the next bake will catch it
+
+            // token -> the 1-based lines it appears on. Case-insensitive: PowerShell cares about neither the
+            // casing of -EncodedCommand nor of IEX, and a webshell's PHP tag may be written <?PHP.
+            var hits = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+            for (var i = 0; i < lines.Length; i++)
+                foreach (var tok in DefangTokens)
+                    if (lines[i].Contains(tok, StringComparison.OrdinalIgnoreCase))
+                        (hits.TryGetValue(tok, out var at) ? at : hits[tok] = []).Add(i + 1);
+
+            if (hits.Count == 0) continue;
+            dirty++;
+            // Report OCCURRENCES and the lines they sit on separately: a single line can carry the construct
+            // more than once, so a line count reads as an undercount of the actual violations.
+            var detail = string.Join("; ", hits.OrderByDescending(h => h.Value.Count).Select(h =>
+            {
+                var occurrences = h.Value.Sum(ln => CountOccurrences(lines[ln - 1], h.Key));
+                var where = string.Join(",", h.Value.Take(8)) + (h.Value.Count > 8 ? ",..." : "");
+                return $"'{h.Key}' x{occurrences} on {h.Value.Count} line{(h.Value.Count > 1 ? "s" : "")} ({where})";
+            }));
+            Warn("Defang check: {File} carries live malicious code — {Detail}. The brief forbids this in any "
+                 + "deliverable: record the artifact as path + SHA-256 + byte length + its [audit] execution id, "
+                 + "and if an excerpt is genuinely needed, break the executable markers. Host anti-virus matches "
+                 + "these constructs and can quarantine the report mid-write.",
+                 Path.GetFileName(file), detail);
+        }
+
+        if (dirty == 0) Info("Defang check: deliverables carry no live malicious code.");
+        else Warn("Defang check: {Dirty} deliverable(s) need defanging before this report is shared or archived.", dirty);
+        return dirty;
+    }
+
     static int BakeReport(string caseDir)
     {
         var reportsDir = Path.Combine(caseDir, "reports");
         var logsDir = Path.Combine(caseDir, "logs");
         Directory.CreateDirectory(reportsDir);
         var caseId = ResolveCaseId(caseDir, logsDir);
+
+        // Report any live malicious code in the deliverables BEFORE the viewer and the PDF copy it forward.
+        // Advisory by design: see CheckDefang.
+        CheckDefang(caseDir);
 
         static string B64OfFile(string p) =>
             File.Exists(p) ? Convert.ToBase64String(Encoding.UTF8.GetBytes(File.ReadAllText(p))) : "";
